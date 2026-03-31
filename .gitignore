@@ -1,0 +1,10 @@
+# Maven build output
+target/
+.flattened-pom.xml
+
+# Spin build output
+.build/
+
+# IntelliJ IDEA
+.idea/
+*.iml

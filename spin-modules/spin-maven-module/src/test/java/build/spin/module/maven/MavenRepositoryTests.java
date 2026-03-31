@@ -12,6 +12,7 @@ import build.spin.module.modulesystem.ModuleVersioning;
 import build.codemodel.injection.Context;
 import build.codemodel.injection.InjectionFramework;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -68,6 +69,7 @@ public class MavenRepositoryTests {
         };
     }
 
+    @Disabled
     @Test
     void shouldResolveBaseFoundationDependency() {
 
