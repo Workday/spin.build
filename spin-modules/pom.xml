@@ -1,0 +1,34 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>build.spin</groupId>
+        <artifactId>project</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <groupId>build.spin.module</groupId>
+    <artifactId>spin-modules</artifactId>
+
+    <packaging>pom</packaging>
+
+    <name>Spin Modules</name>
+
+    <modules>
+        <module>spin-clean-module</module>
+        <module>spin-checkstyle-module</module>
+        <module>spin-configuration-module</module>
+        <module>spin-console-module</module>
+        <module>spin-git-module</module>
+        <module>spin-java-module</module>
+        <module>spin-java-module-tests</module>
+        <module>spin-junit-module</module>
+        <module>spin-maven-module</module>
+        <module>spin-module-system-module</module>
+        <module>spin-language-server-module</module>
+        <module>spin-reporting-module</module>
+    </modules>
+</project>

@@ -1,0 +1,626 @@
+package build.spin.module.maven;
+
+/*-
+ * #%L
+ * Spin Maven Module
+ * %%
+ * Copyright (C) 2026 Workday, Inc.
+ * %%
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * #L%
+ */
+
+import build.base.archiving.JarBuilder;
+import build.base.expression.Processor;
+import build.base.expression.Variable;
+import build.base.foundation.Capture;
+import build.base.io.PathSet;
+import build.base.option.JDKVersion;
+import build.codemodel.injection.PostInject;
+import build.spin.Plugin;
+import build.spin.Project;
+import build.spin.Task;
+import build.spin.annotation.After;
+import build.spin.annotation.Category;
+import build.spin.annotation.From;
+import build.spin.module.clean.CleanPlugin;
+import build.spin.module.java.AbstractJavaPlugin;
+import build.spin.module.java.JavaCompilerPlugin;
+import build.spin.module.java.JavaPlatform;
+import build.spin.module.java.ResourcePlugin;
+import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.ArtifactDescriptor;
+import build.spin.module.modulesystem.ModuleCatalog;
+import build.spin.module.modulesystem.ModuleDescriptor;
+import build.spin.module.modulesystem.ModuleReference;
+import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.module.modulesystem.UnresolvableModuleException;
+import build.spin.option.TargetDirectoryName;
+import jakarta.inject.Inject;
+import jakarta.inject.Named;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.w3c.dom.traversal.DocumentTraversal;
+import org.w3c.dom.traversal.NodeFilter;
+import org.w3c.dom.traversal.NodeIterator;
+import org.xml.sax.SAXException;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Optional;
+import java.util.Set;
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+
+/**
+ * A {@link Plugin} providing {@link Task}s for integration with <a href="https://maven.apache.org">Apache Maven</a>.
+ *
+ * @author brian.oliver
+ * @since Dec-2020
+ */
+public class MavenPlugin
+    extends AbstractJavaPlugin {
+
+    /**
+     * The {@link JDKVersion} to use for the {@link MavenPlugin}, is the highest {@link JDKVersion} of
+     * the {@link JavaCompilerPlugin}(s) used by the {@link Project}.
+     */
+    private JDKVersion javaVersion;
+
+    @PostInject
+    private void onInjection() {
+        // capture the highest JDKVersion
+        final Capture<JDKVersion> capture = Capture.empty();
+
+        this.project.plugins(JavaCompilerPlugin.class)
+            .forEach(plugin -> {
+                if ((capture.isPresent() && plugin.getJavaVersion().compareTo(capture.get()) > 0)
+                    || !capture.isPresent()) {
+                    capture.set(plugin.getJavaVersion());
+                }
+            });
+
+        capture.map(version -> this.javaVersion = version)
+            .orElseThrow(() -> new RuntimeException("Failed to determine the JDKVersion for the JavaArchiverPlugin"));
+    }
+
+    @Override
+    public JDKVersion getJavaVersion() {
+        return this.javaVersion;
+    }
+
+    /**
+     * Creates the directory into which Maven distribution artifacts will be placed.
+     */
+    @Named("create.distribution.path")
+    public static class CreateDistributionPath
+        implements Task<Path> {
+
+        /**
+         * Create the directory into which Maven distribution artifacts will be placed.
+         *
+         * @param buildPath the {@link Path} into which build output is placed
+         * @return the distribution {@link Path}
+         * @throws IOException should creating the {@link Path} fail
+         */
+        public Path create(final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
+            throws IOException {
+
+            final Path distributionPath = buildPath.resolve("main/distribution/");
+
+            Files.createDirectories(distributionPath);
+
+            return distributionPath;
+        }
+    }
+
+    /**
+     * Creates a {@link Manifest} for packaging the {@link Project} compiled code and resources.
+     */
+    @Named("create.module.manifest")
+    public static class CreateModuleManifest
+        implements Task<Manifest> {
+
+        @Inject
+        private Project project;
+
+        @Inject
+        private ModuleDescriptor descriptor;
+
+        @Inject
+        private ModuleDescriptor.Version version;
+
+        /**
+         * Creates an initial {@link Manifest} for packaging.
+         *
+         * @return a new {@link Manifest}
+         */
+        public Manifest create() {
+            final Manifest manifest = new Manifest();
+
+            final Attributes mainAttributes = manifest.getMainAttributes();
+
+            // include the mandatory Manifest version
+            mainAttributes.put(Attributes.Name.MANIFEST_VERSION, "1.0.0");
+
+            // include the automatic module name
+            mainAttributes.put(new Attributes.Name("Automatic-Module-Name"), this.descriptor.name());
+
+            // include the implementation title and version for the Module
+            mainAttributes.put(Attributes.Name.IMPLEMENTATION_TITLE, this.project.name());
+            mainAttributes.put(Attributes.Name.IMPLEMENTATION_VERSION, this.version.get());
+
+            // include the multi-release attribute when this is a multi-release project
+            if (this.project.plugins(JavaCompilerPlugin.class).count() > 1L) {
+                mainAttributes.put(new Attributes.Name("Multi-Release"), "true");
+            }
+
+            return manifest;
+        }
+    }
+
+    /**
+     * Creates an {@link JarBuilder} and populates it with the compiled code and resources.
+     */
+    @Named("create.module.archive.builder")
+    public static class CreateModuleArchiveBuilder
+        implements Task<JarBuilder> {
+
+        @Inject
+        private TargetDirectoryName target;
+
+        /**
+         * Creates and populates an {@link JarBuilder} containing the compiled code and resources for the
+         * {@link Project}.
+         *
+         * @param manifest  the {@link Manifest}
+         * @param buildPath the {@link Path} for build output
+         * @param pathSets  the {@link Stream} of compilation {@link PathSet}s
+         * @param pomPath   the pom.xml {@link Path}
+         * @return a new {@link JarBuilder}
+         */
+        public JarBuilder create(final @From(CreateModuleManifest.class) Manifest manifest,
+                                 final @From(CleanPlugin.CreateBuildPath.class) Path buildPath,
+                                 final @From(JavaCompilerPlugin.Compile.class) Stream<PathSet> pathSets,
+                                 final @From(CreatePOMFile.class) Path pomPath)
+            throws IOException {
+
+            final JarBuilder builder = new JarBuilder(manifest);
+
+            final Path target = buildPath.resolve("main/" + this.target.get());
+            builder.content().add(target);
+
+            return builder;
+        }
+    }
+
+    /**
+     * Creates a Java Archive (jar) containing the compiled byte code and resources for the {@link Project}.
+     */
+    @Named("package.module")
+    @Category("package")
+    @Category("build")
+    public static class PackageModule
+        implements build.spin.module.java.PackageModule {
+
+        @Inject
+        private ModuleDescriptor descriptor;
+
+        @Inject
+        private ModuleCatalog catalog;
+
+        /**
+         * Creates an Apache Maven compliant Java Archive (jar) containing the compiled code and resources
+         * for the {@link Project}.
+         *
+         * @param distributionPath the {@link Path} in which to place the archive
+         * @param archiveBuilder   the {@link JarBuilder} to use for building the archive
+         * @return the {@link ArtifactDescriptor} for the newly created archive
+         */
+        public ArtifactDescriptor archive(final @From(CreateDistributionPath.class) Path distributionPath,
+                                          final @From(CreateModuleArchiveBuilder.class) JarBuilder archiveBuilder) {
+
+            // determine the Artifact to generate based on the ModuleDescriptor
+            return this.catalog.getArtifact(this.descriptor.reference())
+                .map(artifact -> {
+                    // establish the name of the archive
+                    final String artifactName = artifact.artifactId() + "-" + artifact.version().get() + ".jar";
+                    final Path artifactPath = distributionPath.resolve(artifactName);
+
+                    // attempt to create the archive
+                    try {
+                        archiveBuilder.build(artifactPath);
+                    } catch (final IOException e) {
+                        throw new RuntimeException("Failed to create Artifact [" + artifactName + "]", e);
+                    }
+
+                    return ArtifactDescriptor.create(this.descriptor.reference(), artifact, artifactPath);
+
+                })
+                .orElseThrow(() -> new UnresolvableModuleException(this.descriptor.reference()));
+        }
+    }
+
+    /**
+     * Creates a Maven-based Java Archive (jar) containing the source code and resources for a {@link Project}.
+     */
+    @Named("package.source")
+    @Category("package")
+    @Category("build")
+    public static class PackageModuleSource
+        implements Task<ArtifactDescriptor> {
+
+        @Inject
+        private ModuleDescriptor descriptor;
+
+        @Inject
+        private ModuleCatalog catalog;
+
+        /**
+         * Create a Maven-compliant Java Archive (jar) containing the source code and resources for the {@link Project}.
+         *
+         * @param distributionPath the {@link Path} in which to place the archive
+         * @param sourcePaths      the {@link PathSet}s of the source code
+         * @param resourcePaths    the {@link PathSet}s of the resources
+         * @return the {@link ArtifactDescriptor} for the created source archive
+         */
+        public ArtifactDescriptor archive(final @From(CreateDistributionPath.class) Path distributionPath,
+                                          final @From(JavaCompilerPlugin.DetectSourcePaths.class) Stream<PathSet> sourcePaths,
+                                          final @From(ResourcePlugin.DetectModuleResourcePaths.class) Stream<PathSet> resourcePaths) {
+
+            // establish the Archive
+            final JarBuilder archiveBuilder = new JarBuilder();
+
+            // include the paths from the PathSets
+            Stream.concat(sourcePaths, resourcePaths)
+                .flatMap(PathSet::stream)
+                .filter(Files::exists)
+                .forEach(path -> {
+                    try {
+                        archiveBuilder.content().add(path);
+                    } catch (final IOException e) {
+                        // TODO:
+                        e.printStackTrace();
+                    }
+                });
+
+            // determine the Artifact to generate based on the ModuleDescriptor
+            return this.catalog.getArtifact(this.descriptor.reference())
+                .map(artifact -> {
+                    // establish the name of the archive
+                    final String artifactName = artifact.artifactId() + "-" + artifact.version().get() + "-sources.jar";
+                    final Path artifactPath = distributionPath.resolve(artifactName);
+
+                    // attempt to create the archive
+                    try {
+                        archiveBuilder.build(artifactPath);
+                    } catch (final IOException e) {
+                        throw new RuntimeException("Failed to create Artifact [" + artifactName + "]", e);
+                    }
+
+                    return ArtifactDescriptor.create(
+                        this.descriptor.reference(),
+                        Artifact.create(
+                            artifact.groupId(),
+                            artifact.artifactId(),
+                            artifact.version().get(),
+                            artifact.type(),
+                            "sources"),
+                        artifactPath);
+                })
+                .orElseThrow(() -> new UnresolvableModuleException(this.descriptor.reference()));
+        }
+    }
+
+    /**
+     * Creates a Maven-based Java Archive (jar) containing the Java Documentation for a {@link Project}.
+     */
+    @Named("package.javadoc")
+    @Category("package")
+    @Category("build")
+    public static class PackageJavaDoc
+        implements Task<ArtifactDescriptor> {
+
+        @Inject
+        private ModuleDescriptor descriptor;
+
+        @Inject
+        private ModuleCatalog catalog;
+
+        /**
+         * Create a Maven-compliant Java Archive (jar) containing the Java Documentation for the {@link Project}.
+         *
+         * @param distributionPath the {@link Path} in which to place the archive
+         * @param javadocPaths     the {@link PathSet}s of the Java Documentation
+         * @return the {@link ArtifactDescriptor} of the created Java Documentation archive
+         */
+        public ArtifactDescriptor archive(final @From(CreateDistributionPath.class) Path distributionPath,
+                                          final @From(JavaCompilerPlugin.JavaDoc.class) Stream<PathSet> javadocPaths) {
+
+            // establish the Archive
+            final JarBuilder archiveBuilder = new JarBuilder();
+
+            // include the paths from the PathSets
+            javadocPaths
+                .flatMap(PathSet::stream)
+                .filter(Files::exists)
+                .forEach(path -> {
+                    try {
+                        archiveBuilder.content().add(path.toFile());
+                    } catch (final IOException e) {
+                        // TODO
+                        e.printStackTrace();
+                    }
+                });
+
+            // determine the Artifact to generate based on the ModuleDescriptor
+            return this.catalog.getArtifact(this.descriptor.reference())
+                .map(artifact -> {
+                    // establish the name of the archive
+                    final String artifactName = artifact.artifactId() + "-" + artifact.version().get() + "-javadoc.jar";
+                    final Path artifactPath = distributionPath.resolve(artifactName);
+
+                    // attempt to create the archive
+                    try {
+                        archiveBuilder.build(artifactPath);
+                    } catch (final IOException e) {
+                        throw new RuntimeException("Failed to create Artifact [" + artifactName + "]", e);
+                    }
+
+                    return ArtifactDescriptor.create(
+                        this.descriptor.reference(),
+                        Artifact.create(
+                            artifact.groupId(),
+                            artifact.artifactId(),
+                            artifact.version().get(),
+                            artifact.type(),
+                            "javadoc"),
+                        artifactPath);
+                })
+                .orElseThrow(() -> new UnresolvableModuleException(this.descriptor.reference()));
+        }
+    }
+
+    /**
+     * Creates a Maven Project Object Model XML {@link Document} for a {@link Project}, that of which may be
+     * updated and saved for packaging with {@link CreatePOMFile}.
+     */
+    @Named("create.pom.document")
+    public static class CreatePOMDocument
+        implements Task<Document> {
+
+        @Inject
+        private DocumentBuilderFactory documentBuilderFactory;
+
+        @Inject
+        private Project project;
+
+        @Inject
+        private ModuleDescriptor descriptor;
+
+        @Inject
+        private ModuleCatalog catalog;
+
+        @Inject
+        private ModuleVersioning versioning;
+
+        /**
+         * Creates a Maven Project Object Module {@link Document}.
+         *
+         * @param resourcePaths the {@link Optional} resource paths (from which to load {@link Project} pom.xml)
+         * @return a {@link Document} representing the Maven Project Object Model
+         * @throws ParserConfigurationException should it not be possible to locate an XML {@link Document} parser
+         * @throws SAXException                 should it not be possible to parse the pom.xml {@link Document}
+         * @throws IOException                  should it not be possible to read the pom.xml {@link Document}
+         */
+        public Document create(final @From(ResourcePlugin.DetectModuleResourcePaths.class) Optional<PathSet> resourcePaths)
+            throws ParserConfigurationException, SAXException, IOException {
+
+            // determine the ModuleDescriptor.Version for this module
+            final ModuleDescriptor.Version moduleVersion = this.descriptor.version()
+                .orElseGet(() -> {
+                    // TODO: log ("The module [" + this.descriptor.name()
+                    //                    + "] does not specify a version in Versioning (version.properties)")
+                    // (and we're using the default)
+
+                    return ModuleDescriptor.Version.DEFAULT;
+                });
+
+            // establish an Artifact.Version for the ModuleDescriptor.Version
+            final Artifact.Version artifactVersion = Artifact.Version.parse(moduleVersion.get());
+
+            // attempt to locate the Artifact.Constraint for this module based on the module name and version
+            final Artifact.Constraint constraint = this.catalog.constraints(this.descriptor.name())
+                .filter(c -> c.contains(artifactVersion))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("The module [" + this.descriptor.name()
+                    + "] does not define an Artifact.Constraint in the Module Catalog"));
+
+            final DocumentBuilder documentBuilder = this.documentBuilderFactory.newDocumentBuilder();
+
+            // attempt to locate a pom.xml in the project root path
+            final Path projectPOMPath = this.project.path().resolve("pom.xml");
+
+            // load the template to use
+            final Document document = Files.exists(projectPOMPath)
+                ? documentBuilder.parse(Files.newInputStream(projectPOMPath))
+                : documentBuilder.parse(
+                MavenPlugin.class.getClassLoader().getResourceAsStream("maven/pom-template.xml"));
+
+            // establish a Java Expression Language Processor to replace elements in the Document
+            // (that use Java Expression Language ${..})
+            final Processor processor = Processor.create(
+                Variable.of("artifactId", constraint.artifactId()),
+                Variable.of("groupId", constraint.groupId()),
+                Variable.of("version", artifactVersion.toString()),
+                Variable.of("packaging", "jar"));
+
+            // iterate over the Document and attempt to replace elements using ${...}
+            final NodeIterator iterator = ((DocumentTraversal) document).createNodeIterator(
+                document.getDocumentElement(),
+                NodeFilter.SHOW_ELEMENT,
+                node -> node.getNodeType() == Node.ELEMENT_NODE && node.getTextContent().trim().startsWith("${")
+                    ? NodeFilter.FILTER_ACCEPT
+                    : NodeFilter.FILTER_SKIP
+                , true);
+
+            for (Node node = iterator.nextNode(); node != null; node = iterator.nextNode()) {
+                node.setTextContent(processor.replace(node.getTextContent()));
+            }
+
+            // remove all unnecessary elements from the document
+            final Set<String> required = Stream.of("modelVersion", "groupId", "artifactId", "version", "packaging",
+                    "name", "description", "url", "inceptionYear", "inceptionYear", "organization", "developers",
+                    "contributors", "issueManagement", "mailingLists", "scm")
+                .collect(Collectors.toSet());
+
+            final NodeList childNodes = document.getDocumentElement().getChildNodes();
+            final HashSet<Node> nodesToRemove = new HashSet<>();
+            for (int i = 0; i < childNodes.getLength(); i++) {
+                final Node node = childNodes.item(i);
+                if (!required.contains(node.getNodeName())) {
+                    nodesToRemove.add(node);
+                }
+            }
+
+            nodesToRemove.forEach(node -> node.getParentNode().removeChild(node));
+
+            // generate the <dependencies> for the project based on the Module Descriptor
+            final Node dependenciesNode = document.createElement("dependencies");
+
+            this.descriptor.requires()
+                .filter(requires -> !JavaPlatform.isJavaPlatformModule(
+                    requires.name()))  //filter out Java Platform dependencies
+                .map(require -> {
+                    // determine the Artifact and Version for the dependency
+                    final Artifact.Version version = Artifact.Version.parse(require.version()
+                        .orElseGet(() ->
+                            this.versioning.getVersion(require.name())
+                                .orElseThrow(() -> new RuntimeException(
+                                    "Failed to determine the Artifact Version for [" + require.name() + "]"))
+                        )
+                        .get());
+
+                    // establish the required dependency
+                    final ModuleReference reference =
+                        ModuleReference.of(require.name(), ModuleDescriptor.Version.parse(version.get()));
+
+                    final Artifact artifact = this.catalog.getArtifact(reference)
+                        .orElseThrow(() -> new RuntimeException(
+                            "Failed to determine the Artifact for [" + reference.name() + "], Version ["
+                                + version + "]"));
+
+                    final Node dependencyNode = document.createElement("dependency");
+
+                    final Node groupIdNode = document.createElement("groupId");
+                    groupIdNode.setTextContent(artifact.groupId());
+                    dependencyNode.appendChild(groupIdNode);
+
+                    final Node artifactIdNode = document.createElement("artifactId");
+                    artifactIdNode.setTextContent(artifact.artifactId());
+                    dependencyNode.appendChild(artifactIdNode);
+
+                    final Node versionNode = document.createElement("version");
+                    versionNode.setTextContent(artifact.version().get());
+                    dependencyNode.appendChild(versionNode);
+
+                    final Node typeNode = document.createElement("type");
+                    typeNode.setTextContent(artifact.type());
+                    dependencyNode.appendChild(typeNode);
+
+                    artifact.classifier().ifPresent(classifier -> {
+                        final Node classifierNode = document.createElement("classifier");
+                        classifierNode.setTextContent(classifier);
+                        dependencyNode.appendChild(classifierNode);
+                    });
+
+                    if (require.isStatic()) {
+                        final Node optionalNode = document.createElement("optional");
+                        optionalNode.setTextContent("true");
+                        dependenciesNode.appendChild(optionalNode);
+                    }
+
+                    return dependencyNode;
+                })
+                .forEach(dependenciesNode::appendChild);
+
+            document.getDocumentElement().appendChild(dependenciesNode);
+
+            return document;
+        }
+    }
+
+    /**
+     * Creates a Maven pom.xml based on the POM {@link Document} for a {@link Project}.
+     */
+    @Named("create.pom")
+    @After(JavaCompilerPlugin.Compile.class)
+    public static class CreatePOMFile
+        implements Task<Path> {
+
+        /**
+         * Creates the pom.xml in the provided buildPath, using the specified POM {@link Document}.
+         *
+         * @param distributionPath the {@link Path} in which the pom.xml is to be created
+         * @param document         the XML {@link Document} defining the pom.xml
+         * @return the {@link Path} to the newly created pom.xml
+         * @throws TransformerException when the POM {@link Document} transformations fail
+         * @throws IOException          when failing to create the POM
+         */
+        public Path create(final @From(CreateDistributionPath.class) Path distributionPath,
+                           final @From(CreatePOMDocument.class) Document document)
+            throws TransformerException, IOException {
+
+            final Path pom = distributionPath.resolve("pom.xml");
+
+            final Transformer transformer = TransformerFactory.newInstance().newTransformer();
+            transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+            transformer.setOutputProperty(OutputKeys.METHOD, "xml");
+            transformer.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "4");
+            transformer.transform(new DOMSource(document), new StreamResult(Files.newBufferedWriter(pom)));
+
+            return pom;
+        }
+    }
+
+    /**
+     * The {@link Plugin.MetaClass} for the {@link MavenPlugin}.
+     */
+    public static class MetaClass
+        implements Plugin.MetaClass {
+
+        @Override
+        public boolean isDetectedIn(final Path path) {
+            return false;
+        }
+
+        @Override
+        public boolean isDetectedIn(final Project project) {
+            return project.contains(JavaCompilerPlugin.class);
+        }
+    }
+}

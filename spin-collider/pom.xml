@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>build.spin</groupId>
+        <artifactId>project</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>spin-collider</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Spin Collider Application</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-network</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-application</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-local-platform</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-jdk</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-local-jdk</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

@@ -1,0 +1,5 @@
+build.spin.module.java.JavaPlatform$MetaClass
+build.spin.module.java.CustomizationPlugin$MetaClass
+build.spin.module.java.Java8CompilerPlugin$MetaClass
+build.spin.module.java.Java25CompilerPlugin$MetaClass
+build.spin.module.java.ResourcePlugin$MetaClass

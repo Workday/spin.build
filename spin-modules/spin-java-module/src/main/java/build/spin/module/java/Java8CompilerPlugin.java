@@ -1,0 +1,188 @@
+package build.spin.module.java;
+
+/*-
+ * #%L
+ * Spin Java Module
+ * %%
+ * Copyright (C) 2026 Workday, Inc.
+ * %%
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * #L%
+ */
+
+import build.base.io.PathSet;
+import build.base.option.JDKVersion;
+import build.spawn.jdk.option.ClassPath;
+import build.spin.Asset;
+import build.spin.Plugin;
+import build.spin.Project;
+import build.spin.Task;
+import build.spin.annotation.After;
+import build.spin.annotation.Category;
+import build.spin.annotation.From;
+import build.spin.annotation.System;
+import build.spin.module.clean.CleanPlugin;
+import build.spin.option.TargetDirectoryName;
+import jakarta.inject.Inject;
+import jakarta.inject.Named;
+
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Optional;
+
+/**
+ * A {@link JavaCompilerPlugin} for Java 8 based {@link Project}s.
+ *
+ * @author brian.oliver
+ * @since Jul-2019
+ */
+public class Java8CompilerPlugin
+    extends AbstractJavaPlugin
+    implements JavaCompilerPlugin {
+
+    /**
+     * The {@link JDKVersion} for the {@link Plugin}.
+     */
+    private final JDKVersion javaVersion;
+
+    /**
+     * Constructs a {@link Java8CompilerPlugin}.
+     */
+    public Java8CompilerPlugin() {
+        this.javaVersion = JDKVersion.of(8);
+    }
+
+    @Override
+    public JDKVersion getJavaVersion() {
+        return this.javaVersion;
+    }
+
+    /**
+     * A {@link Task} to determine the source paths for compilation.
+     */
+    @Named("detect.source.paths")
+    public static class DetectSourcePaths
+        extends AbstractDetectSourcePaths
+        implements JavaCompilerPlugin.DetectSourcePaths {
+
+    }
+
+    /**
+     * A {@link Task} to determine the source files for compilation.
+     */
+    @Named("detect.source.files")
+    public static class DetectSourceFiles
+        extends AbstractDetectSourceFiles
+        implements JavaCompilerPlugin.DetectSourceFiles {
+
+        @Override
+        public PathSet detect(@From(DetectSourcePaths.class) final PathSet pathSet) {
+            return super.detect(pathSet);
+        }
+    }
+
+    /**
+     * A {@link Task} to detect the {@link ClassPath} suitable for <strong>compiling</strong> the {@link Project}.
+     */
+    @Named("detect.compilation.classpath")
+    public static class DetectCompilationClassPath
+        extends AbstractDetectCompilationClassPath {
+
+    }
+
+    /**
+     * A {@link Task} to compile the source code in the {@link Project}.
+     */
+    @Named("compile")
+    public static class Compile
+        extends AbstractCompile
+        implements JavaCompilerPlugin.Compile {
+
+        @Inject
+        private TargetDirectoryName target;
+
+        /**
+         * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path},
+         * using the specified {@link ClassPath}.
+         *
+         * @param sourceCode the source code
+         * @param classPath the {@link ClassPath}
+         * @param buildPath the build {@link Path}
+         *
+         * @return the {@link PathSet} containing the compiled classes
+         * @throws Exception should compilation fail
+         */
+        public PathSet compile(final @From(DetectSourceFiles.class) PathSet sourceCode,
+                               final @From(DetectCompilationClassPath.class) ClassPath classPath,
+                               final @From(CleanPlugin.CreateBuildPath.class) Asset<Path> buildPath)
+            throws Exception {
+
+            // the path in which to place the compiled classes
+            final Path targetPath = buildPath.get().resolve("main/" + this.target.get());
+
+            return super.compile(sourceCode, classPath, buildPath.get(), targetPath);
+        }
+    }
+
+    /**
+     * A {@link Task} to generate Java Documentation from the source code in the {@link Project}.
+     */
+    @Named("javadoc")
+    @Category("document")
+    @Category("build")
+    @After(Compile.class)
+    public static class JavaDoc
+        extends AbstractJavaDoc {
+
+        /**
+         * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path},
+         * using the specified {@link ClassPath}.
+         *
+         * @param sourceCode the source code
+         * @param classPath the {@link ClassPath}
+         * @param buildPath the build {@link Path}
+         *
+         * @return the {@link Path} of the generated documentation
+         * @throws Exception should compilation fail
+         */
+        public Path javadoc(final @From(DetectSourceFiles.class) PathSet sourceCode,
+                            final @From(DetectCompilationClassPath.class) ClassPath classPath,
+                            final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
+            throws Exception {
+
+            return super.javadoc(
+                sourceCode,
+                classPath,
+                buildPath,
+                Optional.of(new URL("https://docs.oracle.com/javase/8/docs/api/")));
+        }
+    }
+
+    /**
+     * The {@link Plugin.MetaClass} for {@link Java8CompilerPlugin}.
+     */
+    public static class MetaClass
+        implements Plugin.MetaClass {
+
+        @Inject
+        @System
+        private JDKVersion defaultJavaVersion;
+
+        @Override
+        public boolean isDetectedIn(final Path path) {
+            return (Files.exists(path.resolve("src/main/java")) && this.defaultJavaVersion.major() == 8)
+                || Files.exists(path.resolve("src/main/java8"));
+        }
+    }
+}

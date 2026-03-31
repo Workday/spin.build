@@ -1,0 +1,292 @@
+package build.spin;
+
+/*-
+ * #%L
+ * Spin API
+ * %%
+ * Copyright (C) 2026 Workday, Inc.
+ * %%
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * #L%
+ */
+
+import build.base.foundation.Introspection;
+import build.codemodel.injection.Context;
+import build.spin.annotation.After;
+import build.spin.annotation.Automatic;
+import build.spin.annotation.Before;
+import build.spin.annotation.Categories;
+import build.spin.annotation.Category;
+import build.spin.annotation.From;
+import build.spin.annotation.NoCache;
+import build.spin.annotation.PostProcess;
+import build.spin.annotation.PreProcess;
+import jakarta.inject.Named;
+
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.net.URI;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Stream;
+
+import static build.base.foundation.Introspection.describe;
+
+/**
+ * Provides immutable {@link Project} specific information for a {@link Class} of {@link Task}, that may later
+ * be used to establish {@link Instruction}s for {@link Program}s.
+ *
+ * @param <T> the type of result produced by the {@link Task}
+ * @author brian.oliver
+ * @since Jun-2019
+ */
+public interface Invocable<T> {
+
+    /**
+     * Obtains the {@link URI} for this {@link Invocable}.
+     *
+     * @return the {@link URI}
+     */
+    URI getURI();
+
+    /**
+     * Obtains the {@link Project} in which the {@link Plugin} {@link Task} has been defined.
+     *
+     * @return the {@link Project}
+     */
+    Project getProject();
+
+    /**
+     * Obtains the {@link Plugin} that defined the {@link Task}.
+     *
+     * @return the {@link Task} {@link Plugin}
+     */
+    Plugin getPlugin();
+
+    /**
+     * Obtains the {@link Class} of {@link Task}.
+     *
+     * @return the {@link Class} of {@link Task}.
+     */
+    Class<? extends Task<T>> getTaskClass();
+
+    /**
+     * Obtains the {@link Reference} for the defined {@link Task}.
+     *
+     * @return the {@link Reference}
+     */
+    default Reference getReference() {
+        return Reference.of(getProject(), getTaskClass());
+    }
+
+    /**
+     * Creates a new instance of the {@link Task} using the provided {@link Context}.
+     *
+     * @param context the {@link Context}
+     * @return a new instance of the {@link Task}
+     */
+    default Task<T> createTask(final Context context) {
+        return context.create(getTaskClass());
+    }
+
+    /**
+     * Obtains the name of the {@link Task}.
+     * <p>
+     * By default, the name of the {@link Task} is the value defined by the {@code @Named} annotation on the
+     * {@link Class} for the {@link Task}.  Should no {@link Named} annotation be defined, the name
+     * is the simple name of the implementation {@link Class}.
+     *
+     * @return the name of the {@link Task}
+     */
+    default String getTaskName() {
+        final Named named = getTaskClass().getAnnotation(Named.class);
+
+        return named == null ? getTaskClass().getSimpleName() : named.value().trim();
+    }
+
+    /**
+     * Obtains the names of the {@link Category}s defined for the {@link Task}.
+     *
+     * @return the {@link Stream} of {@link Category} names
+     */
+    default Stream<String> categories() {
+        final List<Annotation> annotations = Introspection.getAll(getTaskClass(), Class::getDeclaredAnnotations).toList();
+
+        return Stream.concat(
+                annotations.stream()
+                    .filter(Category.class::isInstance)
+                    .map(Category.class::cast),
+                annotations.stream()
+                    .filter(Categories.class::isInstance)
+                    .map(Categories.class::cast)
+                    .flatMap(categories -> Arrays.stream(categories.value())))
+            .map(Category::value);
+    }
+
+    /**
+     * Determines if the {@link Task} matches the supplied {@link build.spin.Task.Pattern}, ultimately for
+     * inclusion in a {@link Program}.
+     *
+     * @param pattern the {@link build.spin.Task.Pattern}
+     * @return {@code true} if the {@link Task} matches the {@link build.spin.Task.Pattern},
+     * {@code false} otherwise
+     */
+    default boolean matches(final Task.Pattern pattern) {
+        return pattern != null
+            && (getTaskName().equals(pattern.get())
+            || categories().anyMatch(pattern.get()::equals));
+    }
+
+    /**
+     * Obtains the {@link Class} of the result produced by executing the {@link Task}.
+     * <p>
+     * Should the {@link Class} of the result not be available or can't be determined, {@link Optional#empty()}
+     * is returned.
+     *
+     * @return {@link Optional} {@link Class}
+     */
+    @SuppressWarnings("unchecked")
+    default Optional<Class<?>> getTaskResultClass() {
+        return Introspection.getAll(getTaskClass(), Class::getGenericInterfaces)
+            .filter(ParameterizedType.class::isInstance)
+            .map(ParameterizedType.class::cast)
+            .filter(type -> type.getRawType().equals(Task.class))
+            .filter(type -> type.getActualTypeArguments().length == 1)
+            .map(type -> type.getActualTypeArguments()[0])
+            .filter(Class.class::isInstance)
+            .map(Class.class::cast)
+            .findFirst()
+            .map(c -> (Class<T>) c);
+
+        // TODO: add .orElseGet() here that logs the type isn't defined, and assumes Void?
+    }
+
+    /**
+     * Obtains the {@link Stream} of {@link Reference}s for {@link Task}s that are
+     * dependencies of the {@link Task}.
+     * <p>
+     * By default, this method returns {@link Reference}s for {@link Task}s specified
+     * as {@link From} parameters of the {@link Task} execution method.
+     *
+     * @return a {@link Stream} of {@link Reference}s
+     */
+    default Stream<Reference> dependencies() {
+
+        // determine the task result class
+        final Optional<Class<?>> optionalClass = getTaskResultClass();
+
+        if (optionalClass.isPresent()) {
+            final Class<?> taskResultClass = optionalClass.get();
+
+            // locate the first visible non-static, public method returning the a class assignable to the result class
+            final Optional<Method> optionalMethod = Introspection.getVisibleMethods(getTaskClass(), method ->
+                    taskResultClass.isAssignableFrom(method.getReturnType())
+                        && !Modifier.isStatic(method.getModifiers())
+                        && Modifier.isPublic(method.getModifiers()))
+                .findFirst();
+
+            if (optionalMethod.isPresent()) {
+                final Method taskMethod = optionalMethod.get();
+
+                // locate the @From annotated parameters and return a stream of references for them
+                return Arrays.stream(taskMethod.getParameters())
+                    .filter(parameter -> parameter.getDeclaredAnnotation(From.class) != null)
+                    .flatMap(parameter -> {
+                        final From from = parameter.getDeclaredAnnotation(From.class);
+
+                        // determine if the Task requires a result from a concrete class or a Stream of results
+                        // from an abstract Task
+                        final Class<? extends Task<?>> fromTaskClass = from.value();
+
+                        if (fromTaskClass.isInterface() || Modifier.isAbstract(fromTaskClass.getModifiers())) {
+                            // ensure the parameter type for injection is a Stream
+                            if (Stream.class.isAssignableFrom(parameter.getType())) {
+
+                                return getProject().invocables()
+                                    .filter(definition -> fromTaskClass.isAssignableFrom(definition.getTaskClass()))
+                                    .map(Invocable::getReference);
+                            }
+
+                            // as we're using an abstract class, the parameter to be injected must be a Stream
+                            throw new IllegalArgumentException("The @From parameter [" + describe(parameter) + "] "
+                                + "defined in [" + describe(taskMethod) + "] "
+                                + "must be a Stream<T> as the declared @From Task is abstract");
+                        }
+
+                        // use a reference to the concrete Task
+                        return Stream.of(Reference.of(getProject(), fromTaskClass));
+                    });
+            }
+        }
+
+        return Stream.empty();
+    }
+
+    /**
+     * Determines if this {@link Task} is a codependency of another {@link Task}.
+     *
+     * @return {@code true} if the {@link Task} is a codependency, {@code false} otherwise
+     */
+    default boolean isCodependency() {
+        final Class<? extends Task<T>> taskClass = getTaskClass();
+
+        return Introspection.hasDeclaredAnnotation(taskClass, PreProcess.class)
+            || Introspection.hasDeclaredAnnotation(taskClass, PostProcess.class);
+    }
+
+    /**
+     * Determines if this {@link Task} must be executed {@link Before} the specified {@link Task}.
+     *
+     * @param reference the {@link Reference}
+     * @return {@code true} if the {@link Task} must happen before this {@link Task}, {@code false} otherwise
+     */
+    default boolean isBefore(final Reference reference) {
+        final Before before = getTaskClass().getDeclaredAnnotation(Before.class);
+
+        return before != null && before.value().isAssignableFrom(reference.getTaskClass());
+    }
+
+    /**
+     * Determines if this {@link Task} must be executed {@link After} the specified {@link Task}.
+     *
+     * @param reference the {@link Reference}
+     * @return {@code true} if the {@link Task} must happen after this {@link Task}, {@code false} otherwise
+     */
+    default boolean isAfter(final Reference reference) {
+        final After after = getTaskClass().getDeclaredAnnotation(After.class);
+
+        return after != null && after.value().isAssignableFrom(reference.getTaskClass());
+    }
+
+    /**
+     * Determines if this {@link Task} will automatically be included and executed by a {@link Program}.
+     *
+     * @return {@code true} if the {@link Task} must be executed, {@code false} otherwise
+     */
+    default boolean isAutomatic() {
+        return getTaskClass().isAnnotationPresent(Automatic.class);
+    }
+
+    /**
+     * Determines if the results from the {@link Task} are cacheable across {@link Program} executions.
+     *
+     * @return {@code true} if the results are cacheable, {@code false} otherwise
+     * @see NoCache
+     */
+    default boolean isCacheable() {
+        return !getTaskClass().isAnnotationPresent(NoCache.class);
+    }
+}
