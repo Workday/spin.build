@@ -183,6 +183,15 @@ class MavenFacade {
                 })
                 .map(RemoteRepository.Builder::build)
                 .forEach(this.remoteRepositories::add);
+
+            // when no repositories are configured from settings, fall back to Maven Central
+            if (this.remoteRepositories.isEmpty()) {
+                this.remoteRepositories.add(
+                    new RemoteRepository.Builder(
+                        "central",
+                        "default",
+                        "https://repo.maven.apache.org/maven2/").build());
+            }
         }
         catch (final SettingsBuildingException e) {
             this.recorder.warn(e,
