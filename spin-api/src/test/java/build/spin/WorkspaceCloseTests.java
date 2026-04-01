@@ -73,29 +73,123 @@ class WorkspaceCloseTests {
 
         // ── Unused stubs ───────────────────────────────────────────────────
 
-        @Override public String name()                                              { throw new UnsupportedOperationException(); }
-        @Override public Engine engine()                                            { throw new UnsupportedOperationException(); }
-        @Override public Optional<Project> parent()                                 { return Optional.empty(); }
-        @Override public int depth()                                                { return 0; }
-        @Override public Path path()                                                { throw new UnsupportedOperationException(); }
-        @Override public build.base.configuration.Configuration options()           { throw new UnsupportedOperationException(); }
-        @Override public Stream<Plugin> plugins()                                   { return Stream.empty(); }
-        @Override public boolean contains(final Class<?> cls)                      { return false; }
-        @Override public Stream<Resource> resources()                               { return Stream.empty(); }
-        @Override public Workspace workspace()                                      { return this; }
-        @Override public Stream<Project> stream(final Predicate<? super Project> p) { return Stream.of(this); }
-        @Override public Stream<Project> stream()                                   { return Stream.of(this); }
-        @Override public Stream<Project> children()                                 { return Stream.empty(); }
-        @Override public Stream<Invocable<?>> invocables()                          { return Stream.empty(); }
-        @Override public <T extends Plugin> Optional<T> getPlugin(final Class<T> c) { return Optional.empty(); }
-        @Override public <T extends Resource> Optional<T> getResource(final Class<T> c) { return Optional.empty(); }
-        @Override public <T extends Resource> Optional<T> findResource(final Class<T> c) { return Optional.empty(); }
-        @Override public boolean contains(final Path path)                          { return false; }
-        @Override public boolean isIgnored(final Path path)                         { return false; }
-        @Override public Stream<Invocable<?>> codependencies(final Reference ref)   { return Stream.empty(); }
-        @Override public Optional<Project> getProject(final Path path)              { return Optional.empty(); }
-        @Override public void treeify(final StringBuilder b, final String p, final String c, final Function<Project, String> f) {}
-        @Override public int compareTo(final Project other)                         { return 0; }
-        @Override public String toString()                                          { return "StubWorkspace"; }
+        @Override
+        public String name() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Engine engine() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<Project> parent() {
+            return Optional.empty();
+        }
+
+        @Override
+        public int depth() {
+            return 0;
+        }
+
+        @Override
+        public Path path() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public build.base.configuration.Configuration options() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Stream<Plugin> plugins() {
+            return Stream.empty();
+        }
+
+        @Override
+        public boolean contains(final Class<?> cls) {
+            return false;
+        }
+
+        @Override
+        public Stream<Resource> resources() {
+            return Stream.empty();
+        }
+
+        @Override
+        public Workspace workspace() {
+            return this;
+        }
+
+        @Override
+        public Stream<Project> stream(final Predicate<? super Project> p) {
+            return Stream.of(this);
+        }
+
+        @Override
+        public Stream<Project> stream() {
+            return Stream.of(this);
+        }
+
+        @Override
+        public Stream<Project> children() {
+            return Stream.empty();
+        }
+
+        @Override
+        public Stream<Invocable<?>> invocables() {
+            return Stream.empty();
+        }
+
+        @Override
+        public <T extends Plugin> Optional<T> getPlugin(final Class<T> c) {
+            return Optional.empty();
+        }
+
+        @Override
+        public <T extends Resource> Optional<T> getResource(final Class<T> c) {
+            return Optional.empty();
+        }
+
+        @Override
+        public <T extends Resource> Optional<T> findResource(final Class<T> c) {
+            return Optional.empty();
+        }
+
+        @Override
+        public boolean contains(final Path path) {
+            return false;
+        }
+
+        @Override
+        public boolean isIgnored(final Path path) {
+            return false;
+        }
+
+        @Override
+        public Stream<Invocable<?>> codependencies(final Reference ref) {
+            return Stream.empty();
+        }
+
+        @Override
+        public Optional<Project> getProject(final Path path) {
+            return Optional.empty();
+        }
+
+        @Override
+        public void treeify(final StringBuilder b, final String p, final String c, final Function<Project, String> f) {
+        }
+
+        @Override
+        public int compareTo(final Project other) {
+            return 0;
+        }
+
+        @Override
+        public String toString() {
+            return "StubWorkspace";
+        }
     }
 }
