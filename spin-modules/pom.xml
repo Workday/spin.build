@@ -24,6 +24,7 @@
         <module>spin-console-module</module>
         <module>spin-git-module</module>
         <module>spin-java-module</module>
+        <module>spin-engine-tests</module>
         <module>spin-java-module-tests</module>
         <module>spin-junit-module</module>
         <module>spin-maven-module</module>

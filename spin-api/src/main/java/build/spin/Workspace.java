@@ -60,7 +60,7 @@ public interface Workspace
                 project.plugins(AutoCloseable.class)
                     .forEach(closable -> {
                         try {
-                            close();
+                            closable.close();
                         }
                         catch (final Exception e) {
                             throw new RuntimeException(e);
