@@ -54,7 +54,7 @@ public class NativeMavenResolverTests {
         coordinates.add("org.mockito:mockito-core:jar:3.7.7");
         coordinates.add("org.apache.maven:maven-core:jar:3.8.6");
         coordinates.add("org.slf4j:slf4j-api:1.7.28");
-//        coordinates.add("build.base:base-foundation:0.19.0");
+        coordinates.add("build.base:base-foundation:0.21.5");
 
         final long failures = coordinates.stream()
             .map(this.maven::resolveArtifact)
@@ -96,7 +96,7 @@ public class NativeMavenResolverTests {
         coordinates.add("org.mockito:mockito-core:jar:3.7.7");
         coordinates.add("org.apache.maven:maven-core:jar:3.8.6");
         coordinates.add("org.slf4j:slf4j-api:1.7.28");
-//        coordinates.add("build.base:base-foundation:0.19.0");
+        coordinates.add("build.base:base-foundation:0.21.5");
 
         final long failures = coordinates.stream()
             .map(this.maven::resolveArtifactDescriptor)

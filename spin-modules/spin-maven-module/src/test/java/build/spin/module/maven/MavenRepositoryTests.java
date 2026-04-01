@@ -12,7 +12,6 @@ import build.spin.module.modulesystem.ModuleVersioning;
 import build.codemodel.injection.Context;
 import build.codemodel.injection.InjectionFramework;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -69,11 +68,10 @@ public class MavenRepositoryTests {
         };
     }
 
-    @Disabled
     @Test
     void shouldResolveBaseFoundationDependency() {
 
-        final Artifact artifact = Artifact.parse("build.base:base-foundation:0.19.0");
+        final Artifact artifact = Artifact.parse("build.base:base-foundation:0.21.5");
 
         final Exceptional<Path> path = this.repository.resolve(artifact);
 
