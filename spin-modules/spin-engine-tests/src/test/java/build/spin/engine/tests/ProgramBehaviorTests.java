@@ -1,0 +1,60 @@
+package build.spin.engine.tests;
+
+import build.spin.AssetCache;
+import build.spin.Engine;
+import build.spin.Program;
+import build.spin.ProgramExecutionException;
+import build.spin.Task;
+import build.spin.Workspace;
+import build.spin.common.DefaultAssetCache;
+import build.spin.testing.WorkspaceDiscovery;
+import build.spin.testing.WorkspacePath;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+/**
+ * Integration tests for {@link build.spin.common.DefaultProgram} behaviour:
+ * pre-processor execution and cycle detection.
+ */
+@ExtendWith(WorkspaceDiscovery.class)
+class ProgramBehaviorTests {
+
+    // ── Bug 1: @PreProcess tasks must execute before the main task ────────────
+
+    @BeforeEach
+    void resetFlags() {
+        PreProcessTestPlugin.PRE_PROCESSOR_RAN.set(false);
+        PreProcessTestPlugin.MAIN_TASK_RAN.set(false);
+    }
+
+    @Test
+    @WorkspacePath("preprocess-test")
+    void shouldRunPreProcessorBeforeMainTask(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("preprocess-main"));
+        program.execute(cache);
+
+        assertThat("main task must have run", PreProcessTestPlugin.MAIN_TASK_RAN.get(), is(true));
+        assertThat("@PreProcess task must have run", PreProcessTestPlugin.PRE_PROCESSOR_RAN.get(), is(true));
+    }
+
+    // ── Bug 2: cyclic task dependencies must throw, not silently produce nothing
+
+    @Test
+    @WorkspacePath("cyclic-test")
+    void shouldThrowWhenTaskDependenciesAreCyclic(final Engine engine, final Workspace workspace) {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("cyclic-a"));
+
+        assertThrows(ProgramExecutionException.class, () -> program.execute(cache),
+            "execute() must throw ProgramExecutionException when tasks have cyclic dependencies");
+    }
+}

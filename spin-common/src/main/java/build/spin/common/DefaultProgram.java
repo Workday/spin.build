@@ -419,16 +419,13 @@ public final class DefaultProgram
                 executionContext.addResolver(instruction.getContext().resolver());
 
                 try {
-                    //                    // execute the pre-processing co-dependencies
-                    //                    instruction.codependencies()
-                    //                        .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PreProcess.class))
-                    //                        .forEach(codependency -> {
-                    //                            // instantiate the Task
-                    //                            final Task<?> preprocessor = codependency.createTask(executionContext);
-                    //
-                    //                            // execute the task
-                    //                            preprocessor.execute(codependency, executionContext);
-                    //                        });
+                    // execute the pre-processing co-dependencies
+                    instruction.codependencies()
+                        .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PreProcess.class))
+                        .forEach(codependency -> {
+                            final Task<?> preprocessor = codependency.createTask(executionContext);
+                            preprocessor.execute(codependency, executionContext, this.framework);
+                        });
 
                     // execute the Task
                     final Object initialResult = task.execute(invocable, executionContext, this.framework);
@@ -484,16 +481,13 @@ public final class DefaultProgram
                     //                        return Optional.empty();
                     //                    });
                     //
-                    //                    // execute the post-processing co-dependencies
-                    //                    instruction.codependencies()
-                    //                        .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PostProcess.class))
-                    //                        .forEach(codependency -> {
-                    //                            // instantiate the Task
-                    //                            final Task<?> postprocessor = codependency.createTask(executionContext);
-                    //
-                    //                            // execute the task
-                    //                            postprocessor.execute(codependency, executionContext);
-                    //                        });
+                    // execute the post-processing co-dependencies
+                    instruction.codependencies()
+                        .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PostProcess.class))
+                        .forEach(codependency -> {
+                            final Task<?> postprocessor = codependency.createTask(executionContext);
+                            postprocessor.execute(codependency, executionContext, this.framework);
+                        });
 
                     // obtain the final result from the Capture as it may have been changed during PostProcessing
                     final Object taskResult = capture.isPresent() ? capture.get() : null;
@@ -524,6 +518,14 @@ public final class DefaultProgram
         }
 
         execution.complete();
+
+        // detect tasks that could not be executed due to cyclic or otherwise unsatisfiable dependencies
+        if (!remaining.isEmpty()) {
+            final Reference stuck = remaining.iterator().next();
+            throw new ProgramExecutionException(this, stuck,
+                "Program execution stalled: " + remaining.size()
+                    + " task(s) could not execute due to cyclic or unsatisfied dependencies: " + remaining);
+        }
 
         return localCache;
     }
