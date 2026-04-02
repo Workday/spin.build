@@ -6,8 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests for {@link HeapBasedCache}s.
@@ -32,13 +31,13 @@ class HeapBasedCacheTests {
      */
     @Test
     void shouldCreateEmptyCache() {
-        assertThat(this.cache.isEmpty(), is(true));
-        assertThat(this.cache.size(), is(0));
+        assertThat(this.cache.isEmpty()).isTrue();
+        assertThat(this.cache.size()).isEqualTo(0);
 
-        assertThat(this.cache.keys().count(), is(0L));
-        assertThat(this.cache.values().count(), is(0L));
+        assertThat(this.cache.keys().count()).isEqualTo(0L);
+        assertThat(this.cache.values().count()).isEqualTo(0L);
 
-        assertThat(this.cache.get("Greeting").isPresent(), is(false));
+        assertThat(this.cache.get("Greeting").isPresent()).isFalse();
     }
 
     /**
@@ -47,27 +46,27 @@ class HeapBasedCacheTests {
     @Test
     void shouldCreateEntries() {
         final Optional<String> previous = this.cache.put("Greeting", "G'day");
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.size(), is(1));
-        assertThat(previous.isPresent(), is(false));
-        assertThat(this.cache.get("Greeting").get(), is("G'day"));
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.size()).isEqualTo(1);
+        assertThat(previous.isPresent()).isFalse();
+        assertThat(this.cache.get("Greeting").get()).isEqualTo("G'day");
 
         final Optional<String> current = this.cache.computeIfAbsent("Welcome", () -> "Hello");
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.size(), is(2));
-        assertThat(current.isPresent(), is(true));
-        assertThat(current.get(), is("Hello"));
-        assertThat(this.cache.get("Welcome").get(), is("Hello"));
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.size()).isEqualTo(2);
+        assertThat(current.isPresent()).isTrue();
+        assertThat(current.get()).isEqualTo("Hello");
+        assertThat(this.cache.get("Welcome").get()).isEqualTo("Hello");
 
         final Optional<String> computed = this.cache.compute("Message", __ -> "Awesome");
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.size(), is(3));
-        assertThat(computed.isPresent(), is(true));
-        assertThat(computed.get(), is("Awesome"));
-        assertThat(this.cache.get("Message").get(), is("Awesome"));
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.size()).isEqualTo(3);
+        assertThat(computed.isPresent()).isTrue();
+        assertThat(computed.get()).isEqualTo("Awesome");
+        assertThat(this.cache.get("Message").get()).isEqualTo("Awesome");
 
-        assertThat(this.cache.keys().count(), is(3L));
-        assertThat(this.cache.values().count(), is(3L));
+        assertThat(this.cache.keys().count()).isEqualTo(3L);
+        assertThat(this.cache.values().count()).isEqualTo(3L);
     }
 
     /**
@@ -79,42 +78,42 @@ class HeapBasedCacheTests {
 
         final String hello = "Hello";
         final Optional<String> first = this.cache.put(key, hello);
-        assertThat(first.isPresent(), is(false));
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.size(), is(1));
-        assertThat(this.cache.get(key).get(), is(hello));
+        assertThat(first.isPresent()).isFalse();
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.size()).isEqualTo(1);
+        assertThat(this.cache.get(key).get()).isEqualTo(hello);
 
         final String gday = "G'day";
         final Optional<String> second = this.cache.put(key, gday);
-        assertThat(second.isPresent(), is(true));
-        assertThat(second.get(), is(hello));
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.size(), is(1));
-        assertThat(this.cache.get(key).get(), is(gday));
+        assertThat(second.isPresent()).isTrue();
+        assertThat(second.get()).isEqualTo(hello);
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.size()).isEqualTo(1);
+        assertThat(this.cache.get(key).get()).isEqualTo(gday);
 
         final String howdy = "Howdy!";
         final Optional<String> third = this.cache.computeIfPresent(key, __ -> howdy);
-        assertThat(third.isPresent(), is(true));
-        assertThat(third.get(), is(howdy));
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.size(), is(1));
-        assertThat(this.cache.get(key).get(), is(howdy));
+        assertThat(third.isPresent()).isTrue();
+        assertThat(third.get()).isEqualTo(howdy);
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.size()).isEqualTo(1);
+        assertThat(this.cache.get(key).get()).isEqualTo(howdy);
 
         final String yomate = "Yo Mate!";
         final Optional<String> fourth = this.cache.computeIfAbsent(key, () -> yomate);
-        assertThat(fourth.isPresent(), is(true));
-        assertThat(fourth.get(), is(howdy));
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.size(), is(1));
-        assertThat(this.cache.get(key).get(), is(howdy));
+        assertThat(fourth.isPresent()).isTrue();
+        assertThat(fourth.get()).isEqualTo(howdy);
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.size()).isEqualTo(1);
+        assertThat(this.cache.get(key).get()).isEqualTo(howdy);
 
         final String wazzup = "Wazzup?";
         final Optional<String> fifth = this.cache.compute(key, __ -> wazzup);
-        assertThat(fifth.isPresent(), is(true));
-        assertThat(fifth.get(), is(wazzup));
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.size(), is(1));
-        assertThat(this.cache.get(key).get(), is(wazzup));
+        assertThat(fifth.isPresent()).isTrue();
+        assertThat(fifth.get()).isEqualTo(wazzup);
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.size()).isEqualTo(1);
+        assertThat(this.cache.get(key).get()).isEqualTo(wazzup);
     }
 
     /**
@@ -126,20 +125,20 @@ class HeapBasedCacheTests {
 
         final String hello = "Hello";
         final Optional<String> first = this.cache.put(key, hello);
-        assertThat(first.isPresent(), is(false));
-        assertThat(this.cache.isEmpty(), is(false));
-        assertThat(this.cache.get(key).get(), is(hello));
+        assertThat(first.isPresent()).isFalse();
+        assertThat(this.cache.isEmpty()).isFalse();
+        assertThat(this.cache.get(key).get()).isEqualTo(hello);
 
         final String howdy = "Howdy!";
         final Optional<String> second = this.cache.computeIfAbsent(key, () -> howdy);
-        assertThat(second.isPresent(), is(true));
-        assertThat(second.get(), is(hello));
-        assertThat(this.cache.get(key).get(), is(hello));
+        assertThat(second.isPresent()).isTrue();
+        assertThat(second.get()).isEqualTo(hello);
+        assertThat(this.cache.get(key).get()).isEqualTo(hello);
 
         final Optional<String> third = this.cache.compute(key, existing -> existing);
-        assertThat(third.isPresent(), is(true));
-        assertThat(third.get(), is(hello));
-        assertThat(this.cache.get(key).get(), is(hello));
+        assertThat(third.isPresent()).isTrue();
+        assertThat(third.get()).isEqualTo(hello);
+        assertThat(this.cache.get(key).get()).isEqualTo(hello);
     }
 
     /**
@@ -150,24 +149,24 @@ class HeapBasedCacheTests {
 
         final String key = "Greeting";
 
-        assertThat(this.cache.remove(key).isPresent(), is(false));
+        assertThat(this.cache.remove(key).isPresent()).isFalse();
 
         final String hello = "Hello";
         this.cache.put(key, hello);
 
         final Optional<String> first = this.cache.remove(key);
-        assertThat(first.isPresent(), is(true));
-        assertThat(this.cache.isEmpty(), is(true));
-        assertThat(this.cache.size(), is(0));
-        assertThat(this.cache.get(key).isPresent(), is(false));
+        assertThat(first.isPresent()).isTrue();
+        assertThat(this.cache.isEmpty()).isTrue();
+        assertThat(this.cache.size()).isEqualTo(0);
+        assertThat(this.cache.get(key).isPresent()).isFalse();
 
         this.cache.put(key, hello);
 
         final Optional<String> second = this.cache.removeIf(key, __ -> true);
-        assertThat(second.isPresent(), is(true));
-        assertThat(this.cache.isEmpty(), is(true));
-        assertThat(this.cache.size(), is(0));
-        assertThat(this.cache.get(key).isPresent(), is(false));
+        assertThat(second.isPresent()).isTrue();
+        assertThat(this.cache.isEmpty()).isTrue();
+        assertThat(this.cache.size()).isEqualTo(0);
+        assertThat(this.cache.get(key).isPresent()).isFalse();
     }
 
     /**
@@ -178,32 +177,32 @@ class HeapBasedCacheTests {
 
         final String key = "Greeting";
 
-        assertThat(this.cache.remove(key).isPresent(), is(false));
+        assertThat(this.cache.remove(key).isPresent()).isFalse();
 
         final String hello = "Hello";
         this.cache.put(key, hello);
 
         final Optional<String> first = this.cache.put(key, null);
-        assertThat(first.isPresent(), is(true));
-        assertThat(this.cache.isEmpty(), is(true));
-        assertThat(this.cache.size(), is(0));
-        assertThat(this.cache.get(key).isPresent(), is(false));
+        assertThat(first.isPresent()).isTrue();
+        assertThat(this.cache.isEmpty()).isTrue();
+        assertThat(this.cache.size()).isEqualTo(0);
+        assertThat(this.cache.get(key).isPresent()).isFalse();
 
         this.cache.put(key, hello);
 
         final Optional<String> second = this.cache.computeIfPresent(key, __ -> null);
-        assertThat(second.isPresent(), is(false));
-        assertThat(this.cache.isEmpty(), is(true));
-        assertThat(this.cache.size(), is(0));
-        assertThat(this.cache.get(key).isPresent(), is(false));
+        assertThat(second.isPresent()).isFalse();
+        assertThat(this.cache.isEmpty()).isTrue();
+        assertThat(this.cache.size()).isEqualTo(0);
+        assertThat(this.cache.get(key).isPresent()).isFalse();
 
         this.cache.put(key, hello);
 
         final Optional<String> third = this.cache.compute(key, __ -> null);
-        assertThat(third.isPresent(), is(false));
-        assertThat(this.cache.isEmpty(), is(true));
-        assertThat(this.cache.size(), is(0));
-        assertThat(this.cache.get(key).isPresent(), is(false));
+        assertThat(third.isPresent()).isFalse();
+        assertThat(this.cache.isEmpty()).isTrue();
+        assertThat(this.cache.size()).isEqualTo(0);
+        assertThat(this.cache.get(key).isPresent()).isFalse();
     }
 
     /**
@@ -216,9 +215,9 @@ class HeapBasedCacheTests {
 
         this.cache.clear();
 
-        assertThat(this.cache.isEmpty(), is(true));
-        assertThat(this.cache.size(), is(0));
-        assertThat(this.cache.get("Greeting").isPresent(), is(false));
-        assertThat(this.cache.get("Welcome").isPresent(), is(false));
+        assertThat(this.cache.isEmpty()).isTrue();
+        assertThat(this.cache.size()).isEqualTo(0);
+        assertThat(this.cache.get("Greeting").isPresent()).isFalse();
+        assertThat(this.cache.get("Welcome").isPresent()).isFalse();
     }
 }

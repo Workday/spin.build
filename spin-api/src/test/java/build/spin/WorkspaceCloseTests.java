@@ -8,8 +8,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 /**
@@ -29,7 +28,7 @@ class WorkspaceCloseTests {
         final Workspace workspace = new StubWorkspace(plugin);
         workspace.close();
 
-        assertThat("AutoCloseable plugin must be closed", closed[0], is(true));
+        assertThat(closed[0]).withFailMessage("AutoCloseable plugin must be closed").isTrue();
     }
 
     /**

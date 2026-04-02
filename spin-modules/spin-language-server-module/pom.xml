@@ -18,23 +18,38 @@
     <dependencies>
         <dependency>
             <groupId>build.spin</groupId>
-            <artifactId>spin-engine</artifactId>
+            <artifactId>spin-api</artifactId>
             <version>${revision}</version>
         </dependency>
 
-        <!-- dependencies for testing -->
         <dependency>
-            <groupId>build.spin</groupId>
-            <artifactId>spin-testing</artifactId>
-            <version>${revision}</version>
-            <scope>test</scope>
+            <groupId>build.base</groupId>
+            <artifactId>base-foundation</artifactId>
         </dependency>
 
         <dependency>
-            <groupId>build.spin.module</groupId>
-            <artifactId>spin-maven-module</artifactId>
-            <version>${revision}</version>
-            <scope>test</scope>
+            <groupId>build.base</groupId>
+            <artifactId>base-telemetry</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
 
         <dependency>
@@ -42,30 +57,11 @@
             <artifactId>jackson-datatype-jdk8</artifactId>
         </dependency>
 
-        <!-- test -->
+        <!-- Test Dependencies -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
             <scope>test</scope>
         </dependency>
-
-        <dependency>
-            <groupId>org.hamcrest</groupId>
-            <artifactId>hamcrest</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-api</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-engine</artifactId>
-            <scope>test</scope>
-        </dependency>
-
     </dependencies>
 </project>

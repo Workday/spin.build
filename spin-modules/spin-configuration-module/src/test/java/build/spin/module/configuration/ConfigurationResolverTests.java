@@ -12,8 +12,6 @@ import build.codemodel.injection.InjectionFramework;
 import build.codemodel.injection.UnsatisfiedDependencyException;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.inject.Inject;
-import org.hamcrest.CoreMatchers;
-import org.hamcrest.MatcherAssert;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +21,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Optional;
 import java.util.Properties;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests for {@link ConfigurationResolver}s.
@@ -123,8 +123,8 @@ class ConfigurationResolverTests {
 
         final Example example = createContext().inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.path, CoreMatchers.is(CoreMatchers.notNullValue()));
+        assertThat(example).isNotNull();
+        assertThat(example.path).isNotNull();
     }
 
     /**
@@ -143,9 +143,9 @@ class ConfigurationResolverTests {
 
         final Example example = createContext().inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.path, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.path.isPresent(), CoreMatchers.is(true));
+        assertThat(example).isNotNull();
+        assertThat(example.path).isNotNull();
+        assertThat(example.path.isPresent()).isTrue();
     }
 
     /**
@@ -164,9 +164,9 @@ class ConfigurationResolverTests {
 
         final Example example = createContext().inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.path, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.path.isPresent(), CoreMatchers.is(false));
+        assertThat(example).isNotNull();
+        assertThat(example.path).isNotNull();
+        assertThat(example.path.isPresent()).isFalse();
     }
 
     /**
@@ -185,9 +185,9 @@ class ConfigurationResolverTests {
 
         final Example example = createContext().inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties.get("message"), CoreMatchers.is("hello world"));
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.get("message")).isEqualTo("hello world");
     }
 
     /**
@@ -205,9 +205,9 @@ class ConfigurationResolverTests {
 
         final Example example = createContext().inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties.get("message"), CoreMatchers.is("hello world"));
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.get("message")).isEqualTo("hello world");
     }
 
     /**
@@ -225,10 +225,10 @@ class ConfigurationResolverTests {
         }
         final Example example = createContext().inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties.isPresent(), CoreMatchers.is(true));
-        MatcherAssert.assertThat(example.properties.get().get("message"), CoreMatchers.is("hello world"));
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.isPresent()).isTrue();
+        assertThat(example.properties.get().get("message")).isEqualTo("hello world");
     }
 
     /**
@@ -264,9 +264,9 @@ class ConfigurationResolverTests {
         }
         final Example example = createContext().inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties.isPresent(), CoreMatchers.is(false));
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.isPresent()).isFalse();
     }
 
     /**
@@ -284,9 +284,9 @@ class ConfigurationResolverTests {
 
         final Example example = createContext().inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.node, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.node.get("message").textValue(), CoreMatchers.is("hello world"));
+        assertThat(example).isNotNull();
+        assertThat(example.node).isNotNull();
+        assertThat(example.node.get("message").textValue()).isEqualTo("hello world");
     }
 
     /**
@@ -329,17 +329,17 @@ class ConfigurationResolverTests {
 
         final Example example = context.inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.paths.isEmpty(), CoreMatchers.is(false));
-        MatcherAssert.assertThat(example.paths.stream()
+        assertThat(example).isNotNull();
+        assertThat(example.paths.isEmpty()).isFalse();
+        assertThat(example.paths.stream()
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("Expected at least one path in Hierarchical<Path> but it was empty")),
-            CoreMatchers.is(this.path.resolve("level-1/level-2/level-3/hierarchical.properties")));
-        MatcherAssert.assertThat(example.paths.stream()
+                .orElseThrow(() -> new AssertionError("Expected at least one path in Hierarchical<Path> but it was empty")))
+            .isEqualTo(this.path.resolve("level-1/level-2/level-3/hierarchical.properties"));
+        assertThat(example.paths.stream()
                 .skip(1)
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("Expected at least two paths in Hierarchical<Path> but only one was present")),
-            CoreMatchers.is(this.path.resolve("level-1/hierarchical.properties")));
+                .orElseThrow(() -> new AssertionError("Expected at least two paths in Hierarchical<Path> but only one was present")))
+            .isEqualTo(this.path.resolve("level-1/hierarchical.properties"));
     }
 
     /**
@@ -365,8 +365,8 @@ class ConfigurationResolverTests {
 
         final Example example = context.inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties.isEmpty(), CoreMatchers.is(false));
+        assertThat(example).isNotNull();
+        assertThat(example.properties.isEmpty()).isFalse();
     }
 
     /**
@@ -392,7 +392,7 @@ class ConfigurationResolverTests {
 
         final Example example = context.inject(new Example());
 
-        MatcherAssert.assertThat(example, CoreMatchers.is(CoreMatchers.notNullValue()));
-        MatcherAssert.assertThat(example.properties.isEmpty(), CoreMatchers.is(true));
+        assertThat(example).isNotNull();
+        assertThat(example.properties.isEmpty()).isTrue();
     }
 }

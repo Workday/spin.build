@@ -18,19 +18,60 @@
     <dependencies>
         <dependency>
             <groupId>build.spin</groupId>
+            <artifactId>spin-api</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin-common</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin</groupId>
             <artifactId>spin-engine</artifactId>
             <version>${revision}</version>
         </dependency>
 
         <dependency>
-            <groupId>build.spin.module</groupId>
-            <artifactId>spin-git-module</artifactId>
-            <version>${revision}</version>
+            <groupId>build.base</groupId>
+            <artifactId>base-configuration</artifactId>
         </dependency>
 
         <dependency>
             <groupId>build.base</groupId>
-            <artifactId>base-assertion</artifactId>
+            <artifactId>base-flow</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-foundation</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-option</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-telemetry</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>codemodel-foundation</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>jdk-codemodel</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>dependency-injection</artifactId>
         </dependency>
 
         <dependency>

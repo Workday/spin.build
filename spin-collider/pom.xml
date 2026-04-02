@@ -22,8 +22,24 @@
         </dependency>
 
         <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin-api</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-configuration</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>build.base</groupId>
             <artifactId>base-network</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
         </dependency>
 
         <dependency>
@@ -33,18 +49,34 @@
 
         <dependency>
             <groupId>build.spawn</groupId>
-            <artifactId>spawn-local-platform</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>build.spawn</groupId>
             <artifactId>spawn-jdk</artifactId>
         </dependency>
 
         <dependency>
             <groupId>build.spawn</groupId>
-            <artifactId>spawn-local-jdk</artifactId>
+            <artifactId>spawn-local-platform</artifactId>
+        </dependency>
+
+        <!-- Test Dependencies -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <configuration>
+                    <ignoredNonTestScopedDependencies>
+                        <!-- required at compile scope for transitive resolution; only used in test code directly -->
+                        <ignoredNonTestScopedDependency>build.spawn:spawn-local-platform</ignoredNonTestScopedDependency>
+                    </ignoredNonTestScopedDependencies>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

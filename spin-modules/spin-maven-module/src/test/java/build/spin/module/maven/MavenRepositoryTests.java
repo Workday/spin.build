@@ -17,8 +17,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Path;
 import java.util.Optional;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests for {@link MavenRepository}s.
@@ -75,12 +74,12 @@ public class MavenRepositoryTests {
 
         final Exceptional<Path> path = this.repository.resolve(artifact);
 
-        assertThat(path.isPresent(), is(true));
+        assertThat(path.isPresent()).isTrue();
 
         final Exceptional<ModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
-        assertThat(moduleDescriptor.isPresent(), is(true));
+        assertThat(moduleDescriptor.isPresent()).isTrue();
     }
 
     @Test
@@ -90,12 +89,12 @@ public class MavenRepositoryTests {
 
         final Exceptional<Path> optional = this.repository.resolve(artifact);
 
-        assertThat(optional.isPresent(), is(true));
+        assertThat(optional.isPresent()).isTrue();
 
         final Exceptional<ModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
-        assertThat(moduleDescriptor.isPresent(), is(true));
+        assertThat(moduleDescriptor.isPresent()).isTrue();
     }
 
     @Test
@@ -105,13 +104,13 @@ public class MavenRepositoryTests {
 
         final Exceptional<Path> optional = this.repository.resolve(artifact);
 
-        assertThat(optional.isPresent(), is(true));
+        assertThat(optional.isPresent()).isTrue();
 
         final Exceptional<ModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
         moduleDescriptor.orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
-        assertThat(moduleDescriptor.isPresent(), is(true));
+        assertThat(moduleDescriptor.isPresent()).isTrue();
     }
 
     @Test
@@ -121,12 +120,12 @@ public class MavenRepositoryTests {
 
         final Exceptional<Path> optional = this.repository.resolve(artifact);
 
-        assertThat(optional.isPresent(), is(true));
+        assertThat(optional.isPresent()).isTrue();
 
         final Exceptional<ModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
-        assertThat(moduleDescriptor.isPresent(), is(true));
+        assertThat(moduleDescriptor.isPresent()).isTrue();
     }
 
     @Test
@@ -138,7 +137,7 @@ public class MavenRepositoryTests {
             .getModuleDescriptor(artifact, this.moduleCatalog, this.versioning)
             .orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
 
-        assertThat(moduleDescriptor.requires().count(), is(24L));
+        assertThat(moduleDescriptor.requires().count()).isEqualTo(24L);
     }
 
     @Test
@@ -154,7 +153,7 @@ public class MavenRepositoryTests {
             .getModuleDescriptor(asm94Artifact, this.moduleCatalog, this.versioning)
             .orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + asm94Artifact + "] but none was resolved"));
 
-        assertThat(asm72ModuleDescriptor.name(), is(asm94ModuleDescriptor.name()));
+        assertThat(asm72ModuleDescriptor.name()).isEqualTo(asm94ModuleDescriptor.name());
     }
 
     @Test
@@ -163,14 +162,14 @@ public class MavenRepositoryTests {
 
         final Exceptional<Path> path = this.repository.resolve(artifact);
 
-        assertThat(path.isPresent(), is(true));
+        assertThat(path.isPresent()).isTrue();
 
         this.moduleCatalog.add("com.fasterxml.jackson.databind", artifact);
 
         final Exceptional<ModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
-        assertThat(moduleDescriptor.isPresent(), is(true));
+        assertThat(moduleDescriptor.isPresent()).isTrue();
     }
 
     @Test
@@ -179,7 +178,7 @@ public class MavenRepositoryTests {
         final Artifact artifact = Artifact.parse("io.undertow:undertow-core:2.3.2.Final");
 
         // ensure the ModuleReference can't be resolved (with an empty ModuleCatalog)
-        assertThat(this.repository.getModuleReference(artifact, this.moduleCatalog).isEmpty(), is(true));
+        assertThat(this.repository.getModuleReference(artifact, this.moduleCatalog).isEmpty()).isTrue();
     }
 
     @Test
@@ -195,18 +194,18 @@ public class MavenRepositoryTests {
         final Exceptional<ModuleReference> exceptional = this.repository
             .getModuleReference(artifact, this.moduleCatalog);
 
-        assertThat(exceptional.isPresent(), is(true));
+        assertThat(exceptional.isPresent()).isTrue();
 
         var moduleReference = exceptional.orElseThrow(() -> new AssertionError("Expected ModuleReference for artifact [" + artifact + "] but none was resolved"));
 
-        assertThat(moduleReference.name(), is(moduleName));
-        assertThat(moduleReference.version().orElseThrow(() -> new AssertionError("Expected version on ModuleReference [" + moduleReference.name() + "] but it was empty")).get(), is("2.3.2.Final"));
+        assertThat(moduleReference.name()).isEqualTo(moduleName);
+        assertThat(moduleReference.version().orElseThrow(() -> new AssertionError("Expected version on ModuleReference [" + moduleReference.name() + "] but it was empty")).get()).isEqualTo("2.3.2.Final");
 
         // ensure we can resolve the ModuleDescriptor
         final ModuleDescriptor moduleDescriptor = this.repository
             .getModuleDescriptor(artifact, this.moduleCatalog, this.versioning)
             .orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
 
-        assertThat(moduleDescriptor.requires().count(), is(7L));
+        assertThat(moduleDescriptor.requires().count()).isEqualTo(7L);
     }
 }

@@ -22,6 +22,5 @@ module build.spin.engine.tests {
     requires transitive build.spin.module.clean;
     requires transitive build.spin.testing;
 
-    requires org.hamcrest;
     requires org.junit.jupiter.api;
 }

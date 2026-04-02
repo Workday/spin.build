@@ -18,11 +18,26 @@
     <dependencies>
         <dependency>
             <groupId>build.spin</groupId>
+            <artifactId>spin-api</artifactId>
+            <version>${revision}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin-common</artifactId>
+            <version>${revision}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin</groupId>
             <artifactId>spin-testing</artifactId>
             <version>${revision}</version>
             <scope>test</scope>
         </dependency>
 
+        <!-- ServiceLoader-discovered plugin modules -->
         <dependency>
             <groupId>build.spin.module</groupId>
             <artifactId>spin-configuration-module</artifactId>
@@ -38,14 +53,20 @@
         </dependency>
 
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
+            <groupId>build.base</groupId>
+            <artifactId>base-configuration</artifactId>
             <scope>test</scope>
         </dependency>
 
         <dependency>
-            <groupId>org.hamcrest</groupId>
-            <artifactId>hamcrest</artifactId>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -56,9 +77,25 @@
         </dependency>
 
         <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-engine</artifactId>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <configuration>
+                    <ignoredUnusedDeclaredDependencies>
+                        <!-- ServiceLoader-discovered plugin modules; no direct class imports -->
+                        <ignoredUnusedDeclaredDependency>build.spin.module:spin-configuration-module</ignoredUnusedDeclaredDependency>
+                        <ignoredUnusedDeclaredDependency>build.spin.module:spin-clean-module</ignoredUnusedDeclaredDependency>
+                    </ignoredUnusedDeclaredDependencies>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

@@ -19,7 +19,7 @@
  */
 module build.spin.module.modulesystem {
 
-    requires transitive org.hamcrest;
+    requires transitive org.assertj.core;
     requires transitive org.mockito.core;
 
     requires transitive org.junit.jupiter.api;

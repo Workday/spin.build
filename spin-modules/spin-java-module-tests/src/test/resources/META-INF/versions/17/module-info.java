@@ -26,6 +26,6 @@ module build.spin.module.java.tests {
 
     requires transitive build.spin.testing;
 
-    requires org.hamcrest;
+    requires org.assertj.core;
     requires org.junit.jupiter.api;
 }
