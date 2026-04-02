@@ -13,8 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -41,8 +40,8 @@ class ProgramBehaviorTests {
         final Program program = engine.createProgram(workspace, Task.Pattern.of("preprocess-main"));
         program.execute(cache);
 
-        assertThat("main task must have run", PreProcessTestPlugin.MAIN_TASK_RAN.get(), is(true));
-        assertThat("@PreProcess task must have run", PreProcessTestPlugin.PRE_PROCESSOR_RAN.get(), is(true));
+        assertThat(PreProcessTestPlugin.MAIN_TASK_RAN.get()).withFailMessage("main task must have run").isTrue();
+        assertThat(PreProcessTestPlugin.PRE_PROCESSOR_RAN.get()).withFailMessage("@PreProcess task must have run").isTrue();
     }
 
     // ── Bug 2: cyclic task dependencies must throw, not silently produce nothing

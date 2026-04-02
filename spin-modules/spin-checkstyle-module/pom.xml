@@ -18,7 +18,7 @@
     <dependencies>
         <dependency>
             <groupId>build.spin</groupId>
-            <artifactId>spin-engine</artifactId>
+            <artifactId>spin-api</artifactId>
             <version>${revision}</version>
         </dependency>
 
@@ -35,8 +35,48 @@
         </dependency>
 
         <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-configuration</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-foundation</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-io</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-option</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-telemetry</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-application</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>build.spawn</groupId>
             <artifactId>spawn-jdk</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-local-platform</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
         </dependency>
     </dependencies>
 </project>

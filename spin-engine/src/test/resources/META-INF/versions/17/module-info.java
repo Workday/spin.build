@@ -18,6 +18,6 @@
  * #L%
  */
 module build.spin.engine {
-    requires org.hamcrest;
+    requires org.assertj.core;
     requires org.junit.jupiter.api;
 }

@@ -6,8 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.regex.Pattern;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Unit tests for {@link Globs}s.
@@ -28,7 +27,7 @@ class GlobsTests {
 
         final Path path = Paths.get("/user/fred/code/spin/src/main/resource/project/foo/bar");
 
-        assertThat(pattern.asMatchPredicate().test(path.toString()), is(true));
+        assertThat(pattern.asMatchPredicate().test(path.toString())).isTrue();
     }
 
     /**
@@ -42,6 +41,6 @@ class GlobsTests {
 
         final Path path = Paths.get("/user/fred/code/spin/src/main/resource/project/foo/bar");
 
-        assertThat(pattern.asMatchPredicate().test(path.toString()), is(false));
+        assertThat(pattern.asMatchPredicate().test(path.toString())).isFalse();
     }
 }

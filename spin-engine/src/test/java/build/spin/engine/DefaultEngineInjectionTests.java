@@ -8,9 +8,7 @@ import java.nio.file.FileSystems;
 import java.util.Optional;
 import javax.xml.parsers.DocumentBuilderFactory;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.notNullValue;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Dependency Injection tests for the {@link DefaultEngine}.
@@ -34,6 +32,6 @@ class DefaultEngineInjectionTests {
             Optional.empty(),
             Optional.empty());
 
-        assertThat(engine.context().create(DocumentBuilderFactory.class), is(notNullValue()));
+        assertThat(engine.context().create(DocumentBuilderFactory.class)).isNotNull();
     }
 }

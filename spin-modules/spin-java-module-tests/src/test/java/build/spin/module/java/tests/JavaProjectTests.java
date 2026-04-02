@@ -53,8 +53,7 @@ import java.util.Stack;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
@@ -69,17 +68,17 @@ public class JavaProjectTests {
     @Test
     @WorkspacePath("java-8")
     void shouldDetectJava8Project(final Engine engine, final Workspace workspace) {
-        assertThat(engine.options().get(JDKVersion.class).major(), is(8));
-        assertThat(workspace.name(), is("java-8"));
-        assertThat(workspace.getPlugin(Java8CompilerPlugin.class).isPresent(), is(true));
+        assertThat(engine.options().get(JDKVersion.class).major()).isEqualTo(8);
+        assertThat(workspace.name()).isEqualTo("java-8");
+        assertThat(workspace.getPlugin(Java8CompilerPlugin.class).isPresent()).isTrue();
     }
 
     @Test
     @WorkspacePath("java-25")
     void shouldDetectJava25Project(final Engine engine, final Workspace workspace) {
-        assertThat(engine.options().get(JDKVersion.class).major(), is(25));
-        assertThat(workspace.name(), is("java-25"));
-        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent(), is(true));
+        assertThat(engine.options().get(JDKVersion.class).major()).isEqualTo(25);
+        assertThat(workspace.name()).isEqualTo("java-25");
+        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent()).isTrue();
     }
 
     @Test
@@ -89,17 +88,17 @@ public class JavaProjectTests {
         throws Exception {
 
         // ensure the default Java Version is 8
-        assertThat(engine.options().get(JDKVersion.class).major(), is(8));
+        assertThat(engine.options().get(JDKVersion.class).major()).isEqualTo(8);
 
-        assertThat(workspace.name(), is("multi-release"));
+        assertThat(workspace.name()).isEqualTo("multi-release");
 
-        assertThat(workspace.getPlugin(Java8CompilerPlugin.class).isPresent(), is(true));
-        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent(), is(true));
+        assertThat(workspace.getPlugin(Java8CompilerPlugin.class).isPresent()).isTrue();
+        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent()).isTrue();
 
         // TODO: assert that Java25Plugin.Compile requires Java8Plugin.Compile
 
-        assertThat(workspace.getPlugin(Java8JUnitPlugin.class).isPresent(), is(true));
-        assertThat(workspace.getPlugin(Java25JUnitPlugin.class).isPresent(), is(true));
+        assertThat(workspace.getPlugin(Java8JUnitPlugin.class).isPresent()).isTrue();
+        assertThat(workspace.getPlugin(Java25JUnitPlugin.class).isPresent()).isTrue();
 
         // TODO: assert that Java25JUnitPlugin.Compile requires Java8JUnitPlugin.Compile
 
@@ -116,9 +115,9 @@ public class JavaProjectTests {
     @WorkspacePath("broken-25")
     void shouldCaptureCompilerErrors(final Engine engine, final Workspace workspace) {
 
-        assertThat(engine.options().get(JDKVersion.class).major(), is(25));
-        assertThat(workspace.name(), is("broken-25"));
-        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent(), is(true));
+        assertThat(engine.options().get(JDKVersion.class).major()).isEqualTo(25);
+        assertThat(workspace.name()).isEqualTo("broken-25");
+        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent()).isTrue();
 
         // create a Program to compile the Workspace
         final Program program = engine.createProgram(workspace, Task.Pattern.of("compile"));
@@ -144,13 +143,13 @@ public class JavaProjectTests {
     @Test
     @WorkspacePath("jdeps")
     void getEarliestShouldReturnPresentOptional(final JavaPlatform platform) {
-        assertThat("getEarliest() should return a JDK but no JDKs were discovered", platform.getEarliest().isPresent(), is(true));
+        assertThat(platform.getEarliest().isPresent()).as("getEarliest() should return a JDK but no JDKs were discovered").isTrue();
     }
 
     @Test
     @WorkspacePath("jdeps")
     void getLatestShouldReturnPresentOptional(final JavaPlatform platform) {
-        assertThat("getLatest() should return a JDK but no JDKs were discovered", platform.getLatest().isPresent(), is(true));
+        assertThat(platform.getLatest().isPresent()).as("getLatest() should return a JDK but no JDKs were discovered").isTrue();
     }
 
     @Test
@@ -158,8 +157,9 @@ public class JavaProjectTests {
     void earliestVersionShouldBeLessThanOrEqualToLatestVersion(final JavaPlatform platform) {
         var earliest = platform.getEarliest().orElseThrow(() -> new AssertionError("getEarliest() returned empty"));
         var latest = platform.getLatest().orElseThrow(() -> new AssertionError("getLatest() returned empty"));
-        assertThat("expected getEarliest() [" + earliest.version().get() + "] <= getLatest() [" + latest.version().get() + "]",
-            earliest.version().compareTo(latest.version()) <= 0, is(true));
+        assertThat(earliest.version().compareTo(latest.version()) <= 0)
+            .as("expected getEarliest() [" + earliest.version().get() + "] <= getLatest() [" + latest.version().get() + "]")
+            .isTrue();
     }
 
     /**
@@ -328,7 +328,7 @@ public class JavaProjectTests {
             stdoutObserver)) {
 
             Eventually.assertThat(jdeps.onExit()).isCompleted();
-            assertThat(jdeps.exitValue().orElseThrow(() -> new AssertionError("jdeps process has no exit value — it may not have terminated")), is(0));
+            assertThat(jdeps.exitValue().orElseThrow(() -> new AssertionError("jdeps process has no exit value — it may not have terminated"))).isEqualTo(0);
 
             // build maps of java platform, module and non-module dependencies
             final LinkedHashSet<ModuleReference> javaPlatformModules = new LinkedHashSet<>();

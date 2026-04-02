@@ -2,11 +2,7 @@ package build.spin.module.modulesystem;
 
 import org.junit.jupiter.api.Test;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.lessThan;
-import static org.hamcrest.core.Is.is;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests for {@link Artifact.Version}s.
@@ -41,17 +37,17 @@ class ArtifactVersionTests {
         final Artifact.Version version1 = Artifact.Version.parse(v1);
         final Artifact.Version version2 = Artifact.Version.parse(v2);
 
-        assertThat(version1, equalTo(version1));
-        assertThat(version1, equalTo(version2));
+        assertThat(version1).isEqualTo(version1);
+        assertThat(version1).isEqualTo(version2);
 
-        assertThat(version1, equalTo(version2));
-        assertThat(version2, equalTo(version1));
+        assertThat(version1).isEqualTo(version2);
+        assertThat(version2).isEqualTo(version1);
 
-        assertThat(version1.compareTo(version1), is(0));
-        assertThat(version2.compareTo(version2), is(0));
+        assertThat(version1.compareTo(version1)).isEqualTo(0);
+        assertThat(version2.compareTo(version2)).isEqualTo(0);
 
-        assertThat(version1.compareTo(version2), is(0));
-        assertThat(version2.compareTo(version1), is(0));
+        assertThat(version1.compareTo(version2)).isEqualTo(0);
+        assertThat(version2.compareTo(version1)).isEqualTo(0);
     }
 
     /**
@@ -65,8 +61,8 @@ class ArtifactVersionTests {
         final Artifact.Version version1 = Artifact.Version.parse(v1);
         final Artifact.Version version2 = Artifact.Version.parse(v2);
 
-        assertThat(version1.compareTo(version2), is(lessThan(0)));
-        assertThat(version2.compareTo(version1), is(greaterThan(0)));
+        assertThat(version1.compareTo(version2)).isLessThan(0);
+        assertThat(version2.compareTo(version1)).isGreaterThan(0);
     }
 
     /**

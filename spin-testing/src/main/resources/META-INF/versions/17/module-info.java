@@ -24,6 +24,6 @@ module build.spin.testing {
 
     requires build.base.option;
 
-    requires org.hamcrest;
+    requires org.assertj.core;
     requires org.junit.jupiter.api;
 }

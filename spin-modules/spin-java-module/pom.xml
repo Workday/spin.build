@@ -18,13 +18,14 @@
     <dependencies>
         <dependency>
             <groupId>build.spin</groupId>
-            <artifactId>spin-engine</artifactId>
+            <artifactId>spin-api</artifactId>
             <version>${revision}</version>
         </dependency>
 
         <dependency>
-            <groupId>build.base</groupId>
-            <artifactId>base-table</artifactId>
+            <groupId>build.spin</groupId>
+            <artifactId>spin-common</artifactId>
+            <version>${revision}</version>
         </dependency>
 
         <dependency>
@@ -47,7 +48,47 @@
 
         <dependency>
             <groupId>build.base</groupId>
-            <artifactId>base-expression</artifactId>
+            <artifactId>base-configuration</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-flow</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-foundation</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-io</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-option</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-table</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-telemetry</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>dependency-injection</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-application</artifactId>
         </dependency>
 
         <dependency>
@@ -63,6 +104,11 @@
         <dependency>
             <groupId>build.spawn</groupId>
             <artifactId>spawn-local-platform</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
         </dependency>
 
         <!-- TODO: FreeMaker support should be provided by a FreeMaker Extension (ie: Resource) -->

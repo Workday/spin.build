@@ -4,7 +4,6 @@ import build.base.foundation.Exceptional;
 import build.base.foundation.iterator.matching.IteratorPatternMatcher;
 import build.base.foundation.iterator.matching.IteratorPatternMatchers;
 import build.spin.common.util.CollectingVisitor;
-import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 
 import java.io.StringReader;
@@ -12,13 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThan;
-import static org.hamcrest.Matchers.not;
-import static org.hamcrest.core.IsNull.nullValue;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ModuleDescriptorTests {
@@ -46,23 +39,23 @@ class ModuleDescriptorTests {
 
         final ModuleDescriptor descriptor = ModuleDescriptor.parse(moduleInfo).build();
 
-        assertThat(descriptor, is(not(nullValue())));
-        assertThat(descriptor.name(), is("com.example.foo"));
-        assertThat(descriptor.isOpen(), is(true));
-        assertThat(descriptor.isAutomatic(), is(false));
-        assertThat(descriptor.requires().count(), is(4L));
+        assertThat(descriptor).isNotNull();
+        assertThat(descriptor.name()).isEqualTo("com.example.foo");
+        assertThat(descriptor.isOpen()).isTrue();
+        assertThat(descriptor.isAutomatic()).isFalse();
+        assertThat(descriptor.requires().count()).isEqualTo(4L);
 
-        assertThat(descriptor.provides().count(), is(1L));
-        assertThat(descriptor.provides().findFirst().get().providers().count(), is(2L));
+        assertThat(descriptor.provides().count()).isEqualTo(1L);
+        assertThat(descriptor.provides().findFirst().get().providers().count()).isEqualTo(2L);
 
-        assertThat(descriptor.uses().count(), is(2L));
+        assertThat(descriptor.uses().count()).isEqualTo(2L);
 
-        assertThat(descriptor.exports().count(), is(2L));
+        assertThat(descriptor.exports().count()).isEqualTo(2L);
 
-        assertThat(descriptor.opens().count(), is(2L));
+        assertThat(descriptor.opens().count()).isEqualTo(2L);
 
         // ensure two ModuleDescriptors built from the same source are identical
-        assertThat(ModuleDescriptor.parse(moduleInfo).build(), is(descriptor));
+        assertThat(ModuleDescriptor.parse(moduleInfo).build()).isEqualTo(descriptor);
     }
 
     @Test
@@ -93,20 +86,20 @@ class ModuleDescriptorTests {
         final ModuleDescriptor descriptor = ModuleDescriptor.parse(new StringReader(moduleInfo))
             .build();
 
-        assertThat(descriptor, is(not(nullValue())));
-        assertThat(descriptor.name(), is("com.example.foo"));
-        assertThat(descriptor.isOpen(), is(true));
-        assertThat(descriptor.isAutomatic(), is(false));
-        assertThat(descriptor.requires().count(), is(4L));
+        assertThat(descriptor).isNotNull();
+        assertThat(descriptor.name()).isEqualTo("com.example.foo");
+        assertThat(descriptor.isOpen()).isTrue();
+        assertThat(descriptor.isAutomatic()).isFalse();
+        assertThat(descriptor.requires().count()).isEqualTo(4L);
 
-        assertThat(descriptor.provides().count(), is(1L));
-        assertThat(descriptor.provides().findFirst().get().providers().count(), is(1L));
+        assertThat(descriptor.provides().count()).isEqualTo(1L);
+        assertThat(descriptor.provides().findFirst().get().providers().count()).isEqualTo(1L);
 
-        assertThat(descriptor.uses().count(), is(1L));
+        assertThat(descriptor.uses().count()).isEqualTo(1L);
 
-        assertThat(descriptor.exports().count(), is(2L));
+        assertThat(descriptor.exports().count()).isEqualTo(2L);
 
-        assertThat(descriptor.opens().count(), is(2L));
+        assertThat(descriptor.opens().count()).isEqualTo(2L);
     }
 
     @Test
@@ -128,10 +121,10 @@ class ModuleDescriptorTests {
             .then().matches(42)
             .then().ends();
 
-        assertThat(version, is(not(nullValue())));
-        assertThat(sequence.test(version.sequence().map(ModuleDescriptor.Version.Element::getValue)), is(true));
-        assertThat(prerelease.test(version.prerelease().map(ModuleDescriptor.Version.Element::getValue)), is(true));
-        assertThat(build.test(version.build().map(ModuleDescriptor.Version.Element::getValue)), is(true));
+        assertThat(version).isNotNull();
+        assertThat(sequence.test(version.sequence().map(ModuleDescriptor.Version.Element::getValue))).isTrue();
+        assertThat(prerelease.test(version.prerelease().map(ModuleDescriptor.Version.Element::getValue))).isTrue();
+        assertThat(build.test(version.build().map(ModuleDescriptor.Version.Element::getValue))).isTrue();
     }
 
     @Test
@@ -140,38 +133,38 @@ class ModuleDescriptorTests {
         final ModuleDescriptor.Version v0 = ModuleDescriptor.Version.parse("0");
         final ModuleDescriptor.Version otherV0 = ModuleDescriptor.Version.parse("0");
 
-        assertThat(v0, Matchers.is(otherV0));
-        assertThat(otherV0, Matchers.is(v0));
+        assertThat(v0).isEqualTo(otherV0);
+        assertThat(otherV0).isEqualTo(v0);
 
         final ModuleDescriptor.Version v0_0 = ModuleDescriptor.Version.parse("0.0");
-        assertThat(v0, Matchers.is(v0_0));
-        assertThat(v0_0, Matchers.is(v0));
+        assertThat(v0).isEqualTo(v0_0);
+        assertThat(v0_0).isEqualTo(v0);
 
         final ModuleDescriptor.Version v0_0_SNAPSHOT = ModuleDescriptor.Version.parse("0.0-SNAPSHOT");
-        assertThat(v0, greaterThan(v0_0_SNAPSHOT));
-        assertThat(v0_0_SNAPSHOT, lessThan(v0));
-        assertThat(v0, is(Matchers.not(v0_0_SNAPSHOT)));
+        assertThat(v0).isGreaterThan(v0_0_SNAPSHOT);
+        assertThat(v0_0_SNAPSHOT).isLessThan(v0);
+        assertThat(v0).isNotEqualTo(v0_0_SNAPSHOT);
 
         final ModuleDescriptor.Version v0_0_SNAPSHOT_1 = ModuleDescriptor.Version.parse("0.0-SNAPSHOT+1");
 
-        assertThat(v0_0_SNAPSHOT_1, greaterThan(v0_0_SNAPSHOT));
-        assertThat(v0_0_SNAPSHOT, lessThan(v0_0_SNAPSHOT_1));
-        assertThat(v0_0_SNAPSHOT, is(Matchers.not(v0_0_SNAPSHOT_1)));
+        assertThat(v0_0_SNAPSHOT_1).isGreaterThan(v0_0_SNAPSHOT);
+        assertThat(v0_0_SNAPSHOT).isLessThan(v0_0_SNAPSHOT_1);
+        assertThat(v0_0_SNAPSHOT).isNotEqualTo(v0_0_SNAPSHOT_1);
 
         final ModuleDescriptor.Version v0_0_SNAPSHOT_2 = ModuleDescriptor.Version.parse("0.0-SNAPSHOT+2");
-        assertThat(v0_0_SNAPSHOT_2, greaterThan(v0_0_SNAPSHOT_1));
-        assertThat(v0_0_SNAPSHOT_1, lessThan(v0_0_SNAPSHOT_2));
-        assertThat(v0_0_SNAPSHOT_1, is(Matchers.not(v0_0_SNAPSHOT_2)));
+        assertThat(v0_0_SNAPSHOT_2).isGreaterThan(v0_0_SNAPSHOT_1);
+        assertThat(v0_0_SNAPSHOT_1).isLessThan(v0_0_SNAPSHOT_2);
+        assertThat(v0_0_SNAPSHOT_1).isNotEqualTo(v0_0_SNAPSHOT_2);
 
         final ModuleDescriptor.Version v1 = ModuleDescriptor.Version.parse("1");
-        assertThat(v1, greaterThan(v0));
-        assertThat(v0, lessThan(v1));
-        assertThat(v0, is(Matchers.not(v1)));
+        assertThat(v1).isGreaterThan(v0);
+        assertThat(v0).isLessThan(v1);
+        assertThat(v0).isNotEqualTo(v1);
 
         final ModuleDescriptor.Version v1_1 = ModuleDescriptor.Version.parse("1.1");
-        assertThat(v1_1, greaterThan(v1));
-        assertThat(v1, lessThan(v1_1));
-        assertThat(v1, is(Matchers.not(v1_1)));
+        assertThat(v1_1).isGreaterThan(v1);
+        assertThat(v1).isLessThan(v1_1);
+        assertThat(v1).isNotEqualTo(v1_1);
     }
 
     @Test
@@ -186,8 +179,8 @@ class ModuleDescriptorTests {
         descriptor.walk(collector, requires -> Exceptional.empty());
 
         final List<ModuleDescriptor> list = collector.collect();
-        assertThat(list.size(), is(1));
-        assertThat(list.get(0), is(descriptor));
+        assertThat(list.size()).isEqualTo(1);
+        assertThat(list.get(0)).isEqualTo(descriptor);
     }
 
     @Test
@@ -224,9 +217,9 @@ class ModuleDescriptorTests {
         descriptor.walk(collector, d -> Exceptional.ofNullable(moduleDescriptors.get(d.name())));
 
         final List<ModuleDescriptor> list = collector.collect();
-        assertThat(list.size(), is(2));
-        assertThat(list.get(0), is(descriptor));
-        assertThat(list.get(1), is(other));
+        assertThat(list.size()).isEqualTo(2);
+        assertThat(list.get(0)).isEqualTo(descriptor);
+        assertThat(list.get(1)).isEqualTo(other);
     }
 
     @Test
@@ -255,11 +248,11 @@ class ModuleDescriptorTests {
         foo.walk(collector, d -> Exceptional.ofNullable(moduleDescriptors.get(d.name())));
 
         final List<ModuleDescriptor> list = collector.collect();
-        assertThat(list.size(), is(4));
-        assertThat(list.get(0), is(foo));
-        assertThat(list.get(1), is(bar));
-        assertThat(list.get(2), is(gar));
-        assertThat(list.get(3), is(gar));
+        assertThat(list.size()).isEqualTo(4);
+        assertThat(list.get(0)).isEqualTo(foo);
+        assertThat(list.get(1)).isEqualTo(bar);
+        assertThat(list.get(2)).isEqualTo(gar);
+        assertThat(list.get(3)).isEqualTo(gar);
     }
 
     @Test

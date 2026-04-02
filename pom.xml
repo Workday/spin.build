@@ -51,8 +51,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Platform Versions -->
-        <maven.compiler.source>25</maven.compiler.source>
-        <maven.compiler.target>25</maven.compiler.target>
+        <java.version>25</java.version>
 
         <!-- Module Dependency Versions -->
         <asm.version>9.9.1</asm.version>
@@ -62,15 +61,17 @@
         <freemarker.version>2.3.34</freemarker.version>
         <graphql.version>25.0</graphql.version>
         <graphql.servlet.version>16.0.0</graphql.servlet.version>
-        <hamcrest.version>3.0</hamcrest.version>
-        <jackson.version>2.21.1</jackson.version>
+        <assertj.version>3.27.7</assertj.version>
+        <jackson.version>2.21.2</jackson.version>
+        <jackson-annotations.version>2.21</jackson-annotations.version>
         <jakarta.el.impl.version>4.0.2</jakarta.el.impl.version>
         <jakarta.inject.version>2.0.1</jakarta.inject.version>
+        <jakarta.servlet.version>6.0.0</jakarta.servlet.version>
         <junit.platform.version>6.0.3</junit.platform.version>
         <junit.version>6.0.3</junit.version>
-        <maven.version>3.9.12</maven.version>
+        <maven.version>3.9.14</maven.version>
         <maven.resolver.version>1.9.27</maven.resolver.version>
-        <mockito.version>5.18.1</mockito.version>
+        <mockito.version>5.23.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
         <spawn.version>0.1.0-SNAPSHOT</spawn.version>
         <undertow.version>2.3.23.Final</undertow.version>
@@ -236,14 +237,26 @@
 
             <dependency>
                 <groupId>com.graphql-java-kickstart</groupId>
+                <artifactId>graphql-java-kickstart</artifactId>
+                <version>${graphql.servlet.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.graphql-java-kickstart</groupId>
                 <artifactId>graphql-java-servlet</artifactId>
                 <version>${graphql.servlet.version}</version>
             </dependency>
 
             <dependency>
-                <groupId>org.hamcrest</groupId>
-                <artifactId>hamcrest</artifactId>
-                <version>${hamcrest.version}</version>
+                <groupId>jakarta.servlet</groupId>
+                <artifactId>jakarta.servlet-api</artifactId>
+                <version>${jakarta.servlet.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
             </dependency>
 
             <dependency>
@@ -256,6 +269,18 @@
                 <groupId>jakarta.inject</groupId>
                 <artifactId>jakarta.inject-api</artifactId>
                 <version>${jakarta.inject.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${jackson-annotations.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${jackson.version}</version>
             </dependency>
 
             <dependency>
@@ -286,6 +311,24 @@
                 <groupId>org.mockito</groupId>
                 <artifactId>mockito-core</artifactId>
                 <version>${mockito.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>build.codemodel</groupId>
+                <artifactId>codemodel-foundation</artifactId>
+                <version>${codemodel.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>build.codemodel</groupId>
+                <artifactId>objectoriented-codemodel</artifactId>
+                <version>${codemodel.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>build.codemodel</groupId>
+                <artifactId>jdk-codemodel</artifactId>
+                <version>${codemodel.version}</version>
             </dependency>
 
             <dependency>
@@ -340,6 +383,12 @@
             <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-settings-builder</artifactId>
+                <version>${maven.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.maven</groupId>
+                <artifactId>maven-settings</artifactId>
                 <version>${maven.version}</version>
             </dependency>
 
@@ -429,9 +478,34 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>${maven-compiler-plugin.version}</version>
                 <configuration>
-                    <source>${maven.compiler.source}</source>
-                    <target>${maven.compiler.target}</target>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>${maven-flatten-plugin.version}</version>
+                <configuration>
+                    <updatePomFile>true</updatePomFile>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>flatten</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>flatten.clean</id>
+                        <phase>clean</phase>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
 
             <plugin>
@@ -507,6 +581,40 @@
                                     <version>${maven.version}</version>
                                 </requireMavenVersion>
                             </rules>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>enforce-no-snapshots</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireReleaseDeps>
+                                    <message>Snapshot dependencies are not permitted for release artifacts!</message>
+                                    <onlyWhenRelease>true</onlyWhenRelease>
+                                    <failWhenParentIsSnapshot>false</failWhenParentIsSnapshot>
+                                </requireReleaseDeps>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>${maven-dependency-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>analyze-dependencies</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>analyze-only</goal>
+                        </goals>
+                        <configuration>
+                            <failOnWarning>true</failOnWarning>
                         </configuration>
                     </execution>
                 </executions>
