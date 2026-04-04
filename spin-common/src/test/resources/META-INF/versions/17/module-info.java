@@ -20,4 +20,5 @@
 module build.spin.common {
     requires org.assertj.core;
     requires org.junit.jupiter.api;
+    requires org.mockito;
 }

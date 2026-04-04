@@ -30,8 +30,5 @@ For detailed architecture, see [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md).
 
 ## Key Gotchas
 
-- `@PreProcess`/`@PostProcess` execution is commented out in `DefaultProgram.execute()` — infrastructure exists but disabled
-- No cycle detection in `DefaultProgram` — cyclic task dependencies will hang
-- `Workspace.close()` has a bug — calls itself recursively instead of closing each AutoCloseable plugin
 - Tasks must be `public static` non-abstract inner classes of their Plugin to be discovered via reflection
 - `version.properties` is not yet used by the engine (marked "coming soon")

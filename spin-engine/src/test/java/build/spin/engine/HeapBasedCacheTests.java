@@ -220,4 +220,30 @@ class HeapBasedCacheTests {
         assertThat(this.cache.get("Greeting").isPresent()).isFalse();
         assertThat(this.cache.get("Welcome").isPresent()).isFalse();
     }
+
+    /**
+     * Ensure clearing a {@link Cache} with many entries removes all of them.
+     * <p>
+     * Regression test: {@code clear()} previously streamed keys lazily while removing entries,
+     * which could cause some keys to be skipped on concurrent-safe maps.
+     */
+    @Test
+    void shouldClearCacheWithManyEntries() {
+        final int count = 100;
+
+        for (int i = 0; i < count; i++) {
+            this.cache.put("key-" + i, "value-" + i);
+        }
+
+        assertThat(this.cache.size()).isEqualTo(count);
+
+        this.cache.clear();
+
+        assertThat(this.cache.isEmpty()).isTrue();
+        assertThat(this.cache.size()).isEqualTo(0);
+
+        for (int i = 0; i < count; i++) {
+            assertThat(this.cache.get("key-" + i)).isEmpty();
+        }
+    }
 }

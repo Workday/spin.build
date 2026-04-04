@@ -212,7 +212,8 @@ public class DefaultInstruction<T>
         if (reference.project().getPlugin(reference.getPluginClass()).isPresent()) {
             this.dependencies.add(reference);
         } else {
-            // TODO: potentially warn that the reference to the task is not available?
+            this.recorder.warn("Task dependency [%s] is not available in project [%s] - skipping",
+                reference, reference.project().name());
         }
     }
 
@@ -226,7 +227,8 @@ public class DefaultInstruction<T>
         if (reference.project().getPlugin(reference.getPluginClass()).isPresent()) {
             this.dependents.add(reference);
         } else {
-            // TODO: potentially warn that the reference to the task is not available?
+            this.recorder.warn("Task dependent [%s] is not available in project [%s] - skipping",
+                reference, reference.project().name());
         }
     }
 

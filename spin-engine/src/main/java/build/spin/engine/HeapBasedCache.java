@@ -243,7 +243,7 @@ public class HeapBasedCache<K, V>
 
     @Override
     public void clear() {
-        keys().forEach(this::remove);
+        keys().toList().forEach(this::remove);
     }
 
     @Override
