@@ -166,25 +166,55 @@
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <executions>
+                    <!-- Maven builds spin₁; spin₁ builds spin₂ (jlink image) -->
                     <execution>
+                        <id>spin1-build-spin2</id>
                         <phase>prepare-package</phase>
                         <goals>
                             <goal>exec</goal>
                         </goals>
+                        <configuration>
+                            <executable>java</executable>
+                            <longClasspath>true</longClasspath>
+                            <workingDirectory>${project.basedir}</workingDirectory>
+                            <arguments>
+                                <argument>-classpath</argument>
+                                <classpath/>
+                                <argument>build.spin.application.Spin</argument>
+                                <argument>clean</argument>
+                                <argument>jlink</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+
+                    <!-- spin₂ builds spin₃, then verify spin₂ == spin₃ -->
+                    <execution>
+                        <id>spin2-build-spin3</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>/bin/sh</executable>
+                            <workingDirectory>${project.basedir}</workingDirectory>
+                            <arguments>
+                                <argument>-c</argument>
+                                <argument>
+                                    rm -rf /tmp/spin2 /tmp/spin2-modules.txt /tmp/spin3-modules.txt &amp;&amp;
+                                    # move spin₂ aside: both spin₂ and spin₃ write to .build/spin, so spin₂ must vacate before spin₃ can be built
+                                    cp -r .build/spin /tmp/spin2 &amp;&amp;
+                                    /tmp/spin2/bin/spin.sh clean jlink &amp;&amp;
+                                    # structural equivalence check (launcher + module set); jar contents are not diffed as jars embed build timestamps
+                                    diff /tmp/spin2/bin/spin.sh .build/spin/bin/spin.sh &amp;&amp;
+                                    ls /tmp/spin2/modules | sort &gt; /tmp/spin2-modules.txt &amp;&amp;
+                                    ls .build/spin/modules | sort &gt; /tmp/spin3-modules.txt &amp;&amp;
+                                    diff /tmp/spin2-modules.txt /tmp/spin3-modules.txt &amp;&amp;
+                                    rm -rf /tmp/spin2 /tmp/spin2-modules.txt /tmp/spin3-modules.txt
+                                </argument>
+                            </arguments>
+                        </configuration>
                     </execution>
                 </executions>
-                <configuration>
-                    <executable>java</executable>
-                    <longClasspath>true</longClasspath>
-                    <workingDirectory>${project.basedir}</workingDirectory>
-                    <arguments>
-                        <argument>-classpath</argument>
-                        <classpath/>
-                        <argument>build.spin.application.Spin</argument>
-                        <argument>clean</argument>
-                        <argument>jlink</argument>
-                    </arguments>
-                </configuration>
             </plugin>
 
             <plugin>
