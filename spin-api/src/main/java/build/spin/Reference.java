@@ -20,6 +20,8 @@ package build.spin;
  * #L%
  */
 
+import java.util.Objects;
+
 import static build.base.foundation.Introspection.describe;
 
 /**
@@ -66,7 +68,7 @@ public interface Reference {
             public boolean equals(final Object object) {
                 return object instanceof Reference
                     && project().name().equals(((Reference) object).project().name())
-                    && getPluginClass().equals(((Reference) object).getPluginClass())
+                    && Objects.equals(getPluginClass(), ((Reference) object).getPluginClass())
                     && getTaskClass().equals(((Reference) object).getTaskClass());
             }
         };
