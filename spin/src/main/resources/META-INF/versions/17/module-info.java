@@ -38,4 +38,6 @@ module build.spin.application {
 
     requires org.slf4j;
     requires transitive org.slf4j.simple;
+
+    requires com.sun.el;
 }
