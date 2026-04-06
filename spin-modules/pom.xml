@@ -17,6 +17,38 @@
 
     <name>Spin Modules</name>
 
+    <dependencies>
+        <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin-engine</artifactId>
+            <version>${revision}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>analyze-dependencies</id>
+                        <configuration>
+                            <ignoredUnusedDeclaredDependencies>
+                                <!-- spin-engine is declared in the parent pom for JPMS module-path
+                                     resolution; bytecode analyzer marks it unused since modules use
+                                     its packages transitively via module-info, not via direct imports.
+                                     Note: any new module added under spin-modules/ will inherit this
+                                     dependency automatically. -->
+                                <ignoredUnusedDeclaredDependency>build.spin:spin-engine</ignoredUnusedDeclaredDependency>
+                            </ignoredUnusedDeclaredDependencies>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
     <modules>
         <module>spin-clean-module</module>
         <module>spin-checkstyle-module</module>

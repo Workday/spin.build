@@ -25,6 +25,7 @@ import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.common.DefaultAssetCache;
 import build.spin.module.clean.CleanPlugin;
+import build.spin.module.java.AbstractCompile;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.java.Java8CompilerPlugin;
 import build.spin.module.java.JavaPlatform;
@@ -58,7 +59,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Tests for Java-based Spin-based {@link Project}s.
- *
+ * 
  * @author brian.oliver
  * @since Jun-2020
  */
@@ -246,38 +247,39 @@ public class JavaProjectTests {
         // create the module path
         Files.createDirectories(modulePath);
 
-        // modules that cause split-package conflicts when placed on the module-path
-        final var excludeFromModulePath = java.util.Set.of("failureaccess", "j2objc.annotations", "slf4j.api", "jboss.logmanager");
-
         // deduplicate by module name, keeping the highest version (avoids "two versions of module X found" jdeps errors)
         final var deduplicated = new LinkedHashMap<String, Map.Entry<Artifact, Path>>();
-        artifactPaths.entrySet().stream()
-            .filter(entry -> {
-                var descriptor = artifactModuleDescriptors.get(entry.getKey());
-                return descriptor == null || !excludeFromModulePath.contains(descriptor.name());
-            })
-            .forEach(entry -> {
-                var descriptor = artifactModuleDescriptors.get(entry.getKey());
-                var moduleName = descriptor != null ? descriptor.name() : entry.getKey().artifactId();
-                var existing = deduplicated.get(moduleName);
-                if (existing == null) {
+        artifactPaths.entrySet().forEach(entry -> {
+            var descriptor = artifactModuleDescriptors.get(entry.getKey());
+            var moduleName = descriptor != null ? descriptor.name() : entry.getKey().artifactId();
+            var existing = deduplicated.get(moduleName);
+            if (existing == null) {
+                deduplicated.put(moduleName, entry);
+            }
+            else {
+                var existingVersion = ModuleDescriptor.Version.parse(existing.getKey().version().get());
+                var newVersion = ModuleDescriptor.Version.parse(entry.getKey().version().get());
+                if (newVersion.compareTo(existingVersion) > 0) {
                     deduplicated.put(moduleName, entry);
-                } else {
-                    var existingVersion = ModuleDescriptor.Version.parse(existing.getKey().version().get());
-                    var newVersion = ModuleDescriptor.Version.parse(entry.getKey().version().get());
-                    if (newVersion.compareTo(existingVersion) > 0) {
-                        deduplicated.put(moduleName, entry);
-                    }
                 }
-            });
+            }
+        });
 
-        // copy the artifacts into the modules path
-        deduplicated.values().stream()
-            .map(Map.Entry::getValue)
+        // classify and de-conflict: named modules go to module-path; demoted/superseded go to classpath
+        final var allPaths = deduplicated.values().stream().map(Map.Entry::getValue).toList();
+        final var resolution = AbstractCompile.resolveConflicts(allPaths, msg -> {});
+
+        // copy non-conflicting named jars to the module path — intentionally named-only here
+        // because jdeps does not resolve modules by filename-derived names the way javac does;
+        // plain unnamed jars on a jdeps --module-path cause "module not found" errors at analysis
+        // time rather than silently becoming automatic modules. classifyJars() promotes all
+        // non-conflicting jars (including filename-derived automatics) for javac compilation.
+        allPaths.stream()
+            .filter(AbstractCompile::isNamedModule)
+            .filter(source -> !resolution.superseded().contains(source) && !resolution.demoted().contains(source))
             .forEach(source -> {
                 try {
-                    var target = modulePath.resolve(source.getFileName());
-                    Files.copy(source, target);
+                    Files.copy(source, modulePath.resolve(source.getFileName()));
                 }
                 catch (IOException e) {
                     throw new RuntimeException(e);

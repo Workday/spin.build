@@ -44,12 +44,18 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
-                <configuration>
-                    <ignoredUnusedDeclaredDependencies>
-                        <!-- required at compile scope for transitive resolution; causes compilation errors if removed -->
-                        <ignoredUnusedDeclaredDependency>build.spin:spin-common</ignoredUnusedDeclaredDependency>
-                    </ignoredUnusedDeclaredDependencies>
-                </configuration>
+                <executions>
+                    <execution>
+                        <id>analyze-dependencies</id>
+                        <configuration>
+                            <ignoredUnusedDeclaredDependencies combine.children="append">
+                                <!-- spin-common.DefaultProgram used directly; analyzer may attribute
+                                     it to spin-api due to classpath ordering -->
+                                <ignoredUnusedDeclaredDependency>build.spin:spin-common</ignoredUnusedDeclaredDependency>
+                            </ignoredUnusedDeclaredDependencies>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

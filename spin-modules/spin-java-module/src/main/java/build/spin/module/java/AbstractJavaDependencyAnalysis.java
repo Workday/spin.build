@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.configuration.Option;
 import build.base.flow.RecordingSubscriber;
 import build.base.foundation.Capture;
 import build.base.foundation.Strings;
@@ -54,9 +55,10 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Stack;
@@ -251,18 +253,6 @@ public abstract class AbstractJavaDependencyAnalysis
                             // TODO: correct the module reference if it's name is different!
                             // (eg: asm-7.2 has a different jar name but the same module name as asm-9.4!)
 
-                            // TODO: introduce support for excludes
-                            final var excludeModules = new HashSet<String>();
-                            excludeModules.add("commons.logging");
-                            // prefer slf4j 2.x (org.slf4j) over the 1.7.x automatic module name
-                            excludeModules.add("slf4j.api");
-                            // jboss-logmanager incorrectly exports org.wildfly.common.net (owned by wildfly-common)
-                            excludeModules.add("jboss.logmanager");
-                            // j2objc-annotations has two module names across versions
-                            excludeModules.add("j2objc.annotations");
-                            // failureaccess re-exports com.google.common.util.concurrent.internal (owned by guava)
-                            excludeModules.add("failureaccess");
-
                             // push the non-Java Platform required modules onto the stack for processing
                             moduleDescriptor.requires()
                                 .peek(requires -> {
@@ -272,24 +262,25 @@ public abstract class AbstractJavaDependencyAnalysis
                                 })
                                 .filter(requires -> !JavaPlatform.isJavaPlatformModule(requires.name()))
                                 .map(ModuleDescriptor.Requires::reference)
-                                .filter(r -> !processed.contains(r))
-                                .filter(r -> !excludeModules.contains(r.name()))
                                 // GraalVM modules are not available in standard JDKs; exclude the entire namespace
                                 .filter(r -> !r.name().startsWith("org.graalvm."))
                                 .peek(r -> {
-                                    // we track required dependencies for explicit modules
-                                    // (as these must be placed on the module path, regardless of whether they are modules or not)
-                                    if (moduleDescriptor.location().isPresent()) {
-                                        requiredModules.add(r.name());
-                                    }
+                                    // track all required module names for module-path placement
+                                    // unconditionally — even if already processed. A module that was
+                                    // processed before its dependant ran would otherwise never get
+                                    // added to requiredModules, causing it to land on classpath
+                                    // instead of module-path (the graphql-java-kickstart bug).
+                                    requiredModules.add(r.name());
                                 })
-//                                .peek(r -> this.recorder.info("[jdeps] Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.name(), r))
+                                .filter(r -> !processed.contains(r))
+                                .peek(r -> this.recorder.info("[jdeps] Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.name(), r))
                                 .forEach(pending::push);
 
                             return reference;
                         })
                         .orElseGet(() -> {
                             // failed to obtain the ModuleDescriptor (so skipping it)
+                            this.recorder.info("[jdeps] Ignoring module [%s] — no ModuleDescriptor available", reference);
                             ignored.add(reference);
                             return reference;
                         });
@@ -347,7 +338,9 @@ public abstract class AbstractJavaDependencyAnalysis
         artifactDescriptorsByModuleName.values().stream()
             .filter(descriptor -> !ignored.contains(descriptor.reference()))
             .filter(descriptor -> !moduleDescriptors.get(descriptor.reference()).location().isPresent()
-                && !requiredModules.contains(descriptor.reference().name()))
+                && !requiredModules.contains(descriptor.reference().name())
+                // workspace-local jars with module-info.class go to the module-path, not here
+                && !descriptor.path().map(AbstractCompile::isNamedModule).orElse(false))
             .forEach(descriptor -> descriptor.path().ifPresent(classPathBuilder::add));
 
         // -----
@@ -359,12 +352,36 @@ public abstract class AbstractJavaDependencyAnalysis
         Files.createDirectories(modulePath);
 
         // copy the artifacts into the modules path
+        // -----
+        // detect split packages BEFORE copying to module-path.
+        // scan all candidate module-path jars for their packages; any jar that shares
+        // a package with another jar must stay on classpath (JPMS forbids split packages).
+        final var modulePathCandidates = new ArrayList<ArtifactDescriptor>();
         artifactDescriptorsByModuleName.values().stream()
             .filter(descriptor -> !ignored.contains(descriptor.reference()))
             .filter(descriptor -> moduleDescriptors.get(descriptor.reference()).location().isPresent()
-                || requiredModules.contains(descriptor.reference().name()))
-            .forEach(descriptor -> descriptor.path()
-                .ifPresent(source -> {
+                || requiredModules.contains(descriptor.reference().name())
+                || descriptor.path().map(AbstractCompile::isNamedModule).orElse(false))
+            .forEach(modulePathCandidates::add);
+
+        final List<Path> candidatePaths = modulePathCandidates.stream()
+            .flatMap(d -> d.path().stream())
+            .toList();
+
+        final Consumer<String> log = msg -> this.recorder.info("[jdeps] %s", msg);
+        final var resolution = AbstractCompile.resolveConflicts(candidatePaths, log);
+
+        // copy non-conflicting candidates to module-path; handle conflicts appropriately
+        for (final var candidate : modulePathCandidates) {
+            candidate.path().ifPresent(source -> {
+                if (resolution.superseded().contains(source)) {
+                    // older version duplicate — don't put on classpath or module-path
+                    return;
+                }
+                if (resolution.demoted().contains(source)) {
+                    classPathBuilder.add(source);
+                }
+                else {
                     try {
                         final var target = modulePath.resolve(source.getFileName());
                         Files.copy(source, target);
@@ -372,7 +389,9 @@ public abstract class AbstractJavaDependencyAnalysis
                     catch (final IOException e) {
                         throw new RuntimeException(e);
                     }
-                }));
+                }
+            });
+        }
 
         // -----
         // execute jdeps for the Java Version with the provided modules
@@ -394,17 +413,26 @@ public abstract class AbstractJavaDependencyAnalysis
             .path()
             .orElseThrow(() -> new IllegalStateException("No artifact path for module [" + this.moduleDescriptor.name() + "]"));
 
+        // build jdeps arguments — omit --class-path when empty (jdeps rejects empty values)
+        final var jdepsArgs = new java.util.ArrayList<Option>();
+        jdepsArgs.add(Executable.of(jdepsPath.toString()));
+        jdepsArgs.add(Name.of("jdeps"));
+        jdepsArgs.add(Argument.of("--module-path"));
+        jdepsArgs.add(Argument.of(modulePath));
+        if (!classPath.isEmpty()) {
+            jdepsArgs.add(Argument.of("--class-path"));
+            jdepsArgs.add(Argument.of(classPath));
+        }
+        jdepsArgs.add(Argument.of("--list-deps"));
+        jdepsArgs.add(Argument.of("--ignore-missing-deps"));
+        jdepsArgs.add(Argument.of("--multi-release"));
+        jdepsArgs.add(Argument.of(jdk.version().major()));
+        jdepsArgs.add(Argument.of(artifactPath));
+        jdepsArgs.add(Console.ofSystem());
+        jdepsArgs.add(stdoutObserver);
+
         try (var jdeps = this.machine.launch(Application.class,
-            Executable.of(jdepsPath.toString()),
-            Name.of("jdeps"),
-            Argument.of("--module-path"), Argument.of(modulePath),
-            Argument.of("--class-path"), Argument.of(classPath),
-            Argument.of("--list-deps"),
-            Argument.of("--ignore-missing-deps"),
-            Argument.of("--multi-release"), Argument.of(jdk.version().major()),
-            Argument.of(artifactPath),
-            Console.ofSystem(),
-            stdoutObserver)) {
+            jdepsArgs.toArray(Option[]::new))) {
 
             jdeps.onExit().get();
 

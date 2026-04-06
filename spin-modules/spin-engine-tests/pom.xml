@@ -88,13 +88,18 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
-                <configuration>
-                    <ignoredUnusedDeclaredDependencies>
-                        <!-- ServiceLoader-discovered plugin modules; no direct class imports -->
-                        <ignoredUnusedDeclaredDependency>build.spin.module:spin-configuration-module</ignoredUnusedDeclaredDependency>
-                        <ignoredUnusedDeclaredDependency>build.spin.module:spin-clean-module</ignoredUnusedDeclaredDependency>
-                    </ignoredUnusedDeclaredDependencies>
-                </configuration>
+                <executions>
+                    <execution>
+                        <id>analyze-dependencies</id>
+                        <configuration>
+                            <ignoredUnusedDeclaredDependencies combine.children="append">
+                                <!-- ServiceLoader-discovered plugin modules; no direct class imports -->
+                                <ignoredUnusedDeclaredDependency>build.spin.module:spin-configuration-module</ignoredUnusedDeclaredDependency>
+                                <ignoredUnusedDeclaredDependency>build.spin.module:spin-clean-module</ignoredUnusedDeclaredDependency>
+                            </ignoredUnusedDeclaredDependencies>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
