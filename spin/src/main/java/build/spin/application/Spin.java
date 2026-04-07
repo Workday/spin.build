@@ -22,6 +22,7 @@ package build.spin.application;
 
 import build.base.commandline.CommandLine;
 import build.base.commandline.CommandLineParser;
+import build.base.commandline.CommandLineParser.HelpException;
 import build.base.configuration.ConfigurationBuilder;
 import build.base.foundation.Introspection;
 import build.base.option.JDKVersion;
@@ -74,6 +75,15 @@ public class Spin {
     public static void main(final String[] args) {
 
         // ---------------------------------------------
+        // PRE-FLIGHT: short-circuit flags that need no workspace
+        for (final String arg : args) {
+            if ("--version".equals(arg)) {
+                System.out.println(EngineVersion.autodetect().get());
+                System.exit(0);
+            }
+        }
+
+        // ---------------------------------------------
         // PHASE 0: Output Banner and initial diagnostics
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(Spin.class.getResourceAsStream("/banner.txt")))) {
@@ -110,7 +120,14 @@ public class Spin {
         }
 
         // attempt to establish the bootstrap Configuration from the command-line
-        final ConfigurationBuilder bootstrapOptionsByType = parser.parse(args);
+        final ConfigurationBuilder bootstrapOptionsByType;
+        try {
+            bootstrapOptionsByType = parser.parse(args);
+        } catch (final HelpException e) {
+            System.out.println(e.getMessage());
+            System.exit(0);
+            return;
+        }
 
         // ensure there's a default JDKVersion to use
         bootstrapOptionsByType.compute(JDKVersion.class, existing -> existing != null ? existing : JDKVersion.current());
@@ -119,7 +136,8 @@ public class Spin {
         bootstrapOptionsByType.compute(OperatingSystem.class, existing -> existing != null ? existing : OperatingSystem.detect());
 
         // we can now obtain the EngineVersion
-        System.err.printf("[spin] Engine Version: %s\n", bootstrapOptionsByType.getOrDefault(EngineVersion.class, null));
+        bootstrapOptionsByType.compute(EngineVersion.class, existing -> existing != null ? existing : EngineVersion.autodetect());
+        System.err.printf("[spin] Engine Version: %s\n", bootstrapOptionsByType.get(EngineVersion.class));
         System.err.printf("[spin] Operating System: %s\n", bootstrapOptionsByType.get(OperatingSystem.class));
         System.err.printf("[spin] Java Version: %s\n", JDKVersion.current());
         System.err.printf("[spin] Server Port: %s\n", bootstrapOptionsByType.get(ServerPort.class));
