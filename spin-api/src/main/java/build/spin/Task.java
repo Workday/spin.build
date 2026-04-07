@@ -34,6 +34,8 @@ import build.codemodel.objectoriented.descriptor.AccessModifier;
 import build.codemodel.objectoriented.descriptor.MethodDescriptor;
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -113,7 +115,7 @@ public interface Task<T> {
 
                 @SuppressWarnings("unchecked") final Optional<Object> value = (Optional<Object>) context.resolver().resolve(dependency)
                     .map(b -> b instanceof ValueBinding<?> vb ? vb.value() : null)
-                    .filter(java.util.Objects::nonNull);
+                    .filter(Objects::nonNull);
 
                 parameters[i] = value.orElseThrow(() -> new UnsatisfiedDependencyException(dependency));
             }
@@ -123,7 +125,7 @@ public interface Task<T> {
             final Object[] snapshots = new Object[parameters.length];
             for (int i = 0; i < parameters.length; i++) {
                 if (parameters[i] instanceof Stream<?> s) {
-                    final java.util.List<?> list = s.toList();
+                    final List<?> list = s.toList();
                     parameters[i] = list.stream();
                     snapshots[i] = list;
                 } else {

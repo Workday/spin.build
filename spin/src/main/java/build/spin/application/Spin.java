@@ -9,9 +9,9 @@ package build.spin.application;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -32,7 +32,6 @@ import build.spin.BackgroundProcessor;
 import build.spin.Daemon;
 import build.spin.Engine;
 import build.spin.Invocable;
-import build.spin.Plugin;
 import build.spin.Program;
 import build.spin.ProgramExecutionException;
 import build.spin.Project;
@@ -52,7 +51,6 @@ import java.io.InputStreamReader;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Optional;
@@ -69,7 +67,7 @@ public class Spin {
 
     /**
      * The {@code spin} application entry point.
-     * 
+     *
      * @param args the command line arguments
      */
     @SuppressWarnings("unchecked")
@@ -186,15 +184,15 @@ public class Spin {
                 p -> p.name() + (p == project ? " *" : ""));
 
         System.err.printf("[spin] Workspace Structure:\n%s\n", builder);
-        System.err.printf("[spin] Detected %d Plugin(s) for [%s]\n",
-                project.plugins().count(),
-                project.name());
 
-        project.plugins()
-                .sorted(Comparator.comparing(Plugin::name))
-                .forEach(plugin -> System.err.printf("[spin] Plugin [%s] implemented by [%s]\n",
-                        plugin.name(),
-                        Introspection.describe(plugin.getClass())));
+        final var availableTasks = workspace.stream()
+                .flatMap(Project::invocables)
+                .map(Invocable::getTaskName)
+                .distinct()
+                .sorted()
+                .toList();
+
+        System.err.printf("[spin] Available Tasks: %s\n", availableTasks);
 
         // ---------------------------------------------
         // start in "server mode" or execute one or more programs
@@ -317,6 +315,12 @@ public class Spin {
             final LinkedHashSet<String> tasks = programOptions.stream(CommandLine.Argument.class)
                     .map(CommandLine.Argument::get)
                     .collect(Collectors.toCollection(LinkedHashSet::new));
+
+            if (tasks.isEmpty()) {
+                System.err.printf("[spin] No tasks specified.\n");
+                workspace.close();
+                System.exit(0);
+            }
 
             // establish a Task result ExecutionCache, allowing cacheable Task results to be
             // shared between Programs
