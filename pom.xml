@@ -68,7 +68,7 @@
         <!-- Module Dependency Versions -->
         <asm.version>9.9.1</asm.version>
         <base.version>0.21.5</base.version>
-        <codemodel.version>0.19.0-SNAPSHOT</codemodel.version>
+        <codemodel.version>0.19.0</codemodel.version>
         <checkstyle.version>13.3.0</checkstyle.version>
         <freemarker.version>2.3.34</freemarker.version>
         <graphql.version>25.0</graphql.version>
@@ -85,7 +85,7 @@
         <maven.resolver.version>1.9.27</maven.resolver.version>
         <mockito.version>5.23.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
-        <spawn.version>0.1.0-SNAPSHOT</spawn.version>
+        <spawn.version>0.1.0</spawn.version>
         <undertow.version>2.3.23.Final</undertow.version>
 
         <!-- Plugin Dependency Versions -->
