@@ -202,7 +202,7 @@ public class JavaProjectTests {
         final var classPathBuilder = PathSetBuilder.create();
 
         var initial = ModuleReference.of("build.spawn.platform.local",
-            ModuleDescriptor.Version.parse("0.1.0-SNAPSHOT"));
+            ModuleDescriptor.Version.parse("0.1.0"));
 
         pending.push(initial);
 
