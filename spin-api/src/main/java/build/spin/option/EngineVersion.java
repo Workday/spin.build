@@ -24,6 +24,8 @@ import build.base.commandline.CommandLine;
 import build.base.configuration.AbstractValueOption;
 import build.base.configuration.Default;
 
+import java.util.Optional;
+
 /**
  * The Spin Engine Version.
  *
@@ -43,13 +45,15 @@ public class EngineVersion
     }
 
     /**
-     * Auto-detects the {@link EngineVersion}.
+     * Auto-detects the {@link EngineVersion} from the jar manifest, falling back to {@code "unknown"}.
      *
      * @return the {@link EngineVersion}
      */
     @Default
     public static EngineVersion autodetect() {
-        return of("0.1.0");
+        return Optional.ofNullable(EngineVersion.class.getPackage().getImplementationVersion())
+            .map(EngineVersion::of)
+            .orElse(of("unknown"));
     }
 
     /**
