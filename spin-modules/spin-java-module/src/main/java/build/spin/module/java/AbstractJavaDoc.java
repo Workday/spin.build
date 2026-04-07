@@ -143,6 +143,10 @@ public abstract class AbstractJavaDoc
 
             final ClassPath documentationClassPath = ClassPath.of(builder.build().stream());
 
+            // detect if this is a modular project (has a module-info.java in the source set)
+            final boolean isModular = sourceCode.stream()
+                .anyMatch(path -> path.getFileName().toString().equals("module-info.java"));
+
             // create an "argument" file for "javadoc"
             // include the version number in the arguments file name
             // (so we can tell the arguments being used to compile with this plugin)
@@ -161,29 +165,47 @@ public abstract class AbstractJavaDoc
                     writer.println("-quiet");
                 }
 
-                // include the compilation classpath (iff it's defined)
+                // include the compilation classpath or module-path (iff it's defined)
                 if (!documentationClassPath.isEmpty()) {
-                    this.recorder.diagnostic("Documentation ClassPath");
-                    documentationClassPath.stream()
-                        .forEach(path -> this.recorder.diagnostic("Path [%s]", path));
-
-                    final String cp = documentationClassPath.stream()
-                        .map(Path::toString)
-                        .reduce("", (left, right) -> left.isEmpty() ? right : left + File.pathSeparator + right);
-
-                    writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                    if (isModular) {
+                        final var classification =
+                            AbstractCompile.classifyJars(documentationClassPath.stream().toList());
+                        if (!classification.namedModules().isEmpty()) {
+                            final String mp = classification.namedModules().stream()
+                                .map(Path::toString)
+                                .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
+                            writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
+                        }
+                        if (!classification.unnamedJars().isEmpty()) {
+                            final String cp = classification.unnamedJars().stream()
+                                .map(Path::toString)
+                                .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
+                            writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                        }
+                    }
+                    else {
+                        this.recorder.diagnostic("Documentation ClassPath");
+                        final String cp = documentationClassPath.stream()
+                            .map(Path::toString)
+                            .reduce("", (left, right) -> left.isEmpty() ? right : left + File.pathSeparator + right);
+                        writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                    }
                 }
 
                 // include the -link(s) to external documentation
                 // TODO: we should get this from an external "catalog"
 
                 // output the version of Java we're using (only if the URL is reachable)
+                // connect() only establishes TCP; we must read from the stream to confirm
+                // HTTP-level reachability before passing the URL to javadoc
                 javaPlatformURL.ifPresent(url -> {
                     try {
                         final var connection = url.openConnection();
                         connection.setConnectTimeout(3000);
                         connection.setReadTimeout(3000);
-                        connection.connect();
+                        try (var stream = connection.getInputStream()) {
+                            stream.read();
+                        }
                         writer.println("-link " + url);
                     }
                     catch (final java.io.IOException e) {

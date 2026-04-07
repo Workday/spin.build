@@ -34,6 +34,12 @@
             <version>${revision}</version>
         </dependency>
 
+        <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin-testing</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
         <!-- ServiceLoader-discovered plugin modules -->
         <dependency>
             <groupId>build.spin.module</groupId>
@@ -145,6 +151,7 @@
                 <configuration>
                     <ignoredUnusedDeclaredDependencies>
                         <!-- ServiceLoader-discovered plugin modules; no direct class imports -->
+                        <ignoredUnusedDeclaredDependency>build.spin:spin-testing</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-checkstyle-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-clean-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-configuration-module</ignoredUnusedDeclaredDependency>

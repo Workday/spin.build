@@ -69,11 +69,6 @@
         </dependency>
 
         <!-- Test Dependencies -->
-        <dependency>
-            <groupId>build.base</groupId>
-            <artifactId>base-flow</artifactId>
-            <scope>test</scope>
-        </dependency>
 
         <dependency>
             <groupId>org.assertj</groupId>
@@ -92,5 +87,27 @@
             <artifactId>slf4j-simple</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-flow</artifactId>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <configuration>
+                    <!-- base-flow must be at compile scope (not test) because spin-api
+                         declares "requires transitive build.base.flow", so javac requires
+                         base-flow on the module path even though this module only uses it
+                         in test code and has no direct requires in its own module-info. -->
+                    <ignoredNonTestScopedDependencies>
+                        <ignoredNonTestScopedDependency>build.base:base-flow</ignoredNonTestScopedDependency>
+                    </ignoredNonTestScopedDependencies>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
