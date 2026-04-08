@@ -1036,9 +1036,7 @@ public interface Artifact {
                         throw new IllegalArgumentException("Missing ] or ) after Range upper bound");
                     }
 
-                    if (bound.isInclusive()) {
-                        upper = bound;
-                    }
+                    upper = bound;
 
                     if (scanner.optionallyConsume(",").isPresent()) {
                         lower = bound;

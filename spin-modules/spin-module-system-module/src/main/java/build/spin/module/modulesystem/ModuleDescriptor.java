@@ -886,7 +886,7 @@ public interface ModuleDescriptor {
             final int commonSize = Math.min(elements1.size(), elements2.size());
 
             for (int i = 0; i < commonSize; i++) {
-                final int result = elements1.get(0).compareTo(elements2.get(0));
+                final int result = elements1.get(i).compareTo(elements2.get(i));
 
                 if (result != 0) {
                     return result;
