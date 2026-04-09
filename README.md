@@ -1,75 +1,83 @@
-spin
-====
+# spin
+A modular Java build system that infers what to do by inspecting project structure — no build scripts required.
 
-Welcome to `spin`, a Modular Java-based Program Inference and Execution Engine for the purpose of automating modular 
-build execution.
+[![CI](https://github.com/Workday/spin.build/actions/workflows/main-pull-request.yml/badge.svg)](https://github.com/Workday/spin.build/actions/workflows/main-pull-request.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/build.spin/spin)](https://central.sonatype.com/artifact/build.spin/spin)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-The goal of `spin` is to provide the necessary infrastructure to:
+## Overview
 
-1. Compile, test, debug, package and deploy Modular (Java) Applications
-2. Integrate with VSCode and/or other Language Server-based Development Environments to support rich IDE
-   experiences.
+`spin` discovers pluggable Extensions via `ServiceLoader`, each of which auto-detects what it applies
+to and declares task dependencies via annotations. It then executes a dependency-ordered graph of
+tasks to compile, test, package, and deploy modular Java applications. See [overview.md](overview.md)
+for a deeper look at the design.
 
-> More information about `spin`, philosophy and concepts is covered in the `spin` [overview](overview.md).
+## Modules
 
-Building
-========
+| Module | Purpose |
+|--------|---------|
+| `spin-api` | All public interfaces and annotations |
+| `spin-common` | `DefaultProgram`: program inference and execution |
+| `spin-engine` | `DefaultEngine`: ServiceLoader discovery, workspace and project tree |
+| `spin` | `Spin.main()` CLI entry point; produces jlink runtime image |
+| `spin-modules` | Pluggable extension modules: java, maven, junit, git, config, and more |
+| `spin-testing` | `WorkspaceDiscovery` JUnit 5 extension for integration tests |
+| `spin-collider` | Subprocess launcher for integration tests requiring a running server |
 
-### Prerequisites
+## Requirements
 
-To bootstrap, build and run `spin` you **MUST** do the following:
+- Java 8 and Java 25 (both required — see note below)
+- Maven (wrapper included — no separate install needed)
+- `~/.m2/settings.xml` configured with a Maven repository (e.g. Maven Central)
 
-1. **Install** *both* the Java 8 **and** 25 Java Development Kits.
+> `spin` is written in Java 25 and built and tested against Java 25. It is also designed to build
+> Java 8 projects, so a Java 8 JDK must be installed for the test suite to pass. `spin` will locate
+> both JDKs automatically but will not install them for you. We recommend
+> [Azul Zulu](https://www.azul.com/downloads/zulu-community/?package=jdk) builds for both.
 
-We recommend using [Azul Open JDK distributions](https://www.azul.com/downloads/zulu-community/?package=jdk).
+## Using this Library
 
->  `spin` is written using Java 25 and thus to develop, compile, test, Java 25 **is required**.
-   
->  `spin` is also designed to work with Java 8, thus for testing it, `spin` also **requires** a Java 8 Development Kit to be installed.
+Add individual modules as dependencies. All modules share the same version:
 
-> `spin` will automatically determine where Java Development Kits are installed, however it currently **won't** install them for you!
+```xml
+<dependency>
+    <groupId>build.spin</groupId>
+    <artifactId>spin-api</artifactId>
+    <version>VERSION</version>
+</dependency>
+```
 
-2. **Create and Configure** an Apache Maven [Settings](https://maven.apache.org/configure.html) file in `~/.m2/settings.xml`  
- 
-This allows `spin` to resolve dependencies, including those dynamically requested by Plugins.  
-   
-> `spin` internally uses the Apache Maven libraries (not the commandline) to resolve dependencies and interact 
-> with Artifact Repositories, including Maven Central.
+Replace `VERSION` with the latest version shown in the Maven Central badge above.
 
-### Building the Code
+## Building from Source
 
-To initially bootstrap `spin` (without using itself), the Apache Maven (wrapper) is used.  Once this is 
-achieved, `spin` can be used for building itself and anything else you would like to `spin`.
+Bootstrap using the Maven wrapper (required before `spin` can build itself):
 
-The following shell command, executed in the top-level `spin` folder, will request Apache Maven to build
-`spin`: 
+```bash
+./mvnw clean install
+```
 
-   `./mvnw clean package`
+This produces a distributable zip at `spin/target/spin-<version>-bin.zip`. To install it locally and
+add `spin` to your PATH in one step:
 
-This will compile, test and package `spin`.  Once this has successfully completed the following assets 
-will be available.
+```bash
+./install-dev.sh
+```
 
-1. The `./spin.build/spin/.build/spin` folder will contain a custom Java Runtime Image for `spin`
-   (produced by jlink).
+Or to rebuild and install in one go:
 
-2. The `./spin.build/spin/target/` folder will contain a `spin-<version>-bin.zip` file of the 
-   aforementioned Java Runtime Image.
+```bash
+./install-dev.sh --build
+```
 
-You can move this folder into your executable applications area, set a path to `spin/bin`, and
-then execute `spin` using:
+## Contributing
 
-   `./spin.sh` 
+Code style is enforced by Checkstyle: no tabs, no star imports, final locals and parameters, braces
+required on all blocks, no `assert` statements. Import order: third-party, standard Java, then
+static. IntelliJ configuration is at `config/intellij/CodeStyle.xml`.
 
-in any folder.
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
 
-For example, after this executing the following, within the `spin` source tree, will cause `spin` to build itself.
+## License
 
-   `./spin.sh clean package`
-
-### Code Formatting and Conventions
-
-* To configure code formatting for IntelliJ, please import the scheme defined at `configs/idea/intellij-idea-workday-java-code-style.xml`.
-* To configure checkstyle, use the configuration in `checkstyle/checkstyle.xml`
-
-* The coding-conventions are documented [here](coding-conventions.md).  **Please Follow Them!**
-
+Apache 2.0 — see [LICENSE](LICENSE)
