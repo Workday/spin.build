@@ -17,7 +17,7 @@ LINK_DIR="${SPIN_LINK_DIR:-$HOME/.local/bin}"
 if [ "${1}" = "--build" ]; then
     echo "Building spin..."
     cd "$SCRIPT_DIR"
-    ./mvnw package -pl spin -am -DskipTests -q
+    ./mvnw package -DskipTests
 fi
 
 # -----------------------------------------------------------

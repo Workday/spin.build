@@ -38,8 +38,7 @@ In a nutshell, the style means:
 
 * Never define `static` stateful global variables, unless they are constants.
 
-* Use [Dependency Injection*](https://bitbucket.workday.com/pages/OMS/quark/pages/browse/tutorial-dependency-injection.html) 
-  to construct Objects, and avoid using `new` where possible.
+* Use Dependency Injection to construct Objects, and avoid using `new` where possible.
 
 * Avoid using `getters` to obtain state from other objects when it can or should be *injected*.
 
