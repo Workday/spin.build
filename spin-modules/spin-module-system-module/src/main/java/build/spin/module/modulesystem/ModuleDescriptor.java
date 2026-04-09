@@ -33,14 +33,14 @@ import build.base.parsing.ParseException;
 import build.base.parsing.Scanner;
 import build.spin.Project;
 import build.spin.Visitor;
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.tree.ClassNode;
-import org.objectweb.asm.tree.ModuleNode;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.attribute.ModuleAttribute;
+import java.lang.reflect.AccessFlag;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -64,11 +64,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static org.objectweb.asm.Opcodes.ACC_MANDATED;
-import static org.objectweb.asm.Opcodes.ACC_OPEN;
-import static org.objectweb.asm.Opcodes.ACC_STATIC_PHASE;
-import static org.objectweb.asm.Opcodes.ACC_SYNTHETIC;
-import static org.objectweb.asm.Opcodes.ACC_TRANSITIVE;
 
 /**
  * Provides immutable runtime information concerning a <i>Module</i> produced, used or required by a {@link Project}.
@@ -1182,101 +1177,91 @@ public interface ModuleDescriptor {
                 .findFirst();
 
             if (jarEntry.isPresent()) {
-                // establish a ClassNode to hold the decompiled module-info.class
-                final ClassNode classNode = new ClassNode();
+                final byte[] bytes = jarFile.getInputStream(jarEntry.get()).readAllBytes();
+                final var classModel = ClassFile.of().parse(bytes);
+                final Optional<ModuleAttribute> moduleAttribute = classModel.findAttribute(java.lang.classfile.Attributes.module());
 
-                // establish a ClassReader to parse the module-info.class
-                final ClassReader classReader = new ClassReader(jarFile.getInputStream(jarEntry.get()));
-                classReader.accept(classNode, ClassReader.SKIP_DEBUG);
-
-                final ModuleNode moduleNode = classNode.module;
-
-                if (moduleNode != null) {
-                    // create a ModuleDescriptor for the ModuleNode
+                if (moduleAttribute.isPresent()) {
+                    final ModuleAttribute mod = moduleAttribute.get();
 
                     final ModuleDescriptor.Builder builder = ModuleDescriptor.Builder
-                        .create(moduleNode.name)
+                        .create(mod.moduleName().name().stringValue())
                         .setLocation(path.toUri());
 
-                    builder.setOpen((moduleNode.access & ACC_OPEN) > 0);
-                    builder.setSynthetic((moduleNode.access & ACC_SYNTHETIC) > 0);
-                    builder.setMandated((moduleNode.access & ACC_MANDATED) > 0);
+                    builder.setOpen(mod.moduleFlags().contains(AccessFlag.OPEN));
+                    builder.setSynthetic(mod.moduleFlags().contains(AccessFlag.SYNTHETIC));
+                    builder.setMandated(mod.moduleFlags().contains(AccessFlag.MANDATED));
 
                     // include the requires declarations
-                    if (moduleNode.requires != null) {
-                        moduleNode.requires.forEach(requireNode -> {
-                            final EnumSet<ModuleDescriptor.Requires.Modifier> modifiers =
-                                EnumSet.noneOf(ModuleDescriptor.Requires.Modifier.class);
+                    mod.requires().forEach(req -> {
+                        final EnumSet<ModuleDescriptor.Requires.Modifier> modifiers =
+                            EnumSet.noneOf(ModuleDescriptor.Requires.Modifier.class);
 
-                            if ((requireNode.access & ACC_TRANSITIVE) > 0) {
-                                modifiers.add(ModuleDescriptor.Requires.Modifier.TRANSITIVE);
-                            }
+                        if (req.requiresFlags().contains(AccessFlag.TRANSITIVE)) {
+                            modifiers.add(ModuleDescriptor.Requires.Modifier.TRANSITIVE);
+                        }
 
-                            if ((requireNode.access & ACC_STATIC_PHASE) > 0) {
-                                modifiers.add(ModuleDescriptor.Requires.Modifier.STATIC);
-                            }
+                        if (req.requiresFlags().contains(AccessFlag.STATIC_PHASE)) {
+                            modifiers.add(ModuleDescriptor.Requires.Modifier.STATIC);
+                        }
 
-                            if ((requireNode.access & ACC_SYNTHETIC) > 0) {
-                                modifiers.add(ModuleDescriptor.Requires.Modifier.SYNTHETIC);
-                            }
+                        if (req.requiresFlags().contains(AccessFlag.SYNTHETIC)) {
+                            modifiers.add(ModuleDescriptor.Requires.Modifier.SYNTHETIC);
+                        }
 
-                            if ((requireNode.access & ACC_MANDATED) > 0) {
-                                modifiers.add(ModuleDescriptor.Requires.Modifier.MANDATED);
-                            }
+                        if (req.requiresFlags().contains(AccessFlag.MANDATED)) {
+                            modifiers.add(ModuleDescriptor.Requires.Modifier.MANDATED);
+                        }
 
-                            final ModuleDescriptor.Version version = Strings.isEmpty(requireNode.version)
-                                ? null
-                                : ModuleDescriptor.Version.parse(requireNode.version);
+                        final ModuleDescriptor.Version version = req.requiresVersion()
+                            .map(v -> v.stringValue())
+                            .filter(v -> !Strings.isEmpty(v))
+                            .map(ModuleDescriptor.Version::parse)
+                            .orElse(null);
 
-                            builder.requires(requireNode.module, modifiers, version);
-                        });
-                    }
+                        builder.requires(req.requires().name().stringValue(), modifiers, version);
+                    });
 
                     // include the provides
-                    if (moduleNode.provides != null) {
-                        moduleNode.provides.forEach(provideNode -> {
-                            builder.provides(provideNode.service, provideNode.providers.stream());
-                        });
-                    }
+                    mod.provides().forEach(prov -> {
+                        builder.provides(
+                            prov.provides().asInternalName(),
+                            prov.providesWith().stream().map(ce -> ce.asInternalName()));
+                    });
 
                     // include the uses
-                    if (moduleNode.uses != null) {
-                        moduleNode.uses.forEach(builder::uses);
-                    }
+                    mod.uses().forEach(use -> builder.uses(use.asInternalName()));
 
                     // include Version
-                    if (!Strings.isEmpty(moduleNode.version)) {
-                        builder.setVersion(moduleNode.version);
+                    final Optional<String> moduleVersion = mod.moduleVersion().map(v -> v.stringValue());
+                    if (moduleVersion.isPresent() && !Strings.isEmpty(moduleVersion.get())) {
+                        builder.setVersion(moduleVersion.get());
                     }
                     else {
                         builder.setVersion(artifact.version().toString());
                     }
 
                     // include Exports
-                    if (moduleNode.exports != null) {
-                        moduleNode.exports.forEach(exportNode -> {
-                            builder.exports(exportNode.packaze,
-                                ((exportNode.access & ACC_MANDATED) > 0)
-                                    ? Exports.Modifier.MANDATED
-                                    : ((exportNode.access & ACC_SYNTHETIC) > 0)
-                                        ? Exports.Modifier.SYNTHETIC
-                                        : null,
-                                exportNode.modules.stream());
-                        });
-                    }
+                    mod.exports().forEach(exp -> {
+                        builder.exports(exp.exportedPackage().name().stringValue(),
+                            exp.exportsFlags().contains(AccessFlag.MANDATED)
+                                ? Exports.Modifier.MANDATED
+                                : exp.exportsFlags().contains(AccessFlag.SYNTHETIC)
+                                    ? Exports.Modifier.SYNTHETIC
+                                    : null,
+                            exp.exportsTo().stream().map(me -> me.name().stringValue()));
+                    });
 
                     // include Opens
-                    if (moduleNode.opens != null) {
-                        moduleNode.opens.forEach(openNode -> {
-                            builder.opens(openNode.packaze,
-                                ((openNode.access & ACC_MANDATED) > 0)
-                                    ? Opens.Modifier.MANDATED
-                                    : ((openNode.access & ACC_SYNTHETIC) > 0)
-                                        ? Opens.Modifier.SYNTHETIC
-                                        : null,
-                                openNode.modules.stream());
-                        });
-                    }
+                    mod.opens().forEach(open -> {
+                        builder.opens(open.openedPackage().name().stringValue(),
+                            open.opensFlags().contains(AccessFlag.MANDATED)
+                                ? Opens.Modifier.MANDATED
+                                : open.opensFlags().contains(AccessFlag.SYNTHETIC)
+                                    ? Opens.Modifier.SYNTHETIC
+                                    : null,
+                            open.opensTo().stream().map(me -> me.name().stringValue()));
+                    });
 
                     return Exceptional.of(builder.build());
                 }

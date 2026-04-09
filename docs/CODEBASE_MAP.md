@@ -270,7 +270,7 @@ class MyTest {
 | Type | Purpose |
 |---|---|
 | `Artifact` | Maven GAV coordinates |
-| `ModuleDescriptor` | Java module info — parsed from source, bytecode (ASM), or synthesized |
+| `ModuleDescriptor` | Java module info — parsed from source, bytecode, or synthesized |
 | `ModuleCatalog` | Maps Java module names → Maven GAV; loaded from `module-catalog.properties` |
 | `ModuleVersioning` | Maps module name globs → versions; loaded from `version.properties` |
 | `Artifact.Resolver` | Resolves module name → JAR path |
@@ -313,7 +313,7 @@ class MyTest {
 
 **Gotchas:**
 - `MavenPlugin.MetaClass.isDetectedIn(Path)` always returns `false` — only activates when a `JavaCompilerPlugin` is present in the project
-- `MavenRepository.getModuleDescriptor()`: tries extracting `module-info.class` via ASM; falls back to POM `<dependency>` parsing
+- `MavenRepository.getModuleDescriptor()`: tries extracting `module-info.class`; falls back to POM `<dependency>` parsing
 - `provided` scope Maven deps → `requires static` (optional); `compile`/`runtime` → `requires transitive`
 
 ---
