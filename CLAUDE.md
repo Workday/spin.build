@@ -4,7 +4,7 @@
 
 **spin** is a Java build system that infers what to do by inspecting project structure via pluggable Extensions (discovered via `ServiceLoader`), then executes a dependency-ordered graph of `Task`s — no build scripts required. Extensions auto-detect what they apply to, declare task dependencies via annotations (`@From`, `@After`, `@Before`), and are composed via a DI framework (`build.codemodel.injection`, Jakarta Inject compatible).
 
-**Stack:** Java 25, Maven multi-module, Eclipse Aether (artifact resolution), Undertow (HTTP), GraphQL Java, ASM, FreeMarker, JUnit 6, Mockito 5.
+**Stack:** Java 25, Maven multi-module, Eclipse Aether (artifact resolution), Undertow (HTTP), GraphQL Java, FreeMarker, JUnit 6, Mockito 5.
 
 **Structure:**
 - `spin-api/` — all interfaces and annotations (the public contract)

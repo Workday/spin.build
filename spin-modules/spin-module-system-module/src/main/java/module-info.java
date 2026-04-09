@@ -20,8 +20,6 @@
 
 module build.spin.module.modulesystem {
     requires transitive build.spin.engine;
-    requires transitive org.objectweb.asm;
-    requires transitive org.objectweb.asm.tree;
 
     requires build.base.foundation;
     requires build.base.io;

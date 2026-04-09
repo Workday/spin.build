@@ -141,22 +141,6 @@ public class MavenRepositoryTests {
     }
 
     @Test
-    void shouldResolveAsmArtifactsAndModuleDescriptors() {
-
-        var asm72Artifact = Artifact.parse("org.ow2.asm:asm:7.2");
-        var asm72ModuleDescriptor = this.repository
-            .getModuleDescriptor(asm72Artifact, this.moduleCatalog, this.versioning)
-            .orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + asm72Artifact + "] but none was resolved"));
-
-        var asm94Artifact = Artifact.parse("org.ow2.asm:asm:9.4");
-        var asm94ModuleDescriptor = this.repository
-            .getModuleDescriptor(asm94Artifact, this.moduleCatalog, this.versioning)
-            .orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + asm94Artifact + "] but none was resolved"));
-
-        assertThat(asm72ModuleDescriptor.name()).isEqualTo(asm94ModuleDescriptor.name());
-    }
-
-    @Test
     void shouldResolveJacksonDatabindModuleDescriptor() {
         final Artifact artifact = Artifact.parse("com.fasterxml.jackson.core:jackson-databind:2.12.2");
 
