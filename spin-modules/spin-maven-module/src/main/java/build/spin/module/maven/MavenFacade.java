@@ -38,8 +38,6 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.connector.basic.BasicRepositoryConnectorFactory;
-import org.eclipse.aether.impl.DefaultServiceLocator;
 import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactDescriptorException;
@@ -48,10 +46,7 @@ import org.eclipse.aether.resolution.ArtifactDescriptorResult;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
-import org.eclipse.aether.spi.connector.RepositoryConnectorFactory;
-import org.eclipse.aether.spi.connector.transport.TransporterFactory;
-import org.eclipse.aether.transport.file.FileTransporterFactory;
-import org.eclipse.aether.transport.http.HttpTransporterFactory;
+import org.eclipse.aether.supplier.RepositorySystemSupplier;
 import org.eclipse.aether.util.repository.AuthenticationBuilder;
 
 import java.nio.file.FileSystems;
@@ -109,21 +104,8 @@ class MavenFacade {
         final Path settingsPath = mavenPath.resolve("settings.xml");
         final Path localRepositoryPath = mavenPath.resolve("repository");
 
-        // establish the ServiceLocator for Apache Maven Services
-        final DefaultServiceLocator locator = MavenRepositorySystemUtils.newServiceLocator();
-        locator.addService(RepositoryConnectorFactory.class, BasicRepositoryConnectorFactory.class);
-        locator.addService(TransporterFactory.class, FileTransporterFactory.class);
-        locator.addService(TransporterFactory.class, HttpTransporterFactory.class);
-
-        locator.setErrorHandler(new DefaultServiceLocator.ErrorHandler() {
-            @Override
-            public void serviceCreationFailed(final Class<?> type, final Class<?> impl, final Throwable exception) {
-                recorder.error(exception, "Service creation failed for %s implementation %s", type, impl);
-            }
-        });
-
-        // establish the Repository System
-        this.repositorySystem = locator.getService(RepositorySystem.class);
+        // establish the Repository System (auto-discovers connectors and transports via ServiceLoader)
+        this.repositorySystem = new RepositorySystemSupplier().get();
 
         // establish the Repository System Session
         final DefaultRepositorySystemSession session = MavenRepositorySystemUtils.newSession();
@@ -138,7 +120,7 @@ class MavenFacade {
 
         //TODO: obtain the user home (for local repositories?)
 
-        final LocalRepository localRepository = new LocalRepository(localRepositoryPath.toFile());
+        final LocalRepository localRepository = new LocalRepository(localRepositoryPath);
         session.setLocalRepositoryManager(this.repositorySystem.newLocalRepositoryManager(session, localRepository));
 
         this.repositorySystemSession = session;

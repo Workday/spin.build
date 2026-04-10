@@ -73,7 +73,7 @@ spin.build/
 ├── coding-conventions.md        # Code style guide (Google Java Style, no nulls, etc.)
 ├── overview.md                  # Conceptual glossary
 ├── config/checkstyle/           # Checkstyle XML for enforcement
-├── .mvn/wrapper/                # Maven Wrapper (pins Maven 3.9.12)
+├── .mvn/wrapper/                # Maven Wrapper (pins Maven 3.9.14)
 ├── spin-api/                    # Public API: all interfaces + annotations
 ├── spin-common/                 # Default implementations of core interfaces
 ├── spin-engine/                 # Engine + Project implementations
