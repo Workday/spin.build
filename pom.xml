@@ -81,7 +81,7 @@
         <junit.platform.version>6.0.3</junit.platform.version>
         <junit.version>6.0.3</junit.version>
         <maven.version>3.9.14</maven.version>
-        <maven.resolver.version>1.9.27</maven.resolver.version>
+        <maven.resolver.version>2.0.16</maven.resolver.version>
         <mockito.version>5.23.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
         <spawn.version>0.1.0</spawn.version>
@@ -398,17 +398,14 @@
                 <version>${maven.resolver.version}</version>
             </dependency>
 
+            <!--pin the version. forces 2.x over 1.9.x transitively pulled in via maven-resolver-provider-->
             <dependency>
                 <groupId>org.apache.maven.resolver</groupId>
                 <artifactId>maven-resolver-spi</artifactId>
                 <version>${maven.resolver.version}</version>
             </dependency>
 
-            <dependency>
-                <groupId>org.apache.maven.resolver</groupId>
-                <artifactId>maven-resolver-connector-basic</artifactId>
-                <version>${maven.resolver.version}</version>
-            </dependency>
+            <!--pin the version. forces 2.x over 1.9.x transitively pulled in via maven-resolver-provider-->
 
             <dependency>
                 <groupId>org.apache.maven.resolver</groupId>
@@ -417,14 +414,11 @@
             </dependency>
 
             <dependency>
+                <!-- In Maven Resolver 2.x the old maven-resolver-supplier artifact was split
+                     into maven-resolver-supplier-mvn3 (Maven 3 model compat) and -mvn4 (Maven 4).
+                     We use -mvn3 because maven.version stays at 3.9.x. -->
                 <groupId>org.apache.maven.resolver</groupId>
-                <artifactId>maven-resolver-transport-file</artifactId>
-                <version>${maven.resolver.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>org.apache.maven.resolver</groupId>
-                <artifactId>maven-resolver-transport-http</artifactId>
+                <artifactId>maven-resolver-supplier-mvn3</artifactId>
                 <version>${maven.resolver.version}</version>
             </dependency>
 

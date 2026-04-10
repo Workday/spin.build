@@ -115,7 +115,7 @@ public class MavenRepository
     public Exceptional<Path> resolve(final Artifact artifact) {
 
         return this.maven.resolveArtifact(artifact.toString())
-            .map(result -> result.getArtifact().getFile().toPath());
+            .map(result -> result.getArtifact().getPath());
     }
 
     @Override
