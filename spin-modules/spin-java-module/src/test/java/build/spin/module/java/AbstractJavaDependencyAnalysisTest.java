@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Unit tests for the static helpers in {@link AbstractJavaDependencyAnalysis}, in particular
  * {@code dedupeByMavenCoordinates}, which is the dedupe pass that catches the slf4j-api
- * 1.x → 2.x rename described in {@code docs/jpms-launch-findings.md}.
+ * 1.x → 2.x rename
  */
 class AbstractJavaDependencyAnalysisTest {
 
@@ -96,8 +96,7 @@ class AbstractJavaDependencyAnalysisTest {
 
     @Test
     void dedupeByMavenCoordinates_slf4jStyleRename_keepsNewerEvenWithDifferentModuleName() {
-        // The exact regression from docs/jpms-launch-findings.md: slf4j-api 1.7.25 has the
-        // filename-derived automatic module name "slf4j.api"; slf4j-api 2.0.17 is the proper
+        // slf4j-api 1.7.25 has the filename-derived automatic module name "slf4j.api"; slf4j-api 2.0.17 is the proper
         // JPMS module "org.slf4j". Both share Maven coordinates org.slf4j:slf4j-api so the
         // coordinate dedupe pass must drop the older one before any classifier sees the
         // org.slf4j package conflict. A naive module-name dedupe (the second pass) cannot

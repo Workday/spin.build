@@ -139,7 +139,7 @@ public abstract class AbstractJavaLinker
             // generated script. Historically they were copied flat into modules/ and launched
             // with `java -cp modules/* Spin`, which broke the moment any provider migrated
             // from @AutoService to a JPMS-native `provides` clause (such providers only work
-            // when their jars are loaded as named modules). See docs/jpms-launch-findings.md.
+            // when their jars are loaded as named modules).
             //
             // Classification uses ModuleFinder + Configuration.resolve on the real on-disk
             // jars — the same approach {@code build.spin.application.Launcher} uses for the
