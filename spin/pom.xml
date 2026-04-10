@@ -198,9 +198,13 @@
                             <longClasspath>true</longClasspath>
                             <workingDirectory>${project.basedir}</workingDirectory>
                             <arguments>
+                                <!-- Launcher bridges exec-maven-plugin's flat classpath into a proper
+                                     modular launch: it classifies jars via ModuleFinder + Configuration.resolve,
+                                     demotes split-package conflicts (e.g. Maven Resolver 1.x), and re-execs
+                                     the JVM with the correct -module-path + -cp + -m build.spin.application/Spin. -->
                                 <argument>-classpath</argument>
                                 <classpath/>
-                                <argument>build.spin.application.Spin</argument>
+                                <argument>build.spin.application.Launcher</argument>
                                 <argument>clean</argument>
                                 <argument>jlink</argument>
                             </arguments>
