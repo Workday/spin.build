@@ -38,10 +38,16 @@ import freemarker.template.Configuration;
 import freemarker.template.TemplateExceptionHandler;
 import jakarta.inject.Inject;
 
-import java.io.IOException;
+import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 /**
  * An abstract {@link Task} to perform Java Linking using the Java Platform
@@ -125,22 +131,50 @@ public abstract class AbstractJavaLinker
             Console.ofSystem())) {
             jlink.onExit().get();
 
-            // copy modules into the package modules
-            final var modulePath = packagePath.resolve("modules");
-            Files.createDirectories(modulePath);
+            // -----
+            // Classify application jars into --module-path (modules/) vs -cp (classpath/).
+            //
+            // The jlink subprocess above produces a Java runtime image, but the application
+            // jars themselves still need to be copied into the image and launched by the
+            // generated script. Historically they were copied flat into modules/ and launched
+            // with `java -cp modules/* Spin`, which broke the moment any provider migrated
+            // from @AutoService to a JPMS-native `provides` clause (such providers only work
+            // when their jars are loaded as named modules). See docs/jpms-launch-findings.md.
+            //
+            // Classification uses ModuleFinder + Configuration.resolve on the real on-disk
+            // jars — the same approach {@code build.spin.application.Launcher} uses for the
+            // spin1 Maven-exec launch. Split-package conflicts are iteratively demoted to
+            // classpath where the JPMS package-uniqueness rule doesn't apply; automatic
+            // modules on --module-path still reach the demoted classes via ALL-UNNAMED.
+            //
+            // Dependency dedupe (both by Maven (groupId, artifactId) and by JPMS module
+            // name) already happened upstream in {@link AbstractJavaDependencyAnalysis}, so
+            // analysis.dependencies() is a clean canonical set here.
+            //
+            // Note: we use `classpath/` (not `lib/`) because jlink writes its runtime image
+            // into packagePath/lib/modules and owns the lib/ directory.
 
-            // copy the modules into the linked module path (only they can be used with jlink)
-            analysis.dependencies()
-                .forEach(dependency -> dependency.artifactDescriptor().path()
-                    .ifPresent(source -> {
-                        try {
-                            final var target = modulePath.resolve(source.getFileName());
-                            Files.copy(source, target);
-                        }
-                        catch (final IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }));
+            final var modulePath = packagePath.resolve("modules");
+            final var classPathDir = packagePath.resolve("classpath");
+            Files.createDirectories(modulePath);
+            Files.createDirectories(classPathDir);
+
+            final List<Path> candidatePaths = analysis.dependencies()
+                .flatMap(dep -> dep.artifactDescriptor().path().stream())
+                .toList();
+
+            final var rootModule = this.descriptor.name();
+            final var modulePathJars = classifyForModulePath(candidatePaths, rootModule);
+
+            final List<Path> classPathTargets = new ArrayList<>();
+            for (final var source : candidatePaths) {
+                final var targetDir = modulePathJars.contains(source) ? modulePath : classPathDir;
+                final var target = targetDir.resolve(source.getFileName());
+                Files.copy(source, target);
+                if (targetDir == classPathDir) {
+                    classPathTargets.add(target);
+                }
+            }
 
             // ---------
             // create the script to execute the application
@@ -158,12 +192,14 @@ public abstract class AbstractJavaLinker
             // establish the data model object for the template
             final var model = new HashMap<String, Object>();
 
-            final var classPath = analysis.dependencies()
-                .map(dependency -> dependency.artifactDescriptor().path().orElseThrow(() -> new IllegalStateException("No artifact path for dependency [" + dependency.artifactDescriptor().artifact() + "]")))
-                .map(path -> "$CP/" + path.getFileName())
+            // The script template references $MP (modules/) and $LIB (classpath/). Only the
+            // classpath entries are listed explicitly; the module-path is a single directory.
+            final var classPath = classPathTargets.stream()
+                .map(path -> "$LIB/" + path.getFileName())
                 .collect(Collectors.joining(":"));
 
             model.put("classpath", classPath);
+            model.put("rootModule", rootModule);
             model.put("name", packageName);
 
             // include the version number (if present)
@@ -186,5 +222,89 @@ public abstract class AbstractJavaLinker
         }
 
         return jlinkPath;
+    }
+
+    /**
+     * Classify candidate jars into the subset that belongs on {@code --module-path}.
+     *
+     * <p>Two passes, mirroring {@code build.spin.application.Launcher}: first iteratively demote
+     * jars involved in split-package conflicts (demoting one conflict can remove packages and
+     * reveal another); second, resolve the JPMS module graph from the root module and keep only
+     * the resolved modules on the module-path. Everything else is classpath.
+     */
+    static Set<Path> classifyForModulePath(final List<Path> candidates,
+                                           final String rootModule) {
+        final Set<Path> moduleCandidates = new LinkedHashSet<>(candidates);
+
+        while (true) {
+            final Set<Path> conflicts = findSplitPackageConflicts(moduleCandidates, rootModule);
+            if (conflicts.isEmpty()) {
+                break;
+            }
+            moduleCandidates.removeAll(conflicts);
+        }
+
+        final ModuleFinder finder = ModuleFinder.of(moduleCandidates.toArray(new Path[0]));
+        final java.lang.module.Configuration config;
+        try {
+            // Resolve against a fresh empty configuration with only the JDK system modules as
+            // parent. We cannot use ModuleLayer.boot().configuration() as the parent here (as
+            // Launcher does) because spin itself is running on the module path — its boot layer
+            // already contains build.spin.module.* modules, and asking Configuration.resolve to
+            // add those same names from the finder produces "reads more than one module named X"
+            // errors. Launcher gets away with boot() because its own boot layer has no spin
+            // modules; the linker runs inside spin so the collision is inevitable.
+            config = java.lang.module.Configuration.empty()
+                .resolve(ModuleFinder.ofSystem(), finder, Set.of(rootModule));
+        }
+        catch (final java.lang.module.FindException | java.lang.module.ResolutionException e) {
+            throw new IllegalStateException("Unable to resolve JPMS module graph for jlink image from root ["
+                + rootModule + "]: " + e.getMessage(), e);
+        }
+
+        // Only keep paths that came from the application candidate set. Resolved system
+        // modules (java.base etc.) have jrt: locations we must not try to copy — jlink has
+        // already baked them into the runtime image.
+        final Set<Path> candidateSet = new LinkedHashSet<>(candidates);
+        final Set<Path> resolved = new LinkedHashSet<>();
+        for (final java.lang.module.ResolvedModule resolvedModule : config.modules()) {
+            resolvedModule.reference().location()
+                .filter(uri -> "file".equals(uri.getScheme()))
+                .map(Path::of)
+                .filter(candidateSet::contains)
+                .ifPresent(resolved::add);
+        }
+        return resolved;
+    }
+
+    /**
+     * Scan the candidate set for packages owned by more than one module. Returns all parties
+     * to every conflict except the root module, which is never demoted. Uses
+     * {@code ModuleDescriptor.packages()} so non-exported packages still count toward the
+     * JPMS package-uniqueness rule.
+     */
+    static Set<Path> findSplitPackageConflicts(final Set<Path> candidates,
+                                               final String rootModule) {
+        final ModuleFinder finder = ModuleFinder.of(candidates.toArray(new Path[0]));
+        final Map<String, List<java.lang.module.ModuleReference>> packageOwners = new LinkedHashMap<>();
+        for (final var ref : finder.findAll()) {
+            for (final var pkg : ref.descriptor().packages()) {
+                packageOwners.computeIfAbsent(pkg, k -> new ArrayList<>()).add(ref);
+            }
+        }
+
+        final Set<Path> demoted = new LinkedHashSet<>();
+        for (final var owners : packageOwners.values()) {
+            if (owners.size() < 2) {
+                continue;
+            }
+            for (final var ref : owners) {
+                if (rootModule.equals(ref.descriptor().name())) {
+                    continue;
+                }
+                ref.location().map(Path::of).ifPresent(demoted::add);
+            }
+        }
+        return demoted;
     }
 }
