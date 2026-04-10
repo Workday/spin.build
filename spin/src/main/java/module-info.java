@@ -48,6 +48,10 @@ module build.spin.application {
     requires build.base.table;
     requires org.slf4j;
 
+    // Launcher forwards JVM args from the current process via ManagementFactory
+    // when re-executing spin modularly. See build.spin.application.Launcher.
+    requires java.management;
+
     exports build.spin.application;
 
 }
