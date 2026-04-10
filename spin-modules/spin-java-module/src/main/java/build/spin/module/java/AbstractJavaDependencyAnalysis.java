@@ -293,13 +293,30 @@ public abstract class AbstractJavaDependencyAnalysis
         }
 
         // -----
-        // remove duplicate modules to optimize the ArtifactDescriptors for processing
+        // First dedupe pass — by Maven coordinates (groupId + artifactId), newest version
+        // wins. This catches the case where two versions of the same Maven artifact have
+        // *different* JPMS module names: for example, slf4j-api-1.7.25 is automatic module
+        // `slf4j.api` (filename-derived) while slf4j-api-2.0.17 is the proper JPMS module
+        // `org.slf4j`. Both own package `org.slf4j`, so any ModuleFinder-based classifier
+        // downstream would reject them as a split package. The module-name dedupe below
+        // can't catch these because the names differ; the filename-based detection in
+        // {@link AbstractCompile#resolveConflicts} can, but only after a package-overlap
+        // scan. Keying directly on Maven coordinates is the strongest signal available.
+        final var artifactDescriptorsByCoordinates = dedupeByMavenCoordinates(
+            artifactDescriptors.values(),
+            (kept, dropped) -> this.recorder.info(
+                "[jdeps] Maven coordinate duplicate [%s:%s]: keeping [%s], dropping [%s]",
+                kept.artifact().groupId(), kept.artifact().artifactId(),
+                kept.artifact().version(), dropped.artifact().version()));
+
+        // -----
+        // Second dedupe pass — by JPMS module name. Keeps the highest version when two
+        // different (groupId, artifactId) entries map to the same module name.
         // (jdeps will fail when duplicate modules are discovered)
-        // (use versioning to determine which modules to keep, and if there isn't one, use the highest)
 
         final var artifactDescriptorsByModuleName = new LinkedHashMap<String, ArtifactDescriptor>();
 
-        artifactDescriptors.forEach((artifact, descriptor) -> {
+        artifactDescriptorsByCoordinates.values().forEach(descriptor -> {
             final var moduleName = descriptor.reference().name();
             final var existingDescriptor = artifactDescriptorsByModuleName.get(moduleName);
 
@@ -565,5 +582,42 @@ public abstract class AbstractJavaDependencyAnalysis
                 }
             };
         }
+    }
+
+    /**
+     * Dedupe a collection of {@link ArtifactDescriptor}s by Maven coordinates
+     * ({@code groupId:artifactId}), keeping the highest version when duplicates are present.
+     *
+     * <p>This is a strictly-stronger signal than module-name dedupe: two versions of the same
+     * Maven artifact may publish under <em>different</em> JPMS module names (the slf4j-api 1.x
+     * → 2.x rename being the canonical example), so a downstream module-name dedupe pass cannot
+     * eliminate them. Coordinate-based dedupe is the only thing that can.
+     *
+     * @param descriptors the descriptors to dedupe; iteration order is preserved
+     * @param onDuplicate invoked as {@code (kept, dropped)} for each duplicate pair
+     * @return a {@link LinkedHashMap} keyed by {@code groupId:artifactId} with the winning
+     *         descriptor as the value
+     */
+    static LinkedHashMap<String, ArtifactDescriptor> dedupeByMavenCoordinates(
+        final java.util.Collection<ArtifactDescriptor> descriptors,
+        final java.util.function.BiConsumer<ArtifactDescriptor, ArtifactDescriptor> onDuplicate) {
+
+        final var byCoordinates = new LinkedHashMap<String, ArtifactDescriptor>();
+        for (final var descriptor : descriptors) {
+            final var artifact = descriptor.artifact();
+            final var coordinates = artifact.groupId() + ":" + artifact.artifactId();
+            final var existing = byCoordinates.get(coordinates);
+            if (existing == null) {
+                byCoordinates.put(coordinates, descriptor);
+            }
+            else if (artifact.version().compareTo(existing.artifact().version()) > 0) {
+                byCoordinates.put(coordinates, descriptor);
+                onDuplicate.accept(descriptor, existing);
+            }
+            else {
+                onDuplicate.accept(existing, descriptor);
+            }
+        }
+        return byCoordinates;
     }
 }
