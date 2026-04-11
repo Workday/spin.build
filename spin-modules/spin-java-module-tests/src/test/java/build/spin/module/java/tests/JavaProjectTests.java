@@ -25,7 +25,6 @@ import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.common.DefaultAssetCache;
 import build.spin.module.clean.CleanPlugin;
-import build.spin.module.java.AbstractCompile;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.java.Java8CompilerPlugin;
 import build.spin.module.java.JavaPlatform;
@@ -35,6 +34,7 @@ import build.spin.module.maven.MavenRepository;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleDescriptor;
+import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.testing.RequireJavaVersion;
@@ -267,15 +267,15 @@ public class JavaProjectTests {
 
         // classify and de-conflict: named modules go to module-path; demoted/superseded go to classpath
         final var allPaths = deduplicated.values().stream().map(Map.Entry::getValue).toList();
-        final var resolution = AbstractCompile.resolveConflicts(allPaths, msg -> {});
+        final var resolution = ModuleGraphClassifier.resolveConflicts(allPaths, java.util.Set.of(), msg -> {});
 
         // copy non-conflicting named jars to the module path — intentionally named-only here
         // because jdeps does not resolve modules by filename-derived names the way javac does;
         // plain unnamed jars on a jdeps --module-path cause "module not found" errors at analysis
-        // time rather than silently becoming automatic modules. classifyJars() promotes all
-        // non-conflicting jars (including filename-derived automatics) for javac compilation.
+        // time rather than silently becoming automatic modules. ModuleGraphClassifier.classify
+        // promotes all non-conflicting jars (including filename-derived automatics) for javac.
         allPaths.stream()
-            .filter(AbstractCompile::isNamedModule)
+            .filter(ModuleGraphClassifier::isNamedModule)
             .filter(source -> !resolution.superseded().contains(source) && !resolution.demoted().contains(source))
             .forEach(source -> {
                 try {

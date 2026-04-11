@@ -33,6 +33,7 @@ import build.spin.Task;
 import build.spin.annotation.System;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleDescriptor;
+import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import freemarker.template.Configuration;
 import freemarker.template.TemplateExceptionHandler;
@@ -43,10 +44,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 /**
@@ -164,7 +163,22 @@ public abstract class AbstractJavaLinker
                 .toList();
 
             final var rootModule = this.descriptor.name();
-            final var modulePathJars = classifyForModulePath(candidatePaths, rootModule);
+
+            // Classify against an empty parent configuration. We cannot use
+            // ModuleLayer.boot().configuration() as the parent (as build.spin.application.Launcher
+            // does) because spin itself is running on the module path — its boot layer already
+            // contains build.spin.module.* modules, and asking Configuration.resolve to add those
+            // same names from the finder produces "reads more than one module named X" errors.
+            // Launcher gets away with boot() because its own boot layer has no spin modules; the
+            // linker runs inside spin so the collision is inevitable.
+            final var classification = ModuleGraphClassifier.classifyAndResolve(
+                candidatePaths,
+                Set.of(rootModule),
+                rootModule,
+                java.lang.module.Configuration.empty(),
+                ModuleFinder.ofSystem(),
+                msg -> this.recorder.info("[classify] %s", msg));
+            final Set<Path> modulePathJars = new LinkedHashSet<>(classification.modulePath());
 
             final List<Path> classPathTargets = new ArrayList<>();
             for (final var source : candidatePaths) {
@@ -224,87 +238,4 @@ public abstract class AbstractJavaLinker
         return jlinkPath;
     }
 
-    /**
-     * Classify candidate jars into the subset that belongs on {@code --module-path}.
-     *
-     * <p>Two passes, mirroring {@code build.spin.application.Launcher}: first iteratively demote
-     * jars involved in split-package conflicts (demoting one conflict can remove packages and
-     * reveal another); second, resolve the JPMS module graph from the root module and keep only
-     * the resolved modules on the module-path. Everything else is classpath.
-     */
-    static Set<Path> classifyForModulePath(final List<Path> candidates,
-                                           final String rootModule) {
-        final Set<Path> moduleCandidates = new LinkedHashSet<>(candidates);
-
-        while (true) {
-            final Set<Path> conflicts = findSplitPackageConflicts(moduleCandidates, rootModule);
-            if (conflicts.isEmpty()) {
-                break;
-            }
-            moduleCandidates.removeAll(conflicts);
-        }
-
-        final ModuleFinder finder = ModuleFinder.of(moduleCandidates.toArray(new Path[0]));
-        final java.lang.module.Configuration config;
-        try {
-            // Resolve against a fresh empty configuration with only the JDK system modules as
-            // parent. We cannot use ModuleLayer.boot().configuration() as the parent here (as
-            // Launcher does) because spin itself is running on the module path — its boot layer
-            // already contains build.spin.module.* modules, and asking Configuration.resolve to
-            // add those same names from the finder produces "reads more than one module named X"
-            // errors. Launcher gets away with boot() because its own boot layer has no spin
-            // modules; the linker runs inside spin so the collision is inevitable.
-            config = java.lang.module.Configuration.empty()
-                .resolve(ModuleFinder.ofSystem(), finder, Set.of(rootModule));
-        }
-        catch (final java.lang.module.FindException | java.lang.module.ResolutionException e) {
-            throw new IllegalStateException("Unable to resolve JPMS module graph for jlink image from root ["
-                + rootModule + "]: " + e.getMessage(), e);
-        }
-
-        // Only keep paths that came from the application candidate set. Resolved system
-        // modules (java.base etc.) have jrt: locations we must not try to copy — jlink has
-        // already baked them into the runtime image.
-        final Set<Path> candidateSet = new LinkedHashSet<>(candidates);
-        final Set<Path> resolved = new LinkedHashSet<>();
-        for (final java.lang.module.ResolvedModule resolvedModule : config.modules()) {
-            resolvedModule.reference().location()
-                .filter(uri -> "file".equals(uri.getScheme()))
-                .map(Path::of)
-                .filter(candidateSet::contains)
-                .ifPresent(resolved::add);
-        }
-        return resolved;
-    }
-
-    /**
-     * Scan the candidate set for packages owned by more than one module. Returns all parties
-     * to every conflict except the root module, which is never demoted. Uses
-     * {@code ModuleDescriptor.packages()} so non-exported packages still count toward the
-     * JPMS package-uniqueness rule.
-     */
-    static Set<Path> findSplitPackageConflicts(final Set<Path> candidates,
-                                               final String rootModule) {
-        final ModuleFinder finder = ModuleFinder.of(candidates.toArray(new Path[0]));
-        final Map<String, List<java.lang.module.ModuleReference>> packageOwners = new LinkedHashMap<>();
-        for (final var ref : finder.findAll()) {
-            for (final var pkg : ref.descriptor().packages()) {
-                packageOwners.computeIfAbsent(pkg, k -> new ArrayList<>()).add(ref);
-            }
-        }
-
-        final Set<Path> demoted = new LinkedHashSet<>();
-        for (final var owners : packageOwners.values()) {
-            if (owners.size() < 2) {
-                continue;
-            }
-            for (final var ref : owners) {
-                if (rootModule.equals(ref.descriptor().name())) {
-                    continue;
-                }
-                ref.location().map(Path::of).ifPresent(demoted::add);
-            }
-        }
-        return demoted;
-    }
 }
