@@ -47,6 +47,7 @@ import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleDescriptor;
+import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import jakarta.inject.Inject;
@@ -357,7 +358,7 @@ public abstract class AbstractJavaDependencyAnalysis
             .filter(descriptor -> !moduleDescriptors.get(descriptor.reference()).location().isPresent()
                 && !requiredModules.contains(descriptor.reference().name())
                 // workspace-local jars with module-info.class go to the module-path, not here
-                && !descriptor.path().map(AbstractCompile::isNamedModule).orElse(false))
+                && !descriptor.path().map(ModuleGraphClassifier::isNamedModule).orElse(false))
             .forEach(descriptor -> descriptor.path().ifPresent(classPathBuilder::add));
 
         // -----
@@ -378,7 +379,7 @@ public abstract class AbstractJavaDependencyAnalysis
             .filter(descriptor -> !ignored.contains(descriptor.reference()))
             .filter(descriptor -> moduleDescriptors.get(descriptor.reference()).location().isPresent()
                 || requiredModules.contains(descriptor.reference().name())
-                || descriptor.path().map(AbstractCompile::isNamedModule).orElse(false))
+                || descriptor.path().map(ModuleGraphClassifier::isNamedModule).orElse(false))
             .forEach(modulePathCandidates::add);
 
         final List<Path> candidatePaths = modulePathCandidates.stream()
@@ -386,7 +387,14 @@ public abstract class AbstractJavaDependencyAnalysis
             .toList();
 
         final Consumer<String> log = msg -> this.recorder.info("[jdeps] %s", msg);
-        final var resolution = AbstractCompile.resolveConflicts(candidatePaths, log);
+        // Seed required-name preference from the root module so split-package conflicts
+        // involving modules the root transitively requires (e.g. maven.settings under
+        // Maven 4, which shares org.apache.maven.settings.v4 with maven-support) keep the
+        // required side on the module-path.
+        final var resolution = ModuleGraphClassifier.resolveConflicts(
+            candidatePaths,
+            java.util.Set.of(this.moduleDescriptor.name()),
+            log);
 
         // copy non-conflicting candidates to module-path; handle conflicts appropriately
         for (final var candidate : modulePathCandidates) {

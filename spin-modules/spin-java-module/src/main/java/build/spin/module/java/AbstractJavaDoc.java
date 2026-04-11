@@ -40,6 +40,7 @@ import build.spin.annotation.System;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.ModuleDescriptor;
+import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.Verbose;
 import jakarta.inject.Inject;
@@ -50,8 +51,10 @@ import java.io.PrintWriter;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
 /**
  * An abstract {@link Task} that compiles and produces Java Documentation for the Java Source Code in a {@link Project}
  * using the Java Platform {@code javadoc} command.
@@ -144,8 +147,10 @@ public abstract class AbstractJavaDoc
             final ClassPath documentationClassPath = ClassPath.of(builder.build().stream());
 
             // detect if this is a modular project (has a module-info.java in the source set)
-            final boolean isModular = sourceCode.stream()
-                .anyMatch(path -> path.getFileName().toString().equals("module-info.java"));
+            final Optional<Path> moduleInfoJava = sourceCode.stream()
+                .filter(path -> path.getFileName().toString().equals("module-info.java"))
+                .findFirst();
+            final boolean isModular = moduleInfoJava.isPresent();
 
             // create an "argument" file for "javadoc"
             // include the version number in the arguments file name
@@ -168,16 +173,21 @@ public abstract class AbstractJavaDoc
                 // include the compilation classpath or module-path (iff it's defined)
                 if (!documentationClassPath.isEmpty()) {
                     if (isModular) {
-                        final var classification =
-                            AbstractCompile.classifyJars(documentationClassPath.stream().toList());
-                        if (!classification.namedModules().isEmpty()) {
-                            final String mp = classification.namedModules().stream()
+                        final List<Path> documentationJars = documentationClassPath.stream().toList();
+                        final Set<String> requiredModuleNames =
+                            ModuleGraphClassifier.collectRequiredModuleNames(moduleInfoJava, documentationJars);
+                        final var classification = ModuleGraphClassifier.classify(
+                            documentationJars,
+                            requiredModuleNames,
+                            msg -> this.recorder.diagnostic("[classify] %s", msg));
+                        if (!classification.modulePath().isEmpty()) {
+                            final String mp = classification.modulePath().stream()
                                 .map(Path::toString)
                                 .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
                             writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
                         }
-                        if (!classification.unnamedJars().isEmpty()) {
-                            final String cp = classification.unnamedJars().stream()
+                        if (!classification.classPath().isEmpty()) {
+                            final String cp = classification.classPath().stream()
                                 .map(Path::toString)
                                 .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
                             writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));

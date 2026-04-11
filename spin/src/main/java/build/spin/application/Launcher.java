@@ -20,23 +20,17 @@ package build.spin.application;
  * #L%
  */
 
+import build.spin.module.modulesystem.ModuleGraphClassifier;
+
 import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
-import java.lang.module.Configuration;
-import java.lang.module.FindException;
 import java.lang.module.ModuleFinder;
-import java.lang.module.ModuleReference;
-import java.lang.module.ResolutionException;
-import java.lang.module.ResolvedModule;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarFile;
 import java.util.stream.Collectors;
@@ -48,21 +42,15 @@ import java.util.stream.Collectors;
  * <p>{@code exec-maven-plugin}'s {@code <classpath/>} placeholder produces a single flat classpath;
  * its {@code <modulepath/>} placeholder dumps every dependency onto {@code --module-path} without
  * any classification logic. Neither is correct for spin because spin's dependency closure contains
- * jars with split packages (Maven Resolver 1.x ships {@code maven-artifact} and
- * {@code maven-repository-metadata}, both automatic modules, both exporting
- * {@code org.apache.maven.artifact.repository.metadata}). Dumping those onto {@code --module-path}
- * fails at boot with {@link ResolutionException}.
- *
- * <p>This launcher fixes that in the obvious way: on the classpath handed to it by Maven, it
- * uses {@link ModuleFinder} on the actual on-disk jars and {@link Configuration#resolve} to
- * compute the real module graph starting from {@value #ROOT_MODULE}. Split-package conflicts
- * are demoted to classpath where the JPMS uniqueness rule doesn't apply; automatic modules on
- * {@code --module-path} can still reach those classes via {@code ALL-UNNAMED}. Finally the JVM
- * is re-executed as a proper modular application via {@code -m}.
+ * jars with split packages. This launcher expands the flat classpath (unwrapping any pathing-jar
+ * produced by {@code longClasspath=true}) and delegates to
+ * {@link ModuleGraphClassifier#classifyAndResolve} to compute the real module graph from
+ * {@value #ROOT_MODULE}, then re-execs the JVM as a proper modular application via {@code -m}.
  *
  * <p>Scope: this class exists only to fix the Maven exec bridge. It is not used by spin's jlink
  * packaging (see {@code AbstractJavaLinker}) or its compile-time classpath detection (see
- * {@code AbstractDetectCompilationClassPath}).
+ * {@code AbstractDetectCompilationClassPath}). Those use the same classifier with different
+ * parent-configuration / before-finder arguments.
  */
 public final class Launcher {
 
@@ -75,7 +63,14 @@ public final class Launcher {
     public static void main(final String[] args) throws Exception {
         final List<Path> allJars = expandClassPath(System.getProperty("java.class.path", ""));
 
-        final Classification classification = classify(allJars);
+        final ModuleGraphClassifier.Classification classification =
+            ModuleGraphClassifier.classifyAndResolve(
+                allJars,
+                Set.of(ROOT_MODULE),
+                ROOT_MODULE,
+                ModuleLayer.boot().configuration(),
+                ModuleFinder.of(),
+                msg -> {});
 
         final List<String> command = new ArrayList<>();
         command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
@@ -84,14 +79,14 @@ public final class Launcher {
         // system properties and tuning flags (e.g. java.util.logging.manager overrides).
         command.addAll(ManagementFactory.getRuntimeMXBean().getInputArguments());
 
-        if (!classification.modulePath.isEmpty()) {
+        if (!classification.modulePath().isEmpty()) {
             command.add("--module-path");
-            command.add(join(classification.modulePath));
+            command.add(join(classification.modulePath()));
         }
 
-        if (!classification.classPath.isEmpty()) {
+        if (!classification.classPath().isEmpty()) {
             command.add("-cp");
-            command.add(join(classification.classPath));
+            command.add(join(classification.classPath()));
         }
 
         command.add("-m");
@@ -99,90 +94,6 @@ public final class Launcher {
         command.addAll(Arrays.asList(args));
 
         System.exit(new ProcessBuilder(command).inheritIO().start().waitFor());
-    }
-
-    private record Classification(List<Path> modulePath, List<Path> classPath) {}
-
-    /**
-     * Classify jars into {@code --module-path} vs {@code -cp}.
-     *
-     * <p>Two passes: first, proactively demote any jars involved in a split-package conflict
-     * (iteratively, since demoting one conflict can remove packages and reveal another);
-     * second, resolve the module graph from the root and treat anything not in the resolved
-     * configuration as classpath-only.
-     */
-    private static Classification classify(final List<Path> allJars) {
-        final Set<Path> uniqueJars = new LinkedHashSet<>(allJars);
-        final Set<Path> moduleCandidates = new LinkedHashSet<>(uniqueJars);
-
-        while (true) {
-            final Set<Path> conflicts = findSplitPackageConflicts(moduleCandidates);
-            if (conflicts.isEmpty()) {
-                break;
-            }
-            moduleCandidates.removeAll(conflicts);
-        }
-
-        final ModuleFinder finder = ModuleFinder.of(moduleCandidates.toArray(new Path[0]));
-        final Configuration config;
-        try {
-            config = ModuleLayer.boot().configuration()
-                .resolve(finder, ModuleFinder.of(), Set.of(ROOT_MODULE));
-        }
-        catch (final FindException | ResolutionException e) {
-            throw new IllegalStateException("Unable to resolve JPMS module graph from root ["
-                + ROOT_MODULE + "]: " + e.getMessage(), e);
-        }
-
-        final Set<Path> resolved = new LinkedHashSet<>();
-        for (final ResolvedModule resolvedModule : config.modules()) {
-            resolvedModule.reference().location()
-                .map(Path::of)
-                .ifPresent(resolved::add);
-        }
-
-        final List<Path> classPath = new ArrayList<>();
-        for (final Path jar : uniqueJars) {
-            if (!resolved.contains(jar)) {
-                classPath.add(jar);
-            }
-        }
-
-        return new Classification(new ArrayList<>(resolved), classPath);
-    }
-
-    /**
-     * Scan the candidate set for packages owned by more than one module. Returns the set of
-     * jars to demote — all parties to every conflict, except the root module, which is never
-     * demoted.
-     *
-     * <p>Uses {@link java.lang.module.ModuleDescriptor#packages()}, which covers the JPMS
-     * package-uniqueness rule regardless of whether the package is exported. Demoting both
-     * sides of a conflict is safe: automatic modules on the module-path continue to reach
-     * the demoted classes via {@code ALL-UNNAMED}.
-     */
-    private static Set<Path> findSplitPackageConflicts(final Set<Path> candidates) {
-        final ModuleFinder finder = ModuleFinder.of(candidates.toArray(new Path[0]));
-        final Map<String, List<ModuleReference>> packageOwners = new LinkedHashMap<>();
-        for (final ModuleReference ref : finder.findAll()) {
-            for (final String pkg : ref.descriptor().packages()) {
-                packageOwners.computeIfAbsent(pkg, k -> new ArrayList<>()).add(ref);
-            }
-        }
-
-        final Set<Path> demoted = new LinkedHashSet<>();
-        for (final List<ModuleReference> owners : packageOwners.values()) {
-            if (owners.size() < 2) {
-                continue;
-            }
-            for (final ModuleReference ref : owners) {
-                if (ROOT_MODULE.equals(ref.descriptor().name())) {
-                    continue;
-                }
-                ref.location().map(Path::of).ifPresent(demoted::add);
-            }
-        }
-        return demoted;
     }
 
     private static String join(final List<Path> paths) {
