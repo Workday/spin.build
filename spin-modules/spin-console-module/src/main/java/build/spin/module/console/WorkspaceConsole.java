@@ -9,9 +9,9 @@ package build.spin.module.console;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -22,39 +22,23 @@ package build.spin.module.console;
 
 import build.base.foundation.Exceptional;
 import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.injection.Context;
+import build.serve.cors.CorsMiddleware;
+import build.serve.foundation.routing.RouterBuilder;
+import build.serve.graphql.GraphQlHandler;
+import build.serve.graphql.GraphQlSchema;
+import build.serve.graphql.GraphiQlHandler;
+import build.serve.transport.http.HttpTransport;
 import build.spin.Daemon;
 import build.spin.Project;
-import build.spin.Workspace;
-import graphql.schema.GraphQLSchema;
-import graphql.schema.StaticDataFetcher;
-import graphql.schema.idl.RuntimeWiring;
-import graphql.schema.idl.SchemaGenerator;
-import graphql.schema.idl.SchemaParser;
-import io.undertow.Handlers;
-import io.undertow.Undertow;
-import io.undertow.server.handlers.PathHandler;
-import io.undertow.server.handlers.SetHeaderHandler;
-import io.undertow.server.handlers.resource.ClassPathResourceManager;
-import io.undertow.server.handlers.resource.ResourceManager;
-import io.undertow.servlet.Servlets;
-import io.undertow.servlet.api.DeploymentInfo;
-import io.undertow.servlet.api.DeploymentManager;
-import io.undertow.servlet.api.InstanceHandle;
-import io.undertow.util.HttpString;
 import jakarta.inject.Inject;
-import jakarta.servlet.Servlet;
 
-import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
-import static graphql.schema.idl.RuntimeWiring.newRuntimeWiring;
-import static graphql.schema.idl.TypeRuntimeWiring.newTypeWiring;
-import static io.undertow.Handlers.resource;
-
 /**
- * A {@link Workspace} {@link Daemon} providing a GraphQL server endpoint.
+ * A {@link Daemon} providing a GraphQL server endpoint for a workspace.
  *
  * @author brian.oliver
  * @since Jan-2023
@@ -63,17 +47,17 @@ public class WorkspaceConsole
     implements Daemon {
 
     /**
-     * The default GraphQL address and port.
+     * The allowed origin for CORS.
      */
     private static final String DEFAULT_ORIGIN = "http://127.0.0.1:3000";
 
     /**
-     * The default host (for serving non-graph http(s) requests).
+     * The default host.
      */
     private static final String DEFAULT_HOST = "0.0.0.0";
 
     /**
-     * The default port (for serving non-graph http(s) requests).
+     * The default port.
      */
     private static final int DEFAULT_PORT = 8080;
 
@@ -89,26 +73,9 @@ public class WorkspaceConsole
     private TelemetryRecorder recorder;
 
     /**
-     * The {@link Context} to perform dependency injection for the {@link Daemon}.
+     * The {@link HttpTransport} serving GraphQL requests.
      */
-    @Inject
-    private Context context;
-
-    /**
-     * The {@link Workspace} in which the {@link WorkspaceConsole} is operating.
-     */
-    @Inject
-    private Workspace workspace;
-
-    /**
-     * The {@link DeploymentManager} managing the {@link ConsoleServlet} deployment.
-     */
-    private DeploymentManager manager;
-
-    /**
-     * The {@link Undertow} server for serving GraphQL and non-GraphQL http(s) console requests.
-     */
-    private Undertow undertow;
+    private HttpTransport transport;
 
     /**
      * Constructs a {@link WorkspaceConsole}.
@@ -117,97 +84,37 @@ public class WorkspaceConsole
         this.daemon = new CompletableFuture<>();
     }
 
-    /**
-     * Creates the {@link GraphQLSchema} for the {@link WorkspaceConsole}.
-     *
-     * @return the {@link GraphQLSchema}
-     */
-    private GraphQLSchema createSchema() {
-
-        // read the WorkspaceConsole GraphQL Schema (from the resources)
-        final var reader = new InputStreamReader(
-            Objects.requireNonNull(getClass().getClassLoader().getResourceAsStream("schema.graphqls")));
-
-        // establish a TypeRegistry based on the GraphQL Schema
-        final var typeRegistry = new SchemaParser().parse(reader);
-
-        final RuntimeWiring runtimeWiring =
-            newRuntimeWiring()
-                .type(newTypeWiring("Query").dataFetcher("hello", new StaticDataFetcher("world")))
-                .build();
-
-        final SchemaGenerator schemaGenerator = new SchemaGenerator();
-        return schemaGenerator.makeExecutableSchema(typeRegistry, runtimeWiring);
-    }
-
     @Override
     public Exceptional<CompletableFuture<Integer>> start() {
-
-        // define the ConsoleServlet to handle GraphQL requests
         try {
-            final DeploymentInfo deploymentInfo = Servlets.deployment()
-                .setClassLoader(getClass().getClassLoader())
-                .setContextPath("/graphql")
-                .setDeploymentName("WorkspaceConsole")
-                .addServlet(Servlets.servlet("ConsoleServlet", ConsoleServlet.class, () -> {
-                        // establish a new servlet (using Dependency Injection)
-                        final var context = this.context.newContext();
+            final var sdl = new String(
+                Objects.requireNonNull(
+                    getClass().getClassLoader().getResourceAsStream("schema.graphqls"),
+                    "schema.graphqls not found on classpath")
+                    .readAllBytes(),
+                StandardCharsets.UTF_8);
 
-                        context.bind(WorkspaceConsole.class).to(this);
-                        context.bind(GraphQLSchema.class).to(createSchema());
-
-                        final var servlet = context.create(ConsoleServlet.class);
-
-                        return new InstanceHandle<>() {
-                            @Override
-                            public Servlet getInstance() {
-                                return servlet;
-                            }
-
-                            @Override
-                            public void release() {
-                                servlet.destroy();
-                            }
-                        };
-                    })
-                    .addMapping("/*"));
-
-            this.manager = Servlets.defaultContainer().addDeployment(deploymentInfo);
-
-            this.manager.deploy();
-
-            // establish the ResourceManager to serve static resources (from the console/ resource folder)
-            final ResourceManager resourceManager =
-                new ClassPathResourceManager(WorkspaceConsole.class.getClassLoader(), "console");
-
-            final PathHandler pathHandler = Handlers.path()
-                .addPrefixPath("/graphql", this.manager.start())
-                .addPrefixPath("/", resource(resourceManager)
-                    .setDirectoryListingEnabled(true)
-                    .addWelcomeFiles("index.html"));
-
-            final var allowedOrigin = DEFAULT_ORIGIN;
-
-            final SetHeaderHandler allowOriginHeaderHandler = Handlers.header(pathHandler,
-                String.valueOf(new HttpString("Access-Control-Allow-Origin")), allowedOrigin);
-            final SetHeaderHandler allowCredentialsHeaderHandler = Handlers.header(allowOriginHeaderHandler,
-                String.valueOf(new HttpString("Access-Control-Allow-Credentials")), "true");
-            final SetHeaderHandler allowHeadersHeaderHandler = Handlers.header(allowCredentialsHeaderHandler,
-                String.valueOf(new HttpString("Access-Control-Allow-Headers")), "Content-Type");
-
-            final var host = DEFAULT_HOST;
-            final var port = DEFAULT_PORT;
-
-            this.undertow = Undertow.builder()
-                .addHttpListener(port, host)
-                .setHandler(allowHeadersHeaderHandler)
+            final var schema = GraphQlSchema.builder(sdl)
+                .fetcher("Query", "hello", env -> "world")
                 .build();
 
-            // start undertow!
-            this.undertow.start();
+            final var cors = CorsMiddleware.builder()
+                .allowOrigin(DEFAULT_ORIGIN)
+                .allowCredentials(true)
+                .allowHeader("Content-Type")
+                .build();
 
-            this.undertow.getListenerInfo()
-                .forEach(listenerInfo -> this.recorder.info("Listening: %s", listenerInfo));
+            final var router = RouterBuilder.create()
+                .middleware(cors)
+                .post("/graphql", GraphQlHandler.graphql(schema))
+                .get("/", GraphiQlHandler.graphiql("/graphql"))
+                .build();
+
+            final var address = new InetSocketAddress(DEFAULT_HOST, DEFAULT_PORT);
+            this.transport = new HttpTransport(address, 0, router);
+            this.transport.start();
+
+            this.recorder.info("WorkspaceConsole listening on http://%s:%d/", DEFAULT_HOST, DEFAULT_PORT);
 
             return Exceptional.of(this.daemon);
         } catch (final Exception e) {
@@ -221,6 +128,12 @@ public class WorkspaceConsole
      */
     public static class MetaClass
         implements Daemon.MetaClass {
+
+        /**
+         * Constructs a {@link MetaClass}.
+         */
+        public MetaClass() {
+        }
 
         @Override
         public boolean isDetectedIn(final Project project) {

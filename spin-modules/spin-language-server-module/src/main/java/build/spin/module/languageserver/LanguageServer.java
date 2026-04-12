@@ -9,9 +9,9 @@ package build.spin.module.languageserver;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -22,14 +22,12 @@ package build.spin.module.languageserver;
 
 import build.base.foundation.Exceptional;
 import build.base.telemetry.TelemetryRecorder;
-import build.spin.module.languageserver.protocol.ProtocolHandler;
-import build.spin.module.languageserver.protocol.Server;
+import build.serve.lsp.LspServer;
+import build.serve.lsp.LspTransport;
 import build.spin.option.ServerPort;
 import jakarta.inject.Inject;
 
 import java.nio.file.FileSystem;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -43,8 +41,6 @@ import java.util.concurrent.CompletableFuture;
 public class LanguageServer
     implements build.spin.Server {
 
-    private final Set<ProtocolHandler> handlers;
-
     /**
      * The default server listening port.
      */
@@ -55,7 +51,6 @@ public class LanguageServer
     private TelemetryRecorder recorder;
 
     private LanguageServer() {
-        this.handlers = new HashSet<>();
     }
 
     public static void main(final String[] args) {
@@ -64,20 +59,37 @@ public class LanguageServer
 
     @Override
     public Exceptional<CompletableFuture<Integer>> start() {
+        final var server = LspServer.builder().build();
+        final var port = SERVER_PORT.get();
+        final var done = new CompletableFuture<Integer>();
 
-        final var server = new Server(SERVER_PORT.get(), this.handlers, this.recorder);
-
-        try {
-            server.start();
-            return Exceptional.of(CompletableFuture.completedFuture(0));
+        if (port < 0) {
+            this.recorder.info("Language Server Listening On STDIN");
+            Thread.ofVirtual().name("language-server-stdio").start(() -> {
+                try {
+                    LspTransport.stdio(server);
+                    done.complete(0);
+                } catch (final Exception e) {
+                    this.recorder.error("Language server STDIO error: " + e.getMessage());
+                    done.completeExceptionally(e);
+                }
+            });
+        } else {
+            this.recorder.info("Language Server Listening On Port: " + port);
+            Thread.ofVirtual().name("language-server-tcp").start(() -> {
+                try {
+                    LspTransport.tcp(server, port);
+                    done.complete(0);
+                } catch (final Exception e) {
+                    if (!done.isDone()) {
+                        this.recorder.error("Language server TCP error: " + e.getMessage());
+                        done.completeExceptionally(e);
+                    }
+                }
+            });
         }
-        catch (final Exception e) {
-            return Exceptional.ofException(e);
-        }
-    }
 
-    public void accept(final ProtocolHandler handler) {
-        this.handlers.add(handler);
+        return Exceptional.of(done);
     }
 
     public static class MetaClass

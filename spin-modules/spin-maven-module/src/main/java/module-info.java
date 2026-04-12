@@ -30,6 +30,10 @@ module build.spin.module.maven {
     requires org.apache.maven.resolver.util;
 
     requires java.xml;
+    // maven-resolver-transport-apache → httpclient → SSLConnectionSocketFactory
+    // needs javax.naming for hostname verification; previously pulled in
+    // transitively by undertow (now removed in favour of serve.build).
+    requires java.naming;
     requires maven.settings;
     requires build.base.archiving;
     requires build.base.configuration;

@@ -24,24 +24,12 @@ module build.spin.module.languageserver {
     requires build.base.foundation;
     requires build.base.telemetry;
     requires build.spin;
-    requires com.fasterxml.jackson.core;
-    requires com.fasterxml.jackson.databind;
-    requires com.fasterxml.jackson.annotation;
-    requires com.fasterxml.jackson.datatype.jdk8;
     requires jakarta.inject;
+    requires build.serve.lsp;
 
     opens build.spin.module.languageserver to build.codemodel.injection;
 
     exports build.spin.module.languageserver;
-    exports build.spin.module.languageserver.jsonrpc;
-    exports build.spin.module.languageserver.protocol;
-    exports build.spin.module.languageserver.protocol.data;
-    exports build.spin.module.languageserver.protocol.methods;
-    exports build.spin.module.languageserver.protocol.options;
-    exports build.spin.module.languageserver.protocol.params;
-    exports build.spin.module.languageserver.protocol.registrations;
-    exports build.spin.module.languageserver.tasks;
-    exports build.spin.module.languageserver.utils;
 
     provides build.spin.Extension.MetaClass with
         build.spin.module.languageserver.LanguageServer.MetaClass;
