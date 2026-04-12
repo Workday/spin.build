@@ -1,0 +1,34 @@
+/*-
+ * #%L
+ * Spin Engine Tests
+ * %%
+ * Copyright (C) 2026 Workday, Inc.
+ * %%
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * #L%
+ */
+module build.spin.engine.tests.test {
+    requires build.spin;
+    requires build.spin.common;
+    requires build.spin.testing;
+    requires org.junit.jupiter.api;
+    requires org.assertj.core;
+
+    opens build.spin.engine.tests to org.junit.platform.commons;
+
+    exports build.spin.engine.tests to build.codemodel.injection, build.spin;
+
+    provides build.spin.Extension.MetaClass with
+        build.spin.engine.tests.CyclicTestPlugin.MetaClass,
+        build.spin.engine.tests.PreProcessTestPlugin.MetaClass;
+}
