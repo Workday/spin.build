@@ -469,7 +469,7 @@ public class MavenPlugin
             final Document document = Files.exists(projectPOMPath)
                 ? documentBuilder.parse(Files.newInputStream(projectPOMPath))
                 : documentBuilder.parse(
-                MavenPlugin.class.getClassLoader().getResourceAsStream("maven/pom-template.xml"));
+                MavenPlugin.class.getResourceAsStream("/maven/pom-template.xml"));
 
             // establish a Java Expression Language Processor to replace elements in the Document
             // (that use Java Expression Language ${..})

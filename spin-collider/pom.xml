@@ -68,6 +68,30 @@
     <build>
         <plugins>
             <plugin>
+                <groupId>build.spin</groupId>
+                <artifactId>spin-classifier-maven-plugin</artifactId>
+                <version>${revision}</version>
+                <executions>
+                    <execution>
+                        <id>classify-test-compile</id>
+                        <phase>generate-test-sources</phase>
+                        <goals>
+                            <goal>classify-test-compile-path</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                    <argLine>--add-exports=org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED --add-exports=org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED @${project.build.directory}/spin-classify-test.args</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
                 <configuration>
