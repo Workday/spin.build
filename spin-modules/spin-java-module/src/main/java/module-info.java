@@ -41,6 +41,8 @@ module build.spin.module.java {
     requires freemarker;
     requires jakarta.inject;
 
+    uses build.spawn.platform.local.jdk.JDKDetector;
+
     opens build.spin.module.java to build.codemodel.injection;
 
     exports build.spin.module.java;

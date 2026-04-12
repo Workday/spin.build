@@ -129,6 +129,12 @@
 
         <dependency>
             <groupId>build.spawn</groupId>
+            <artifactId>spawn-local-jdk</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
             <artifactId>spawn-local-platform</artifactId>
             <scope>test</scope>
         </dependency>

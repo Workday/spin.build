@@ -18,6 +18,7 @@
  * #L%
  */
 module build.spin.java.module.tests.test {
+    requires build.spawn.platform.local.jdk;
     requires build.base.assertion;
     requires build.base.flow;
     requires build.base.foundation;
@@ -36,6 +37,6 @@ module build.spin.java.module.tests.test {
     requires build.spin.testing;
     requires org.junit.jupiter.api;
     requires org.assertj.core;
-
+    uses build.spawn.platform.local.jdk.JDKDetector;
     opens build.spin.module.java.tests to org.junit.platform.commons;
 }
