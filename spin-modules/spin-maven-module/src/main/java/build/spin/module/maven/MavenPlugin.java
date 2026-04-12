@@ -21,8 +21,8 @@ package build.spin.module.maven;
  */
 
 import build.base.archiving.JarBuilder;
-import build.base.expression.Processor;
-import build.base.expression.Variable;
+import build.base.expression.compat.Processor;
+import build.base.expression.compat.Variable;
 import build.base.foundation.Capture;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
@@ -465,34 +465,22 @@ public class MavenPlugin
             // attempt to locate a pom.xml in the project root path
             final Path projectPOMPath = this.project.path().resolve("pom.xml");
 
-            // load the template to use
+            // load the template to use. Use Class.getResourceAsStream (not ClassLoader's) so
+            // this works when spin-maven-module is loaded as a named module: same-module
+            // resource access via Class.getResourceAsStream has no JPMS encapsulation check,
+            // whereas ClassLoader.getResourceAsStream refuses to find resources in a package
+            // of a named module unless that package is opened unconditionally — and `maven`
+            // looks like a package name even though it's just a resource directory here.
             final Document document = Files.exists(projectPOMPath)
                 ? documentBuilder.parse(Files.newInputStream(projectPOMPath))
                 : documentBuilder.parse(
-                MavenPlugin.class.getResourceAsStream("/maven/pom-template.xml"));
+                    MavenPlugin.class.getResourceAsStream("/maven/pom-template.xml"));
 
-            // establish a Java Expression Language Processor to replace elements in the Document
-            // (that use Java Expression Language ${..})
-            final Processor processor = Processor.create(
-                Variable.of("artifactId", constraint.artifactId()),
-                Variable.of("groupId", constraint.groupId()),
-                Variable.of("version", artifactVersion.toString()),
-                Variable.of("packaging", "jar"));
-
-            // iterate over the Document and attempt to replace elements using ${...}
-            final NodeIterator iterator = ((DocumentTraversal) document).createNodeIterator(
-                document.getDocumentElement(),
-                NodeFilter.SHOW_ELEMENT,
-                node -> node.getNodeType() == Node.ELEMENT_NODE && node.getTextContent().trim().startsWith("${")
-                    ? NodeFilter.FILTER_ACCEPT
-                    : NodeFilter.FILTER_SKIP
-                , true);
-
-            for (Node node = iterator.nextNode(); node != null; node = iterator.nextNode()) {
-                node.setTextContent(processor.replace(node.getTextContent()));
-            }
-
-            // remove all unnecessary elements from the document
+            // Prune non-essential elements BEFORE running EL substitution. The `<dependencies>` block in
+            // particular is discarded and rebuilt from the ModuleDescriptor below, so any ${...} expressions
+            // inside it (e.g. ${graphql.version}) must never be evaluated — we don't bind their base objects
+            // in the Processor, and a strict EL evaluator throws PropertyNotFoundException on null-base
+            // property access.
             final Set<String> required = Stream.of("modelVersion", "groupId", "artifactId", "version", "packaging",
                     "name", "description", "url", "inceptionYear", "inceptionYear", "organization", "developers",
                     "contributors", "issueManagement", "mailingLists", "scm")
@@ -508,6 +496,29 @@ public class MavenPlugin
             }
 
             nodesToRemove.forEach(node -> node.getParentNode().removeChild(node));
+
+            // establish a Java Expression Language Processor to replace elements in the Document
+            // (that use Java Expression Language ${..}). `revision` is bound alongside `version` because
+            // Maven's CI-friendly versioning convention is <version>${revision}</version> in child poms.
+            final Processor processor = Processor.create(
+                Variable.of("artifactId", constraint.artifactId()),
+                Variable.of("groupId", constraint.groupId()),
+                Variable.of("version", artifactVersion.toString()),
+                Variable.of("revision", artifactVersion.toString()),
+                Variable.of("packaging", "jar"));
+
+            // iterate over the (pruned) Document and attempt to replace elements using ${...}
+            final NodeIterator iterator = ((DocumentTraversal) document).createNodeIterator(
+                document.getDocumentElement(),
+                NodeFilter.SHOW_ELEMENT,
+                node -> node.getNodeType() == Node.ELEMENT_NODE && node.getTextContent().trim().startsWith("${")
+                    ? NodeFilter.FILTER_ACCEPT
+                    : NodeFilter.FILTER_SKIP
+                , true);
+
+            for (Node node = iterator.nextNode(); node != null; node = iterator.nextNode()) {
+                node.setTextContent(processor.replace(node.getTextContent()));
+            }
 
             // generate the <dependencies> for the project based on the Module Descriptor
             final Node dependenciesNode = document.createElement("dependencies");

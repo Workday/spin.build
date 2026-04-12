@@ -39,8 +39,6 @@ module build.spin.application {
     requires transitive build.spin.module.reporting;
     requires org.slf4j.simple;
 
-    requires static com.sun.el;
-
     requires build.base.commandline;
     requires build.base.configuration;
     requires build.base.foundation;

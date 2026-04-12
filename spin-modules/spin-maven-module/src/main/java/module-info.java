@@ -42,6 +42,7 @@ module build.spin.module.maven {
     requires build.spin;
     requires build.spin.module.clean;
     requires jakarta.inject;
+    requires jakarta.el;
 
     opens build.spin.module.maven to build.codemodel.injection;
 
