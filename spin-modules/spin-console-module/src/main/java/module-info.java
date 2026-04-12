@@ -22,19 +22,17 @@ module build.spin.module.console {
 
     // graphql-java, undertow, and kickstart are implementation details — not part of the exported API
     requires com.graphqljava;
-    requires undertow.core;
-    requires undertow.servlet;
-    requires graphql.java.kickstart;
-    requires graphql.java.servlet;
 
     requires build.base.foundation;
     requires build.base.telemetry;
     requires build.codemodel.injection;
     requires build.spin;
     requires jakarta.inject;
-    requires jakarta.servlet;
     requires java.security.sasl;
     requires jdk.unsupported;
+    requires build.serve.cors;
+    requires build.serve.graphql;
+    requires build.serve.transport.http;
 
     opens build.spin.module.console to build.codemodel.injection;
 

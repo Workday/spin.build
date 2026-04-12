@@ -70,22 +70,19 @@
         <codemodel.version>0.20.0</codemodel.version>
         <checkstyle.version>13.3.0</checkstyle.version>
         <freemarker.version>2.3.34</freemarker.version>
-        <graphql.version>25.0</graphql.version>
-        <graphql.servlet.version>16.0.0</graphql.servlet.version>
         <assertj.version>3.27.7</assertj.version>
         <jackson.version>2.21.2</jackson.version>
         <jackson-annotations.version>2.21</jackson-annotations.version>
         <jakarta.el.api.version>6.0.1</jakarta.el.api.version>
         <jakarta.inject.version>2.0.1</jakarta.inject.version>
-        <jakarta.servlet.version>6.0.0</jakarta.servlet.version>
         <junit.platform.version>6.0.3</junit.platform.version>
         <junit.version>6.0.3</junit.version>
         <maven.version>3.9.14</maven.version>
         <maven.resolver.version>2.0.16</maven.resolver.version>
         <mockito.version>5.23.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
+        <serve.version>0.1.0</serve.version>
         <spawn.version>0.1.1</spawn.version>
-        <undertow.version>2.3.23.Final</undertow.version>
 
         <!-- Plugin Dependency Versions -->
         <maven-assembly-plugin.version>3.8.0</maven-assembly-plugin.version>
@@ -225,27 +222,33 @@
             </dependency>
 
             <dependency>
-                <groupId>com.graphql-java</groupId>
-                <artifactId>graphql-java</artifactId>
-                <version>${graphql.version}</version>
+                <groupId>build.serve</groupId>
+                <artifactId>serve-foundation</artifactId>
+                <version>${serve.version}</version>
             </dependency>
 
             <dependency>
-                <groupId>com.graphql-java-kickstart</groupId>
-                <artifactId>graphql-java-kickstart</artifactId>
-                <version>${graphql.servlet.version}</version>
+                <groupId>build.serve</groupId>
+                <artifactId>serve-graphql</artifactId>
+                <version>${serve.version}</version>
             </dependency>
 
             <dependency>
-                <groupId>com.graphql-java-kickstart</groupId>
-                <artifactId>graphql-java-servlet</artifactId>
-                <version>${graphql.servlet.version}</version>
+                <groupId>build.serve</groupId>
+                <artifactId>serve-cors</artifactId>
+                <version>${serve.version}</version>
             </dependency>
 
             <dependency>
-                <groupId>jakarta.servlet</groupId>
-                <artifactId>jakarta.servlet-api</artifactId>
-                <version>${jakarta.servlet.version}</version>
+                <groupId>build.serve</groupId>
+                <artifactId>serve-transport-http</artifactId>
+                <version>${serve.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>build.serve</groupId>
+                <artifactId>serve-lsp</artifactId>
+                <version>${serve.version}</version>
             </dependency>
 
             <dependency>
@@ -264,18 +267,6 @@
                 <groupId>jakarta.inject</groupId>
                 <artifactId>jakarta.inject-api</artifactId>
                 <version>${jakarta.inject.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-annotations</artifactId>
-                <version>${jackson-annotations.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-core</artifactId>
-                <version>${jackson.version}</version>
             </dependency>
 
             <dependency>
@@ -344,23 +335,6 @@
                 <version>${slf4j.version}</version>
             </dependency>
 
-            <dependency>
-                <groupId>io.undertow</groupId>
-                <artifactId>undertow-core</artifactId>
-                <version>${undertow.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>io.undertow</groupId>
-                <artifactId>undertow-servlet</artifactId>
-                <version>${undertow.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>com.fasterxml.jackson.datatype</groupId>
-                <artifactId>jackson-datatype-jdk8</artifactId>
-                <version>${jackson.version}</version>
-            </dependency>
 
             <dependency>
                 <groupId>org.freemarker</groupId>
