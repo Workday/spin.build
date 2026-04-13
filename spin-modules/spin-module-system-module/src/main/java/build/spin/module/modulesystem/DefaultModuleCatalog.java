@@ -45,7 +45,8 @@ public class DefaultModuleCatalog
     private final ModuleCatalog catalog = ModuleCatalog.HeapBased.create();
 
     @Override
-    public ModuleCatalog add(final String moduleName, final Artifact.Constraint constraint) {
+    public ModuleCatalog add(final String moduleName,
+                             final Artifact.Constraint constraint) {
         return this.catalog.add(moduleName, constraint);
     }
 
