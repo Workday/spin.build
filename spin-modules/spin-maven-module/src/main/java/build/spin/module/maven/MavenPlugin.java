@@ -453,17 +453,25 @@ public class MavenPlugin
             // establish an Artifact.Version for the ModuleDescriptor.Version
             final Artifact.Version artifactVersion = Artifact.Version.parse(moduleVersion.get());
 
-            // attempt to locate the Artifact.Constraint for this module based on the module name and version
-            final Artifact.Constraint constraint = this.catalog.constraints(this.descriptor.name())
-                .filter(c -> c.contains(artifactVersion))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("The module [" + this.descriptor.name()
-                    + "] does not define an Artifact.Constraint in the Module Catalog"));
-
             final DocumentBuilder documentBuilder = this.documentBuilderFactory.newDocumentBuilder();
 
             // attempt to locate a pom.xml in the project root path
             final Path projectPOMPath = this.project.path().resolve("pom.xml");
+
+            // attempt to locate the Artifact.Constraint for this module based on the module name and version
+            final Optional<Artifact.Constraint> catalogConstraint = this.catalog.constraints(this.descriptor.name())
+                .filter(c -> c.contains(artifactVersion))
+                .findFirst();
+
+            // when no catalog entry exists but a pom.xml is present, return it as-is —
+            // no template substitution or dependency rewriting is possible without coordinates
+            if (catalogConstraint.isEmpty() && Files.exists(projectPOMPath)) {
+                return documentBuilder.parse(Files.newInputStream(projectPOMPath));
+            }
+
+            final Artifact.Constraint constraint = catalogConstraint
+                .orElseThrow(() -> new IllegalArgumentException("The module [" + this.descriptor.name()
+                    + "] does not define an Artifact.Constraint in the Module Catalog"));
 
             // load the template to use. Use Class.getResourceAsStream (not ClassLoader's) so
             // this works when spin-maven-module is loaded as a named module: same-module

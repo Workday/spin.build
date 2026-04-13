@@ -25,6 +25,7 @@ import build.spin.Project;
 import build.spin.module.java.AbstractJavaPlugin;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.modulesystem.ModuleDescriptor;
+import build.spin.module.modulesystem.TestModuleDescriptor;
 
 import java.nio.file.Path;
 
@@ -54,6 +55,11 @@ public abstract class AbstractJUnitPlugin
         // Plugin ModuleDescriptor
         final ModuleDescriptor.Builder builder = ModuleDescriptor.Builder.create(moduleDescriptor.name());
         builder.include(moduleDescriptor);
+
+        // include test-scoped dependencies provided by a TestModuleDescriptor resource, if present
+        // (e.g. from pom.xml for Maven projects without a src/test/java/module-info.java)
+        this.project.findResource(TestModuleDescriptor.class)
+            .ifPresent(res -> builder.include(res.get(this.project)));
 
         // attempt to patch in the ModuleDescriptor provided by the Java Compiler Plugin
         // (for the same version)

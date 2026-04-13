@@ -57,6 +57,38 @@ class PomXmlUtils {
     }
 
     /**
+     * Returns {@code true} when the directory at the given path looks like the root of a Maven
+     * workspace rather than a sub-module of a larger reactor.
+     * <p>
+     * A path is a workspace root when it contains a {@code pom.xml} and is <strong>not</strong> a
+     * sub-module. Sub-module detection requires two signals together: the pom declares a
+     * {@code <parent>} element, <em>and</em> the parent directory itself contains a {@code pom.xml}.
+     * This combination avoids false negatives for projects that inherit from a corporate parent
+     * resolved from the Maven repository (e.g. {@code spring-boot-starter-parent}) — those poms
+     * declare a {@code <parent>} but their filesystem parent directory has no pom.
+     */
+    static boolean isMavenWorkspaceRoot(final Path path) {
+        final Path pom = path.resolve("pom.xml");
+        if (!Files.exists(pom)) {
+            return false;
+        }
+        if (!hasDirectParentElement(pom)) {
+            return true;
+        }
+        final Path parentDir = path.getParent();
+        return parentDir == null || !Files.exists(parentDir.resolve("pom.xml"));
+    }
+
+    private static boolean hasDirectParentElement(final Path pomPath) {
+        try {
+            final Document doc = newDocumentBuilderFactory().newDocumentBuilder().parse(pomPath.toFile());
+            return directChildText(doc.getDocumentElement(), "parent") != null;
+        } catch (final Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Creates a new {@link DocumentBuilderFactory} hardened against XML External Entity (XXE) attacks.
      * Disables DOCTYPE declarations and all external entity/parameter resolution.
      *

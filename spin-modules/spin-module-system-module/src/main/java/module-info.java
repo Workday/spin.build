@@ -40,6 +40,7 @@ module build.spin.module.modulesystem {
         build.spin.module.modulesystem.DefaultModuleVersioning.MetaClass,
         build.spin.module.modulesystem.PomBasedModuleCatalog.MetaClass,
         build.spin.module.modulesystem.PomBasedModuleVersioning.MetaClass,
+        build.spin.module.modulesystem.PomBasedTestModuleDescriptor.MetaClass,
         build.spin.module.modulesystem.ProjectModuleCatalog.MetaClass,
         build.spin.module.modulesystem.ProjectModuleVersioning.MetaClass;
 

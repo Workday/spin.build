@@ -41,6 +41,8 @@ import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.module.modulesystem.PomBasedModuleCatalog;
 import build.spin.module.modulesystem.PomBasedModuleVersioning;
+import build.spin.module.modulesystem.PomBasedTestModuleDescriptor;
+import build.spin.module.modulesystem.TestModuleDescriptor;
 import build.spin.testing.RequireJavaVersion;
 import build.spin.testing.WorkspaceDiscovery;
 import build.spin.testing.WorkspacePath;
@@ -113,6 +115,26 @@ public class JavaProjectTests {
             .get().isInstanceOf(PomBasedModuleCatalog.class);
         assertThat(workspace.resources().filter(ModuleVersioning.class::isInstance).findFirst())
             .get().isInstanceOf(PomBasedModuleVersioning.class);
+    }
+
+    @Test
+    @WorkspacePath("pom-based")
+    void shouldProvidePomBasedTestModuleDescriptorForMavenWorkspace(final Workspace workspace) {
+        // PomBasedTestModuleDescriptor should activate on the same pom.xml-only
+        // workspace and expose the test-scoped deps (junit-jupiter-api) from the
+        // fixture's pom.xml as requires on the test module descriptor.
+        final TestModuleDescriptor testDescriptor = workspace.resources()
+            .filter(TestModuleDescriptor.class::isInstance)
+            .map(TestModuleDescriptor.class::cast)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError(
+                "Expected a TestModuleDescriptor resource in workspace [" + workspace.path() + "]"));
+
+        assertThat(testDescriptor).isInstanceOf(PomBasedTestModuleDescriptor.class);
+
+        final ModuleDescriptor descriptor = testDescriptor.get(workspace);
+        assertThat(descriptor.requires().map(ModuleDescriptor.Requires::name))
+            .contains("org.junit.jupiter", "junit.jupiter.api");
     }
 
     @Test
