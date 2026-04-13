@@ -25,6 +25,7 @@ module build.spin.module.modulesystem {
     requires build.base.io;
     requires build.base.parsing;
     requires build.base.telemetry;
+    requires java.xml;
     requires build.codemodel.injection;
     requires build.spin;
     requires build.spin.common;
@@ -37,6 +38,8 @@ module build.spin.module.modulesystem {
     provides build.spin.Extension.MetaClass with
         build.spin.module.modulesystem.DefaultModuleCatalog.MetaClass,
         build.spin.module.modulesystem.DefaultModuleVersioning.MetaClass,
+        build.spin.module.modulesystem.PomBasedModuleCatalog.MetaClass,
+        build.spin.module.modulesystem.PomBasedModuleVersioning.MetaClass,
         build.spin.module.modulesystem.ProjectModuleCatalog.MetaClass,
         build.spin.module.modulesystem.ProjectModuleVersioning.MetaClass;
 

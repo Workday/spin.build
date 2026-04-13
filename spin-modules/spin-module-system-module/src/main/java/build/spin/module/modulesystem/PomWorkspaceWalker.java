@@ -1,0 +1,264 @@
+package build.spin.module.modulesystem;
+
+/*-
+ * #%L
+ * Spin Module System Module
+ * %%
+ * Copyright (C) 2026 Workday, Inc.
+ * %%
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * #L%
+ */
+
+import build.base.telemetry.TelemetryRecorder;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import javax.xml.parsers.DocumentBuilder;
+
+/**
+ * Walks a Maven workspace's {@code pom.xml} files and their transitive dependencies from the
+ * local repository, invoking a {@link CoordinateVisitor} for every (module-name list, coordinate)
+ * pair that can be derived from the poms.
+ * <p>
+ * Shared by {@link PomBasedModuleCatalog} and {@link PomBasedModuleVersioning} — the only thing
+ * that differs between those two is what they store per visit, which lives in the visitor.
+ *
+ * @author reed.vonredwitz
+ * @since Apr-2026
+ */
+final class PomWorkspaceWalker {
+
+    private static final String POM_FILENAME = "pom.xml";
+
+    private PomWorkspaceWalker() {
+    }
+
+    /**
+     * Called once for each (module-name list, coordinate) pair discovered during the walk.
+     * {@code moduleNames} contains every JPMS name under which the coordinate should be
+     * registered: the groupId, derived names from the artifactId, and optionally the
+     * {@code Automatic-Module-Name} from the jar manifest.
+     */
+    @FunctionalInterface
+    interface CoordinateVisitor {
+        void accept(List<String> moduleNames, String groupId, String artifactId, String resolvedVersion);
+    }
+
+    /**
+     * Walks the workspace pom tree and all transitive dependencies from the local repository,
+     * invoking {@code visitor} for every coordinate found.
+     */
+    static void walk(final Path workspacePath,
+                     final Path localRepo,
+                     final TelemetryRecorder recorder,
+                     final CoordinateVisitor visitor) {
+        final Path rootPom = workspacePath.resolve(POM_FILENAME);
+        if (!Files.exists(rootPom)) {
+            return;
+        }
+
+        try {
+            final DocumentBuilder builder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
+            final Map<String, String> rootProperties = PomXmlUtils.readProperties(builder, rootPom);
+
+            final Deque<String[]> queue = new ArrayDeque<>();
+            final Set<String> visited = new HashSet<>();
+
+            // Phase 1: walk the workspace poms. Dependencies are visited under all scopes here —
+            // test-scoped workspace deps (e.g. base-assertion) are still needed at test compile time.
+            Files.walk(workspacePath)
+                .filter(p -> p.getFileName().toString().equals(POM_FILENAME))
+                .filter(Files::isRegularFile)
+                .filter(p -> !p.toString().contains("/target/"))
+                .forEach(pomPath -> {
+                    walkPom(builder, pomPath, rootProperties, rootPom, localRepo, recorder, visitor);
+                    PomXmlUtils.readRawDependencies(builder, pomPath, rootProperties)
+                        .forEach(d -> {
+                            if (visited.add(d[0] + ":" + d[1])) {
+                                queue.add(d);
+                            }
+                        });
+                });
+
+            // Phase 2: BFS transitive poms from the local repository. Test and provided scopes
+            // are excluded here — external transitive deps of those scopes are not needed to
+            // build or test the workspace itself.
+            while (!queue.isEmpty()) {
+                final String[] coord = queue.poll();
+                PomXmlUtils.localRepoPomPath(coord[0], coord[1], coord[2], localRepo)
+                    .ifPresent(pomPath -> {
+                        try {
+                            final Map<String, String> pomProperties =
+                                PomXmlUtils.readProperties(builder, pomPath);
+                            PomXmlUtils.readRawDependencies(builder, pomPath, pomProperties)
+                                .stream()
+                                .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))
+                                .forEach(d -> {
+                                    visitDependency(d[0], d[1], d[2], localRepo, recorder, visitor);
+                                    if (visited.add(d[0] + ":" + d[1])) {
+                                        queue.add(d);
+                                    }
+                                });
+                        } catch (final Exception e) {
+                            recorder.warn(e,
+                                "PomWorkspaceWalker failed to read transitive pom [%s]", pomPath);
+                        }
+                    });
+            }
+
+        } catch (final Exception e) {
+            recorder.warn(e, "PomWorkspaceWalker failed to walk workspace [%s]", workspacePath);
+        }
+    }
+
+    /**
+     * Walks a single pom file: visits its own artifact (unless it is the root aggregator pom) and
+     * each of its direct {@code <dependency>} entries.
+     */
+    private static void walkPom(final DocumentBuilder builder,
+                                final Path pomPath,
+                                final Map<String, String> properties,
+                                final Path rootPomPath,
+                                final Path localRepo,
+                                final TelemetryRecorder recorder,
+                                final CoordinateVisitor visitor) {
+        try {
+            final Document doc = builder.parse(pomPath.toFile());
+
+            if (!pomPath.equals(rootPomPath)) {
+                visitSelf(doc, pomPath, properties, recorder, visitor);
+            }
+
+            final NodeList deps = doc.getElementsByTagName("dependency");
+            for (int i = 0; i < deps.getLength(); i++) {
+                if (!(deps.item(i) instanceof Element dep)) {
+                    continue;
+                }
+
+                final String groupId = PomXmlUtils.textContent(dep, "groupId");
+                final String artifactId = PomXmlUtils.textContent(dep, "artifactId");
+                final String rawVersion = PomXmlUtils.textContent(dep, "version");
+                if (groupId == null || artifactId == null || rawVersion == null) {
+                    continue;
+                }
+
+                final String resolvedVersion = PomXmlUtils.resolveProperty(rawVersion, properties);
+                if (resolvedVersion == null || resolvedVersion.contains("${")) {
+                    continue;
+                }
+
+                visitDependency(groupId, artifactId, resolvedVersion, localRepo, recorder, visitor);
+            }
+        } catch (final Exception e) {
+            recorder.warn(e, "PomWorkspaceWalker failed to parse [%s]", pomPath);
+        }
+    }
+
+    /**
+     * Visits the {@code <artifactId>} of a workspace pom itself, inheriting groupId/version from
+     * {@code <parent>} when not declared directly. Prefers the JPMS module name from
+     * {@code module-info.java} when present; otherwise falls back to the derived-name heuristics.
+     */
+    private static void visitSelf(final Document doc,
+                                  final Path pomPath,
+                                  final Map<String, String> properties,
+                                  final TelemetryRecorder recorder,
+                                  final CoordinateVisitor visitor) {
+        try {
+            final Element root = doc.getDocumentElement();
+            final String artifactId = PomXmlUtils.directChildText(root, "artifactId");
+            String groupId = PomXmlUtils.directChildText(root, "groupId");
+            String rawVersion = PomXmlUtils.directChildText(root, "version");
+
+            final NodeList parentNodes = doc.getElementsByTagName("parent");
+            if (parentNodes.getLength() > 0 && parentNodes.item(0) instanceof Element parent) {
+                if (groupId == null) {
+                    groupId = PomXmlUtils.directChildText(parent, "groupId");
+                }
+                if (rawVersion == null) {
+                    rawVersion = PomXmlUtils.directChildText(parent, "version");
+                }
+            }
+
+            if (groupId == null || artifactId == null || rawVersion == null) {
+                return;
+            }
+
+            final String resolvedVersion = PomXmlUtils.resolveProperty(rawVersion, properties);
+            if (resolvedVersion == null || resolvedVersion.contains("${")) {
+                return;
+            }
+
+            final Optional<String> preferred = PomXmlUtils.readModuleName(pomPath);
+            final List<String> names = preferred.isPresent()
+                ? List.of(preferred.get())
+                : deriveNames(groupId, artifactId);
+
+            visitor.accept(names, groupId, artifactId, resolvedVersion);
+        } catch (final Exception e) {
+            recorder.warn(e, "PomWorkspaceWalker failed to visit self-artifact for [%s]", pomPath);
+        }
+    }
+
+    /**
+     * Visits a dependency coordinate, registering it under all derived JPMS name conventions
+     * plus the {@code Automatic-Module-Name} from the jar manifest when present.
+     */
+    private static void visitDependency(final String groupId,
+                                        final String artifactId,
+                                        final String resolvedVersion,
+                                        final Path localRepo,
+                                        final TelemetryRecorder recorder,
+                                        final CoordinateVisitor visitor) {
+        try {
+            final List<String> names = new ArrayList<>(deriveNames(groupId, artifactId));
+            PomXmlUtils.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo)
+                .ifPresent(names::add);
+            visitor.accept(names, groupId, artifactId, resolvedVersion);
+        } catch (final Exception e) {
+            recorder.warn(e, "PomWorkspaceWalker failed to visit dependency [%s:%s:%s]",
+                groupId, artifactId, resolvedVersion);
+        }
+    }
+
+    /**
+     * Returns the derived JPMS module name candidates for a (groupId, artifactId) pair.
+     * The list always includes the groupId and the derived artifactId name; additional candidates
+     * are included when the heuristics in {@link PomXmlUtils} produce them.
+     */
+    private static List<String> deriveNames(final String groupId, final String artifactId) {
+        final List<String> names = new ArrayList<>(6);
+        names.add(groupId);
+        names.add(PomXmlUtils.derivedModuleName(artifactId));
+        final String lastSegment = PomXmlUtils.lastHyphenSegment(artifactId);
+        if (!lastSegment.isEmpty()) {
+            names.add(groupId + "." + lastSegment);
+        }
+        PomXmlUtils.groupPrefixedModuleName(groupId, artifactId).ifPresent(names::add);
+        PomXmlUtils.groupSuffixedModuleName(groupId, artifactId).ifPresent(names::add);
+        PomXmlUtils.groupParentWithLastArtifactSegment(groupId, artifactId).ifPresent(names::add);
+        return names;
+    }
+}
