@@ -1022,6 +1022,14 @@ public interface ModuleDescriptor {
             .register(Filter.JAVA_SINGLE_LINE_COMMENT)
             .register(Filter.JAVA_MULTILINE_COMMENT);
 
+        // skip any import statements that legally precede the module declaration
+        final String IMPORT = "import";
+        while (scanner.follows(IMPORT)) {
+            scanner.consume(IMPORT);
+            scanner.consume(Pattern.compile("[^;]+"));
+            scanner.consume(SEMICOLON);
+        }
+
         final Optional<String> open = scanner.optionallyConsume(OPEN);
 
         scanner.consume(MODULE);

@@ -222,6 +222,9 @@ public abstract class AbstractCompile
             // include the output path for compiled classes
             writer.println("-d " + Strings.doubleQuoteIfContainsWhiteSpace(target.toString()));
 
+            // preserve method/constructor parameter names in bytecode for reflection
+            writer.println("-parameters");
+
             // include -verbose (for debugging)
             writer.println("-verbose");
 

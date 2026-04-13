@@ -247,9 +247,15 @@ public abstract class AbstractProject implements Project {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <T extends Resource> Optional<T> getResource(final Class<T> resourceClass) {
-        return Optional.ofNullable((T) this.resources.get(resourceClass));
+        final Resource exact = this.resources.get(resourceClass);
+        if (exact != null) {
+            return Optional.of(resourceClass.cast(exact));
+        }
+        return this.resources.values().stream()
+            .filter(resourceClass::isInstance)
+            .findFirst()
+            .map(resourceClass::cast);
     }
 
     @Override
