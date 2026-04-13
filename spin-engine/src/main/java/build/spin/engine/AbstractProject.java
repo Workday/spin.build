@@ -9,9 +9,9 @@ package build.spin.engine;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -247,9 +247,15 @@ public abstract class AbstractProject implements Project {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <T extends Resource> Optional<T> getResource(final Class<T> resourceClass) {
-        return Optional.ofNullable((T) this.resources.get(resourceClass));
+        final var exact = this.resources.get(resourceClass);
+        if (exact != null) {
+            return Optional.of(resourceClass.cast(exact));
+        }
+        return this.resources.values().stream()
+            .filter(resourceClass::isInstance)
+            .map(resourceClass::cast)
+            .findFirst();
     }
 
     @Override
@@ -354,7 +360,7 @@ public abstract class AbstractProject implements Project {
         final String prefix,
         final String childPrefix,
         final Function<Project, String> contentExtractor) {
-            
+
         builder.append(prefix);
         builder.append(contentExtractor == null ? name() : contentExtractor.apply(this));
         builder.append('\n');
