@@ -121,8 +121,7 @@ public class PomBasedModuleCatalog
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return Files.exists(path.resolve("mvnw"))
-                && Files.exists(path.resolve(POM_FILENAME))
+            return PomXmlUtils.isMavenWorkspaceRoot(path)
                 && !Files.exists(path.resolve(MODULE_CATALOG_FILENAME));
         }
 
