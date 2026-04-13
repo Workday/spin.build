@@ -32,6 +32,8 @@ import build.spin.module.junit.Java25JUnitPlugin;
 import build.spin.module.junit.Java8JUnitPlugin;
 import build.spin.module.maven.MavenRepository;
 import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.DefaultModuleCatalog;
+import build.spin.module.modulesystem.DefaultModuleVersioning;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
@@ -80,6 +82,21 @@ public class JavaProjectTests {
         assertThat(engine.options().get(JDKVersion.class).major()).isEqualTo(25);
         assertThat(workspace.name()).isEqualTo("java-25");
         assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent()).isTrue();
+    }
+
+    @Test
+    @WorkspacePath("no-config")
+    void shouldDiscoverJavaWorkspaceWithoutSpinConfig(final Workspace workspace) {
+        // Reaching this assertion means workspace discovery completed without
+        // throwing UnsatisfiedDependencyException when MavenPlugin (activated via
+        // the Java25CompilerPlugin from src/main/java) tried to inject a ModuleCatalog.
+        // On a workspace without module-catalog.properties, DefaultModuleCatalog and
+        // DefaultModuleVersioning are the only resources that satisfy those injections.
+        assertThat(workspace.getPlugin(Java25CompilerPlugin.class)).isPresent();
+        assertThat(workspace.resources().filter(ModuleCatalog.class::isInstance).findFirst())
+            .get().isInstanceOf(DefaultModuleCatalog.class);
+        assertThat(workspace.resources().filter(ModuleVersioning.class::isInstance).findFirst())
+            .get().isInstanceOf(DefaultModuleVersioning.class);
     }
 
     @Test
