@@ -35,6 +35,8 @@ module build.spin.module.modulesystem {
     exports build.spin.module.modulesystem;
 
     provides build.spin.Extension.MetaClass with
+        build.spin.module.modulesystem.DefaultModuleCatalog.MetaClass,
+        build.spin.module.modulesystem.DefaultModuleVersioning.MetaClass,
         build.spin.module.modulesystem.ProjectModuleCatalog.MetaClass,
         build.spin.module.modulesystem.ProjectModuleVersioning.MetaClass;
 
