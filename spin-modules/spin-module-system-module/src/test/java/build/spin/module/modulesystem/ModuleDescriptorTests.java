@@ -276,4 +276,25 @@ class ModuleDescriptorTests {
         assertThrows(CyclicDependencyException.class,
             () -> descriptor.walk(collector, d -> Exceptional.ofNullable(moduleDescriptors.get(d.name()))));
     }
+
+    @Test
+    void shouldParseModuleWithImports() {
+
+        // module-info.java files may legally contain import statements before the module declaration;
+        // this is common in codemodel.build modules that use annotations in requires/exports/provides
+        final String moduleInfo = "import com.example.SomeAnnotation;\n"
+            + "import static com.example.Util.helper;\n"
+            + "import com.example.other.*;\n"
+            + "\n"
+            + "module com.example.foo {\n"
+            + "    requires com.example.bar;\n"
+            + "    exports com.example.foo;\n"
+            + "}\n";
+
+        final ModuleDescriptor descriptor = ModuleDescriptor.parse(moduleInfo).build();
+
+        assertThat(descriptor.name()).isEqualTo("com.example.foo");
+        assertThat(descriptor.requires().count()).isEqualTo(1L);
+        assertThat(descriptor.exports().count()).isEqualTo(1L);
+    }
 }

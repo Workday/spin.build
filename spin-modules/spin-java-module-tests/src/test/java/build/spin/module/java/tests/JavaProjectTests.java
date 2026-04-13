@@ -39,6 +39,8 @@ import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.module.modulesystem.PomBasedModuleCatalog;
+import build.spin.module.modulesystem.PomBasedModuleVersioning;
 import build.spin.testing.RequireJavaVersion;
 import build.spin.testing.WorkspaceDiscovery;
 import build.spin.testing.WorkspacePath;
@@ -97,6 +99,20 @@ public class JavaProjectTests {
             .get().isInstanceOf(DefaultModuleCatalog.class);
         assertThat(workspace.resources().filter(ModuleVersioning.class::isInstance).findFirst())
             .get().isInstanceOf(DefaultModuleVersioning.class);
+    }
+
+    @Test
+    @WorkspacePath("pom-based")
+    void shouldDiscoverMavenWorkspaceWithoutSpinConfig(final Workspace workspace) {
+        // A workspace with a pom.xml but no spin config files should resolve
+        // ModuleCatalog/ModuleVersioning to the PomBased* variants (not Default*,
+        // whose detection deliberately excludes pom.xml workspaces to leave room
+        // for this case).
+        assertThat(workspace.getPlugin(Java25CompilerPlugin.class)).isPresent();
+        assertThat(workspace.resources().filter(ModuleCatalog.class::isInstance).findFirst())
+            .get().isInstanceOf(PomBasedModuleCatalog.class);
+        assertThat(workspace.resources().filter(ModuleVersioning.class::isInstance).findFirst())
+            .get().isInstanceOf(PomBasedModuleVersioning.class);
     }
 
     @Test
