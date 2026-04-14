@@ -23,6 +23,7 @@ package build.spin.module.java;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
 import build.spawn.jdk.option.ClassPath;
+import build.spawn.jdk.option.ModulePath;
 import build.spin.Asset;
 import build.spin.Plugin;
 import build.spin.Project;
@@ -32,6 +33,7 @@ import build.spin.annotation.Category;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
 import build.spin.module.clean.CleanPlugin;
+import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
@@ -93,12 +95,41 @@ public class Java8CompilerPlugin
     }
 
     /**
+     * A {@link Task} that resolves the full source-graph dependency closure for main compilation
+     * and classifies candidates into module-path vs classpath.
+     */
+    @Named("detect.compilation.resolution")
+    public static class DetectCompilationResolution
+        extends AbstractDetectResolution {
+
+    }
+
+    /**
+     * A {@link Task} to detect the {@link ModulePath} suitable for <strong>compiling</strong> the {@link Project}.
+     */
+    @Named("detect.compilation.module.path")
+    public static class DetectCompilationModulePath
+        extends AbstractDetectModulePath {
+
+        public ModulePath create(
+            @From(DetectCompilationResolution.class) final CompilationResolution resolution) {
+
+            return super.project(resolution);
+        }
+    }
+
+    /**
      * A {@link Task} to detect the {@link ClassPath} suitable for <strong>compiling</strong> the {@link Project}.
      */
     @Named("detect.compilation.classpath")
     public static class DetectCompilationClassPath
-        extends AbstractDetectCompilationClassPath {
+        extends AbstractDetectClassPath {
 
+        public ClassPath create(
+            @From(DetectCompilationResolution.class) final CompilationResolution resolution) {
+
+            return super.project(resolution);
+        }
     }
 
     /**
@@ -113,17 +144,18 @@ public class Java8CompilerPlugin
         private TargetDirectoryName target;
 
         /**
-         * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path},
-         * using the specified {@link ClassPath}.
+         * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path}.
          *
          * @param sourceCode the source code
-         * @param classPath the {@link ClassPath}
-         * @param buildPath the build {@link Path}
+         * @param modulePath the {@link ModulePath}
+         * @param classPath  the {@link ClassPath}
+         * @param buildPath  the build {@link Path}
          *
          * @return the {@link PathSet} containing the compiled classes
          * @throws Exception should compilation fail
          */
         public PathSet compile(final @From(DetectSourceFiles.class) PathSet sourceCode,
+                               final @From(DetectCompilationModulePath.class) ModulePath modulePath,
                                final @From(DetectCompilationClassPath.class) ClassPath classPath,
                                final @From(CleanPlugin.CreateBuildPath.class) Asset<Path> buildPath)
             throws Exception {
@@ -131,7 +163,7 @@ public class Java8CompilerPlugin
             // the path in which to place the compiled classes
             final Path targetPath = buildPath.get().resolve("main/" + this.target.get());
 
-            return super.compile(sourceCode, classPath, buildPath.get(), targetPath);
+            return super.compile(sourceCode, modulePath, classPath, buildPath.get(), targetPath);
         }
     }
 
@@ -146,23 +178,25 @@ public class Java8CompilerPlugin
         extends AbstractJavaDoc {
 
         /**
-         * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path},
-         * using the specified {@link ClassPath}.
+         * Generates Java Documentation from the source code in the {@link Project}.
          *
          * @param sourceCode the source code
-         * @param classPath the {@link ClassPath}
-         * @param buildPath the build {@link Path}
+         * @param modulePath the {@link ModulePath}
+         * @param classPath  the {@link ClassPath}
+         * @param buildPath  the build {@link Path}
          *
          * @return the {@link Path} of the generated documentation
-         * @throws Exception should compilation fail
+         * @throws Exception should documentation fail
          */
         public Path javadoc(final @From(DetectSourceFiles.class) PathSet sourceCode,
+                            final @From(DetectCompilationModulePath.class) ModulePath modulePath,
                             final @From(DetectCompilationClassPath.class) ClassPath classPath,
                             final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {
 
             return super.javadoc(
                 sourceCode,
+                modulePath,
                 classPath,
                 buildPath,
                 Optional.of(new URL("https://docs.oracle.com/javase/8/docs/api/")));

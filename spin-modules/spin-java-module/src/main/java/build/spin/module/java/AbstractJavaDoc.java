@@ -22,7 +22,6 @@ package build.spin.module.java;
 
 import build.base.foundation.Strings;
 import build.base.io.PathSet;
-import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Activity;
 import build.base.telemetry.TelemetryRecorder;
@@ -33,6 +32,7 @@ import build.spawn.application.option.Name;
 import build.spawn.jdk.JDK;
 import build.spawn.jdk.option.ClassPath;
 import build.spawn.jdk.option.JDKHome;
+import build.spawn.jdk.option.ModulePath;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
@@ -40,7 +40,6 @@ import build.spin.annotation.System;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.ModuleDescriptor;
-import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.Verbose;
 import jakarta.inject.Inject;
@@ -51,10 +50,8 @@ import java.io.PrintWriter;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
-import java.util.Set;
 /**
  * An abstract {@link Task} that compiles and produces Java Documentation for the Java Source Code in a {@link Project}
  * using the Java Platform {@code javadoc} command.
@@ -103,6 +100,7 @@ public abstract class AbstractJavaDoc
      * into the specified build {@link Path}.
      *
      * @param sourceCode the source code
+     * @param modulePath the {@link ModulePath} (empty for non-modular projects)
      * @param classPath the {@link ClassPath}
      * @param buildPath the build {@link Path} (.build)
      * @param javaPlatformURL the {@link Optional} {@link URL} for the external Java Development Kit documentation
@@ -110,6 +108,7 @@ public abstract class AbstractJavaDoc
      * @throws Exception should documentation fail
      */
     protected Path javadoc(final PathSet sourceCode,
+                           final ModulePath modulePath,
                            final ClassPath classPath,
                            final Path buildPath,
                            final Optional<URL> javaPlatformURL)
@@ -140,18 +139,6 @@ public abstract class AbstractJavaDoc
                 throw new RuntimeException("Failed to create documentation target [" + targetPath + "]", e);
             }
 
-            // determine the ClassPath for the documentation
-            final PathSetBuilder builder = PathSetBuilder.create();
-            builder.addAll(classPath.stream());
-
-            final ClassPath documentationClassPath = ClassPath.of(builder.build().stream());
-
-            // detect if this is a modular project (has a module-info.java in the source set)
-            final Optional<Path> moduleInfoJava = sourceCode.stream()
-                .filter(path -> path.getFileName().toString().equals("module-info.java"))
-                .findFirst();
-            final boolean isModular = moduleInfoJava.isPresent();
-
             // create an "argument" file for "javadoc"
             // include the version number in the arguments file name
             // (so we can tell the arguments being used to compile with this plugin)
@@ -170,36 +157,18 @@ public abstract class AbstractJavaDoc
                     writer.println("-quiet");
                 }
 
-                // include the compilation classpath or module-path (iff it's defined)
-                if (!documentationClassPath.isEmpty()) {
-                    if (isModular) {
-                        final List<Path> documentationJars = documentationClassPath.stream().toList();
-                        final Set<String> requiredModuleNames =
-                            ModuleGraphClassifier.collectRequiredModuleNames(moduleInfoJava, documentationJars);
-                        final var classification = ModuleGraphClassifier.classify(
-                            documentationJars,
-                            requiredModuleNames,
-                            msg -> this.recorder.diagnostic("[classify] %s", msg));
-                        if (!classification.modulePath().isEmpty()) {
-                            final String mp = classification.modulePath().stream()
-                                .map(Path::toString)
-                                .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
-                            writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
-                        }
-                        if (!classification.classPath().isEmpty()) {
-                            final String cp = classification.classPath().stream()
-                                .map(Path::toString)
-                                .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
-                            writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
-                        }
-                    }
-                    else {
-                        this.recorder.diagnostic("Documentation ClassPath");
-                        final String cp = documentationClassPath.stream()
-                            .map(Path::toString)
-                            .reduce("", (left, right) -> left.isEmpty() ? right : left + File.pathSeparator + right);
-                        writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
-                    }
+                // include the module-path and classpath from the detection tasks
+                if (!modulePath.isEmpty()) {
+                    final String mp = modulePath.stream()
+                        .map(Path::toString)
+                        .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
+                    writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
+                }
+                if (!classPath.isEmpty()) {
+                    final String cp = classPath.stream()
+                        .map(Path::toString)
+                        .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
+                    writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
                 }
 
                 // include the -link(s) to external documentation

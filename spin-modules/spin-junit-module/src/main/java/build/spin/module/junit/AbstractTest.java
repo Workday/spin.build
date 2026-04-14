@@ -1,7 +1,6 @@
 package build.spin.module.junit;
 
 import build.base.configuration.Option;
-import build.base.foundation.Exceptional;
 import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
@@ -13,20 +12,29 @@ import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
 import build.spawn.jdk.JDK;
 import build.spawn.jdk.JDKApplication;
+import build.spawn.jdk.option.AddModules;
 import build.spawn.jdk.option.ClassPath;
 import build.spawn.jdk.option.JDKHome;
+import build.spawn.jdk.option.JDKOption;
 import build.spawn.jdk.option.MainClass;
+import build.spawn.jdk.option.ModulePath;
+import build.spawn.jdk.option.PatchModule;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.Category;
 import build.spin.annotation.System;
+import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.java.JavaPlugin;
-import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
+import java.io.File;
+import java.io.IOException;
+import java.lang.module.ModuleFinder;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.stream.Stream;
@@ -52,10 +60,10 @@ public abstract class AbstractTest
     private JDK javaDevelopmentKit;
 
     @Inject
-    private Artifact.Resolver resolver;
+    private ModuleVersioning versioning;
 
     @Inject
-    private ModuleVersioning versioning;
+    private ModuleDescriptor moduleDescriptor;
 
     @Inject
     private JDKVersion javaVersion;
@@ -71,83 +79,148 @@ public abstract class AbstractTest
     private TargetDirectoryName target;
 
     /**
-     * Execute tests in the specified build {@link Path}, using the provided {@link ClassPath}.
+     * Execute tests in the specified build {@link Path}, using the provided module-path and classpath.
      *
-     * @param classPath the runtime {@link ClassPath}
-     * @param buildPath the build {@link Path}
+     * @param modulePath the runtime {@link ModulePath} (from DetectTestModulePath)
+     * @param classPath  the runtime {@link ClassPath} (from DetectTestClassPath)
+     * @param buildPath  the build {@link Path}
      * @return the {@link PathSet} containing the JUnit Reports
      */
-    protected PathSet test(final ClassPath classPath,
+    protected PathSet test(final ModulePath modulePath,
+                           final ClassPath classPath,
                            final Path buildPath) {
 
-        // Resolve JUnit artifact versions from the workspace; fall back to known defaults
+        // JUnit 6+ uses subcommands; JUnit 5 uses flat options
         final String jupiterVersion = this.versioning.getVersion("org.junit.jupiter")
-            .map(v -> v.get())
+            .map(ModuleDescriptor.Version::get)
             .orElse("5.6.0");
-        final String platformVersion = derivePlatformVersion(jupiterVersion);
-        final String apiguardianVersion = this.versioning.getVersion("org.apiguardian")
-            .map(v -> v.get())
-            .orElse("1.1.0");
-        final String opentest4jVersion = this.versioning.getVersion("org.opentest4j")
-            .map(v -> v.get())
-            .orElse("1.2.0");
+        final boolean useSubcommand = AbstractDetectTestResolution.jupiterMajorVersion(jupiterVersion) >= 6;
 
-        // Use the Artifact.Resolver to resolve the required JUnit Launcher Artifacts
-        final Stream<Path> junitArtifacts = Stream.of(
-                "org.junit.platform:junit-platform-console:" + platformVersion,
-                "org.junit.platform:junit-platform-reporting:" + platformVersion,
-                "org.junit.platform:junit-platform-launcher:" + platformVersion,
-                "org.junit.platform:junit-platform-engine:" + platformVersion,
-                "org.junit.platform:junit-platform-commons:" + platformVersion,
-                "org.apiguardian:apiguardian-api:jar:" + apiguardianVersion,
-                "org.opentest4j:opentest4j:jar:" + opentest4jVersion,
-                "org.junit.jupiter:junit-jupiter-engine:" + jupiterVersion)
-            .map(Artifact::parse)
-            .map(this.resolver::resolve)
-            .filter(Exceptional::isPresent)
-            .map(Exceptional::orElseThrow);
-
-        // the path in which to place reports
+        final Path testClassesDir = buildPath.resolve("test/" + this.target.get());
         final Path reportPath = buildPath.resolve("reports/tests");
 
-        // establish the ClassPath for the JUnit Tests
-        // (include the test/classes on the compilation class path)
-        final PathSetBuilder builder = PathSetBuilder.create();
-        builder.addAll(junitArtifacts);
-        builder.addAll(classPath.paths());
-
-        // include the multi-version compiled classes (as JUnit can't detect them for some reason)
-        // when this plugin isn't for the default java version
-        final Path targetPath = buildPath.resolve("test/" + this.target.get());
-        if (this.javaVersion.major() != defaultJavaVersion.major()) {
+        // include the multi-version compiled classes for non-default JDK test plugins
+        final ClassPath effectiveClassPath;
+        if (this.javaVersion.major() != this.defaultJavaVersion.major()) {
+            final PathSetBuilder builder = PathSetBuilder.create();
+            builder.addAll(classPath.stream());
             this.project.plugins(JUnitPlugin.class)
                 .map(JavaPlugin::getJavaVersion)
                 .map(JDKVersion::major)
                 .sorted((first, second) -> second - first)
-                .forEach(version -> builder.add(targetPath.resolve("META-INF/versions/" + version)));
+                .forEach(version -> builder.add(testClassesDir.resolve("META-INF/versions/" + version)));
+            effectiveClassPath = ClassPath.of(builder.build().stream());
+        } else {
+            effectiveClassPath = classPath;
         }
 
-        final ClassPath junitClassPath = ClassPath.of(builder.build().stream());
+        final boolean hasMainModuleInfo = Files.exists(
+            this.project.path().resolve("src/main/java/module-info.java"));
+        final boolean hasTestModuleInfo = Files.exists(
+            this.project.path().resolve("src/test/java/module-info.java"));
 
-        // establish the "java" executable based on the Java Development Kit
+        // Derive the root module name.  The JUnit plugin's injected ModuleDescriptor uses a
+        // project-derived name when no src/test/java/module-info.java exists (e.g. "base.foundation"
+        // from "base-foundation").  For cases that need the real JPMS module name we get it from
+        // the matching JavaCompilerPlugin instead.
+        final String rootModule;
+        if (hasMainModuleInfo && !hasTestModuleInfo) {
+            rootModule = this.project.plugins(JavaCompilerPlugin.class)
+                .filter(plugin -> plugin.getJavaVersion().major() == this.javaVersion.major())
+                .findFirst()
+                .map(JavaCompilerPlugin::getModuleDescriptor)
+                .map(ModuleDescriptor::name)
+                .orElse(this.moduleDescriptor.name());
+        } else {
+            rootModule = this.moduleDescriptor.name();
+        }
+
         final JDKHome javaHome = this.javaDevelopmentKit.home();
         final String executable = javaHome.path().resolve("bin/java").toString();
-
-        // JUnit 6+ uses subcommands; JUnit 5 uses flat options
-        final boolean useSubcommand = jupiterMajorVersion(jupiterVersion) >= 6;
 
         final ArrayList<Option> args = new ArrayList<>();
         args.add(Executable.of(executable));
         args.add(WorkingDirectory.of(this.project.path().toString()));
         args.add(javaHome);
         args.add(Name.of("JUnit Platform"));
-        args.add(junitClassPath);
-        args.add(MainClass.of("org.junit.platform.console.ConsoleLauncher"));
-        if (useSubcommand) {
-            args.add(Argument.of("execute"));
+
+        if (hasTestModuleInfo) {
+            // case A — test sources have their own module-info.java: the test module is a
+            // named module; JUnit selects tests by module name.
+            final ModulePath augmentedModulePath =
+                ModulePath.of(modulePath.stream(), Stream.of(testClassesDir));
+            args.add(augmentedModulePath);
+            args.add(effectiveClassPath);
+            args.add(AddModules.of(rootModule));
+            args.add(MainClass.of("org.junit.platform.console.ConsoleLauncher"));
+            if (useSubcommand) {
+                args.add(Argument.of("execute"));
+            }
+            args.add(Argument.of("--select-module=" + rootModule));
+        } else if (hasMainModuleInfo) {
+            // case B — main sources are a named module but test sources have no module-info.java.
+            // Patch the main module with test classes so that JPMS service providers declared
+            // via "provides...with" in module-info.java remain visible to ServiceLoader.
+            // Emit --add-opens for every compiled test package so JUnit's reflection can
+            // instantiate and invoke test classes without InaccessibleObjectException.
+            args.add(modulePath);
+            args.add(effectiveClassPath);
+            args.add(PatchModule.of(rootModule, testClassesDir.toString()));
+            args.add(AddModules.of(rootModule, "ALL-MODULE-PATH"));
+            args.add(JDKOption.of("--add-reads"));
+            args.add(JDKOption.of(rootModule + "=ALL-UNNAMED"));
+
+            // Add --add-reads for every named-module JAR on the module path that the main
+            // module doesn't explicitly require (e.g. assertj, JUnit APIs used in tests).
+            // ModuleFinder reads the module-info.class from each JAR to get its real name.
+            modulePath.stream()
+                .filter(p -> !Files.isDirectory(p))
+                .forEach(jar -> {
+                    try {
+                        ModuleFinder.of(jar).findAll().forEach(ref -> {
+                            args.add(JDKOption.of("--add-reads"));
+                            args.add(JDKOption.of(rootModule + "=" + ref.descriptor().name()));
+                        });
+                    } catch (final Exception ignored) {
+                        // skip JARs that cannot be opened as modules
+                    }
+                });
+
+            try (Stream<Path> walk = Files.walk(testClassesDir)) {
+                walk.filter(Files::isDirectory)
+                    .map(testClassesDir::relativize)
+                    .map(Path::toString)
+                    .filter(s -> !s.isEmpty())
+                    .map(s -> s.replace(File.separatorChar, '.'))
+                    .forEach(pkg -> {
+                        args.add(JDKOption.of("--add-opens"));
+                        args.add(JDKOption.of(rootModule + "/" + pkg + "=org.junit.platform.commons"));
+                    });
+            } catch (final IOException e) {
+                this.recorder.warn("Could not scan test classes for --add-opens: %s", e.getMessage());
+            }
+
+            args.add(MainClass.of("org.junit.platform.console.ConsoleLauncher"));
+            if (useSubcommand) {
+                args.add(Argument.of("execute"));
+            }
+            args.add(Argument.of("--select-module=" + rootModule));
+        } else {
+            // case C — no module-info.java anywhere: fully non-modular project.
+            // Flatten everything onto the classpath and use --scan-classpath.
+            final ClassPath withTestClasses = ClassPath.of(
+                modulePath.stream(),
+                effectiveClassPath.stream(),
+                Stream.of(testClassesDir));
+            args.add(withTestClasses);
+            args.add(MainClass.of("org.junit.platform.console.ConsoleLauncher"));
+            if (useSubcommand) {
+                args.add(Argument.of("execute"));
+            }
+            args.add(Argument.of("--scan-classpath"));
         }
+
         args.add(Argument.of("--reports-dir=" + reportPath));
-        args.add(Argument.of("--scan-classpath"));
         args.add(Console.ofSystem());
 
         try (JDKApplication junit = this.machine.launch(
@@ -156,7 +229,6 @@ public abstract class AbstractTest
 
             junit.onExit().get();
 
-            // output the exit value
             junit.exitValue()
                 .ifPresent(value -> {
                     this.recorder.info("JUnit Platform finished with exit code %d", value);
@@ -165,8 +237,7 @@ public abstract class AbstractTest
                         throw new RuntimeException("JUnit Failed (exit code " + value + ")");
                     }
                 });
-        }
-        catch (final Exception e) {
+        } catch (final Exception e) {
             this.recorder.error(e, "Failed to execute JUnit");
 
             throw new RuntimeException("JUnit Failure", e);
@@ -175,34 +246,4 @@ public abstract class AbstractTest
         return PathSetBuilder.create().build();
     }
 
-    /**
-     * Extracts the major version number from a version string (e.g. {@code "6.0.3"} → {@code 6}).
-     * Returns {@code 0} if the version cannot be parsed.
-     */
-    private static int jupiterMajorVersion(final String jupiterVersion) {
-        final int dot = jupiterVersion.indexOf('.');
-        final String majorStr = dot < 0 ? jupiterVersion : jupiterVersion.substring(0, dot);
-        try {
-            return Integer.parseInt(majorStr);
-        } catch (final NumberFormatException e) {
-            return 0;
-        }
-    }
-
-    /**
-     * Derives the JUnit Platform version from the JUnit Jupiter version.
-     * <p>
-     * JUnit 6+: platform version matches Jupiter (e.g. {@code 6.0.3} → {@code 6.0.3}).
-     * JUnit 5: platform major is {@code 1} (e.g. {@code 5.6.0} → {@code 1.6.0}).
-     */
-    private static String derivePlatformVersion(final String jupiterVersion) {
-        final int dot = jupiterVersion.indexOf('.');
-        if (dot < 0) {
-            return jupiterVersion;
-        }
-        if (jupiterMajorVersion(jupiterVersion) >= 6) {
-            return jupiterVersion;
-        }
-        return "1" + jupiterVersion.substring(dot);
-    }
 }

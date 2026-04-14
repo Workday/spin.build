@@ -1332,6 +1332,20 @@ public interface Artifact {
         Exceptional<ModuleDescriptor> getModuleDescriptor(Artifact artifact,
                                                           ModuleCatalog catalog,
                                                           ModuleVersioning versioning);
+
+        /**
+         * Attempts to transitively resolve the specified {@link Artifact} and all of its
+         * compile-scope transitive dependencies, returning the full set of {@link Path}s.
+         * <p>
+         * Uses the underlying repository system's native dependency resolution (e.g. Aether)
+         * rather than a hand-rolled BFS, so artifact-graph cycles are handled correctly.
+         *
+         * @param artifact the root {@link Artifact}
+         *
+         * @return an {@link Exceptional} {@link List} of {@link Path}s, one per resolved
+         *         artifact (root + all transitive compile-scope dependencies)
+         */
+        Exceptional<List<Path>> resolveTransitive(Artifact artifact);
     }
 
     /**
