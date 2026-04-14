@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import static build.base.foundation.Introspection.describe;
 
@@ -129,7 +130,7 @@ public interface Task<T> {
                     parameters[i] = list.stream();
                     snapshots[i] = list;
                 } else {
-                    snapshots[i] = parameters[i];
+                    snapshots[i] = describeTaskParam(parameters[i]);
                 }
             }
 
@@ -157,6 +158,24 @@ public interface Task<T> {
             throw new UnsupportedOperationException("Could not determine a public non-static method of " +
                 describe(getClass()) + " that returns " + describe(taskResultClass) + " to execute");
         }
+    }
+
+    /**
+     * Returns a readable description of a task parameter for error messages.
+     * <p>
+     * {@link Iterable} values (e.g. {@code ModulePath}, {@code ClassPath}) are expanded to a
+     * list of their elements; all other values use their own {@code toString()}.
+     *
+     * @param param the parameter value, possibly {@code null}
+     * @return a {@link String} describing the parameter
+     */
+    private static String describeTaskParam(final Object param) {
+        return switch (param) {
+            case null -> "null";
+            case java.nio.file.Path p -> p.toString();
+            case Iterable<?> it -> StreamSupport.stream(it.spliterator(), false).toList().toString();
+            default -> param.toString();
+        };
     }
 
     /**

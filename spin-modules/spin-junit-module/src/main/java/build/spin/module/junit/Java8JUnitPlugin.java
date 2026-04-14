@@ -9,9 +9,9 @@ package build.spin.module.junit;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,18 +23,20 @@ package build.spin.module.junit;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
 import build.spawn.jdk.option.ClassPath;
+import build.spawn.jdk.option.ModulePath;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Reference;
-import build.spin.Task;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractCompile;
-import build.spin.module.java.AbstractDetectCompilationClassPath;
+import build.spin.module.java.AbstractDetectClassPath;
+import build.spin.module.java.AbstractDetectModulePath;
 import build.spin.module.java.AbstractDetectSourceFiles;
 import build.spin.module.java.AbstractDetectSourcePaths;
 import build.spin.module.java.Java8CompilerPlugin;
+import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
@@ -71,7 +73,7 @@ public class Java8JUnitPlugin
     }
 
     /**
-     * A {@link Task} to determine the source paths for compilation.
+     * A {@link build.spin.Task} to determine the source paths for compilation.
      */
     @Named("detect.test.source.paths")
     public static class DetectSourcePaths
@@ -85,7 +87,7 @@ public class Java8JUnitPlugin
     }
 
     /**
-     * A {@link Task} to determine the source files for compilation.
+     * A {@link build.spin.Task} to determine the source files for compilation.
      */
     @Named("detect.test.source.files")
     public static class DetectSourceFiles
@@ -99,11 +101,15 @@ public class Java8JUnitPlugin
     }
 
     /**
-     * A {@link Task} to detect the {@link ClassPath} suitable for <strong>compiling</strong> tests for the {@link Project}.
+     * A {@link build.spin.Task} that resolves the full source-graph dependency closure for test
+     * compilation and classifies candidates into module-path vs classpath.
+     *
+     * <p>Adds the project's own main compiled classes directory as an additional sibling candidate
+     * so they appear on the module-path or classpath alongside the external dependencies.
      */
-    @Named("detect.test.compilation.classpath")
-    public static class DetectCompilationClassPath
-        extends AbstractDetectCompilationClassPath {
+    @Named("detect.test.compilation.resolution")
+    public static class DetectTestResolution
+        extends AbstractDetectTestResolution {
 
         @Inject
         private Project project;
@@ -115,19 +121,46 @@ public class Java8JUnitPlugin
         private TargetDirectoryName target;
 
         @Override
-        public ClassPath create() {
-            // when this is a Java project, we include the main/classes and main/resources as part of the class path
+        protected Stream<Path> additionalSiblingCandidates() {
             return this.project.getPlugin(Java8CompilerPlugin.class)
-                .map(java -> ClassPath.of(
-                    Stream.of(this.project.path()
-                        .resolve(this.buildDirectoryName.get() + "/main/" + this.target.get())),
-                    super.create().paths()))
-                .orElse(super.create());
+                .map(java -> Stream.of(this.project.path()
+                    .resolve(this.buildDirectoryName.get() + "/main/" + this.target.get())))
+                .orElse(Stream.empty());
         }
     }
 
     /**
-     * A {@link Task} to compile the source code in the {@link Project}.
+     * A {@link build.spin.Task} to detect the {@link ModulePath} suitable for <strong>compiling</strong>
+     * and <strong>running</strong> tests for the {@link Project}.
+     */
+    @Named("detect.test.compilation.module.path")
+    public static class DetectTestModulePath
+        extends AbstractDetectModulePath {
+
+        public ModulePath create(
+            @From(DetectTestResolution.class) final CompilationResolution resolution) {
+
+            return super.project(resolution);
+        }
+    }
+
+    /**
+     * A {@link build.spin.Task} to detect the {@link ClassPath} suitable for <strong>compiling</strong>
+     * and <strong>running</strong> tests for the {@link Project}.
+     */
+    @Named("detect.test.compilation.classpath")
+    public static class DetectTestClassPath
+        extends AbstractDetectClassPath {
+
+        public ClassPath create(
+            @From(DetectTestResolution.class) final CompilationResolution resolution) {
+
+            return super.project(resolution);
+        }
+    }
+
+    /**
+     * A {@link build.spin.Task} to compile the source code in the {@link Project}.
      */
     @Named("test-compile")
     public static class Compile
@@ -152,50 +185,51 @@ public class Java8JUnitPlugin
         }
 
         /**
-         * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path},
-         * using the specified {@link ClassPath}.
+         * Compiles the test source code in the provided {@link PathSet} into the specified build {@link Path}.
          *
          * @param sourceCode the source code
-         * @param classPath the {@link ClassPath}
-         * @param buildPath the build {@link Path}
+         * @param modulePath the {@link ModulePath}
+         * @param classPath  the {@link ClassPath}
+         * @param buildPath  the build {@link Path}
          *
          * @return the {@link PathSet} containing the compiled classes
          * @throws Exception should compilation fail
          */
         public PathSet compile(final @From(DetectSourceFiles.class) PathSet sourceCode,
-                               final @From(DetectCompilationClassPath.class) ClassPath classPath,
+                               final @From(DetectTestModulePath.class) ModulePath modulePath,
+                               final @From(DetectTestClassPath.class) ClassPath classPath,
                                final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {
 
             // the path in which to place the compiled classes
             final Path targetPath = buildPath.resolve("test/" + this.target.get());
 
-            return super.compile(sourceCode, classPath, buildPath, targetPath);
-        }
-    }
-
-    @Named("resolve.test.runtime.classpath")
-    public static class ResolveRuntimeClassPath
-        implements Task<ClassPath> {
-
-        public ClassPath resolve(final @From(Java8JUnitPlugin.Compile.class) PathSet pathSet,
-                                 final @From(DetectCompilationClassPath.class) ClassPath classPath) {
-
-            return ClassPath.of(classPath.stream(), pathSet.stream());
+            return super.compile(sourceCode, modulePath, classPath, buildPath, targetPath);
         }
     }
 
     /**
-     * A {@link Task} to execute compiled tests in the {@link Project}.
+     * A {@link build.spin.Task} to execute compiled tests in the {@link Project}.
      */
     @Named("test")
     public static class Test
         extends AbstractTest {
 
-        public PathSet test(final @From(ResolveRuntimeClassPath.class) ClassPath classPath,
+        @Inject
+        private Project project;
+
+        @Override
+        public Stream<Reference> dependencies() {
+            return Stream.concat(
+                Stream.of(Reference.of(this.project, Compile.class)),
+                super.dependencies());
+        }
+
+        public PathSet test(final @From(DetectTestModulePath.class) ModulePath modulePath,
+                            final @From(DetectTestClassPath.class) ClassPath classPath,
                             final @From(CleanPlugin.CreateBuildPath.class) Path buildPath) {
 
-            return super.test(classPath, buildPath);
+            return super.test(modulePath, classPath, buildPath);
         }
     }
 

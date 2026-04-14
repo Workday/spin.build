@@ -119,6 +119,11 @@ public class MavenRepository
     }
 
     @Override
+    public Exceptional<List<Path>> resolveTransitive(final Artifact artifact) {
+        return this.maven.resolveTransitiveDependencies(artifact.toString());
+    }
+
+    @Override
     public Exceptional<ModuleReference> getModuleReference(final Artifact artifact,
                                                            final ModuleCatalog catalog) {
 

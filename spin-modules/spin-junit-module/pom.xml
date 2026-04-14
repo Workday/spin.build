@@ -53,11 +53,6 @@
 
         <dependency>
             <groupId>build.base</groupId>
-            <artifactId>base-foundation</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>build.base</groupId>
             <artifactId>base-io</artifactId>
         </dependency>
 

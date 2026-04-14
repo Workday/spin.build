@@ -35,6 +35,7 @@ import build.spawn.application.option.StandardErrorSubscriber;
 import build.spawn.jdk.JDK;
 import build.spawn.jdk.option.ClassPath;
 import build.spawn.jdk.option.JDKHome;
+import build.spawn.jdk.option.ModulePath;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Invocable;
 import build.spin.Project;
@@ -44,7 +45,6 @@ import build.spin.Workspace;
 import build.spin.annotation.System;
 import build.spin.common.reactive.ConditionalConsumingObserver;
 import build.spin.module.modulesystem.ModuleDescriptor;
-import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleVersioning;
 import jakarta.inject.Inject;
 
@@ -54,10 +54,7 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -144,10 +141,10 @@ public abstract class AbstractCompile
     }
 
     /**
-     * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path},
-     * using the specified {@link ClassPath}.
+     * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path}.
      *
      * @param sourceCode the source code
+     * @param modulePath the {@link ModulePath} (empty for non-modular projects)
      * @param classPath the {@link ClassPath}
      * @param buildPath the build {@link Path} (.build)
      * @param targetPath the path in which to place the compiled classes
@@ -156,6 +153,7 @@ public abstract class AbstractCompile
      * @throws Exception should compilation fail
      */
     protected PathSet compile(final PathSet sourceCode,
+                              final ModulePath modulePath,
                               final ClassPath classPath,
                               final Path buildPath,
                               final Path targetPath)
@@ -194,23 +192,18 @@ public abstract class AbstractCompile
             throw new RuntimeException("Failed to create compilation target [" + target + "]", e);
         }
 
-        // determine the ClassPath for the compilation
-        final PathSetBuilder builder = PathSetBuilder.create();
-        builder.addAll(classPath.stream());
-
-        // when this project isn't using the system version of java, include the default classes folder for the project
-        // as these previously compiled classes may be required for this compilation
+        // when this project isn't using the system version of java, augment the classpath
+        // with the default classes folder so previously compiled classes are available
+        final ClassPath compilationClassPath;
         if (this.javaVersion.major() != this.systemJavaVersion.major()) {
+            final PathSetBuilder builder = PathSetBuilder.create();
+            builder.addAll(classPath.stream());
             builder.add(targetPath);
+            compilationClassPath = ClassPath.of(builder.build().stream());
         }
-
-        final ClassPath compilationClassPath = ClassPath.of(builder.build().stream());
-
-        // determine if this is a modular project (has a module-info.java in the source set)
-        final Optional<Path> moduleInfoJava = sourceCode.stream()
-            .filter(path -> path.getFileName().toString().equals("module-info.java"))
-            .findFirst();
-        final boolean isModular = moduleInfoJava.isPresent();
+        else {
+            compilationClassPath = classPath;
+        }
 
         // create an "argument" file for "javac"
         // include the version number in the arguments file name
@@ -228,37 +221,35 @@ public abstract class AbstractCompile
             // include -verbose (for debugging)
             writer.println("-verbose");
 
-            if (!compilationClassPath.isEmpty()) {
-                if (isModular) {
-                    final List<Path> compilationJars = compilationClassPath.stream().toList();
-                    final Set<String> requiredModuleNames =
-                        ModuleGraphClassifier.collectRequiredModuleNames(moduleInfoJava, compilationJars);
-                    final var classification = ModuleGraphClassifier.classify(
-                        compilationJars,
-                        requiredModuleNames,
-                        msg -> this.recorder.diagnostic("[classify] %s", msg));
-                    if (!classification.modulePath().isEmpty()) {
-                        this.recorder.diagnostic("Module Path (%d jars)", classification.modulePath().size());
-                        final String mp = classification.modulePath().stream()
-                            .map(Path::toString)
-                            .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
-                        writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
-                    }
-                    if (!classification.classPath().isEmpty()) {
-                        this.recorder.diagnostic("Class Path (%d unnamed jars)", classification.classPath().size());
-                        final String cp = classification.classPath().stream()
-                            .map(Path::toString)
-                            .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
-                        writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
-                    }
+            // when the source set contains a module-info.java the compilation is named-module mode:
+            // use the module path and classpath as classified by the detection tasks.
+            // when there is no module-info.java the sources belong to the unnamed module and JPMS
+            // split-package enforcement would reject packages that already exist in a named module
+            // (e.g. test sources in build.base.foundation while base.foundation is on the module
+            // path).  In that case collapse everything onto the classpath so the unnamed module can
+            // see all dependencies without JPMS boundaries.
+            final boolean hasModuleInfo = sourceCode.stream()
+                .anyMatch(p -> "module-info.java".equals(p.getFileName().toString()));
+
+            if (hasModuleInfo) {
+                if (!modulePath.isEmpty()) {
+                    this.recorder.diagnostic("Module Path (%d entries)", modulePath.size());
+                    writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(
+                        joinPaths(modulePath.stream())));
                 }
-                else {
-                    // non-modular project: legacy -classpath behaviour
-                    this.recorder.diagnostic("Compilation ClassPath");
-                    final String cp = compilationClassPath.stream()
-                        .map(Path::toString)
-                        .reduce("", (left, right) -> left.isEmpty() ? right : left + File.pathSeparator + right);
-                    writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                if (!compilationClassPath.isEmpty()) {
+                    this.recorder.diagnostic("Class Path (%d entries)", compilationClassPath.size());
+                    writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(
+                        joinPaths(compilationClassPath.stream())));
+                }
+            } else {
+                // unnamed-module sources: merge module path + classpath into one flat classpath
+                final ClassPath flatClassPath = ClassPath.of(
+                    Stream.concat(modulePath.stream(), compilationClassPath.stream()));
+                if (!flatClassPath.isEmpty()) {
+                    this.recorder.diagnostic("Class Path [unnamed-module] (%d entries)", flatClassPath.size());
+                    writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(
+                        joinPaths(flatClassPath.stream())));
                 }
             }
 
@@ -382,5 +373,10 @@ public abstract class AbstractCompile
         }
 
         return PathSetBuilder.create(path).build();
+    }
+
+    private static String joinPaths(final Stream<Path> paths) {
+        return paths.map(Path::toString)
+            .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
     }
 }

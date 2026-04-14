@@ -38,6 +38,8 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.collection.CollectRequest;
+import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.repository.LocalRepository;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactDescriptorException;
@@ -46,6 +48,9 @@ import org.eclipse.aether.resolution.ArtifactDescriptorResult;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactResult;
+import org.eclipse.aether.resolution.DependencyRequest;
+import org.eclipse.aether.resolution.DependencyResolutionException;
+import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.aether.supplier.RepositorySystemSupplier;
 import org.eclipse.aether.util.repository.AuthenticationBuilder;
 
@@ -53,6 +58,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import static build.spin.option.NetworkAccess.ONLINE;
 
@@ -213,6 +219,38 @@ class MavenFacade {
         catch (final ArtifactResolutionException e) {
             this.recorder.error(e, "Failed to resolve %s", coordinates);
 
+            return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
+        }
+    }
+
+    /**
+     * Resolves the specified artifact and all of its compile-scope transitive dependencies,
+     * returning the full list of local {@link Path}s via Aether's native dependency resolution.
+     * Aether handles artifact-graph cycles internally, so no manual BFS is needed.
+     *
+     * @param coordinates the group:artifact:classifier:type:version coordinates
+     * @return an {@link Exceptional} list of resolved {@link Path}s (root + all transitive deps)
+     */
+    public Exceptional<List<Path>> resolveTransitiveDependencies(final String coordinates) {
+        try {
+            final org.eclipse.aether.artifact.Artifact artifact = new DefaultArtifact(coordinates);
+            final CollectRequest collectRequest = new CollectRequest(
+                new Dependency(artifact, "compile"),
+                this.remoteRepositories);
+            final DependencyRequest dependencyRequest = new DependencyRequest(collectRequest, null);
+            final DependencyResult result = this.repositorySystem
+                .resolveDependencies(this.repositorySystemSession, dependencyRequest);
+
+            final List<Path> paths = result.getArtifactResults().stream()
+                .filter(ArtifactResult::isResolved)
+                .map(r -> r.getArtifact().getPath())
+                .filter(Objects::nonNull)
+                .toList();
+
+            return Exceptional.of(paths);
+        }
+        catch (final DependencyResolutionException e) {
+            this.recorder.error(e, "Failed to resolve transitive dependencies for %s", coordinates);
             return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
         }
     }

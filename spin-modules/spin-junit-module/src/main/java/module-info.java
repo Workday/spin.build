@@ -24,7 +24,6 @@ module build.spin.module.junit {
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.modulesystem;
 
-    requires build.base.foundation;
     requires build.base.io;
     requires build.base.option;
     requires build.base.telemetry;
