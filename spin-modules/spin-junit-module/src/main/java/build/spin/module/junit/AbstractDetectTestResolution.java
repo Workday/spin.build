@@ -20,12 +20,18 @@ package build.spin.module.junit;
  * #L%
  */
 
+import build.base.option.JDKVersion;
 import build.base.version.Version;
+import build.spin.Project;
 import build.spin.module.java.AbstractDetectResolution;
+import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.option.BuildDirectoryName;
+import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
+import java.nio.file.Path;
 import java.util.stream.Stream;
 
 /**
@@ -42,7 +48,29 @@ public abstract class AbstractDetectTestResolution
     extends AbstractDetectResolution {
 
     @Inject
+    private Project project;
+
+    @Inject
+    private BuildDirectoryName buildDirectoryName;
+
+    @Inject
+    private TargetDirectoryName target;
+
+    @Inject
+    private JDKVersion javaVersion;
+
+    @Inject
     private ModuleVersioning versioning;
+
+    @Override
+    protected Stream<Path> additionalSiblingCandidates() {
+        return this.project.plugins(JavaCompilerPlugin.class)
+            .filter(p -> p.getJavaVersion().major() == this.javaVersion.major())
+            .findFirst()
+            .map(p -> Stream.of(this.project.path()
+                .resolve(this.buildDirectoryName.get() + "/main/" + this.target.get())))
+            .orElse(Stream.empty());
+    }
 
     @Override
     protected Stream<Artifact> additionalArtifacts() {

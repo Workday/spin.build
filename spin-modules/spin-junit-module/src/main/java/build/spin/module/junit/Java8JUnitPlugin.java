@@ -37,7 +37,6 @@ import build.spin.module.java.AbstractDetectSourceFiles;
 import build.spin.module.java.AbstractDetectSourcePaths;
 import build.spin.module.java.Java8CompilerPlugin;
 import build.spin.module.modulesystem.CompilationResolution;
-import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
@@ -56,20 +55,10 @@ public class Java8JUnitPlugin
     extends AbstractJUnitPlugin {
 
     /**
-     * The {@link JDKVersion} for the {@link Plugin}.
-     */
-    private final JDKVersion javaVersion;
-
-    /**
      * Constructs a {@link Java8JUnitPlugin}.
      */
     public Java8JUnitPlugin() {
-        this.javaVersion = JDKVersion.of(8);
-    }
-
-    @Override
-    public JDKVersion getJavaVersion() {
-        return this.javaVersion;
+        super(JDKVersion.of(8));
     }
 
     /**
@@ -110,23 +99,6 @@ public class Java8JUnitPlugin
     @Named("detect.test.compilation.resolution")
     public static class DetectTestResolution
         extends AbstractDetectTestResolution {
-
-        @Inject
-        private Project project;
-
-        @Inject
-        private BuildDirectoryName buildDirectoryName;
-
-        @Inject
-        private TargetDirectoryName target;
-
-        @Override
-        protected Stream<Path> additionalSiblingCandidates() {
-            return this.project.getPlugin(Java8CompilerPlugin.class)
-                .map(java -> Stream.of(this.project.path()
-                    .resolve(this.buildDirectoryName.get() + "/main/" + this.target.get())))
-                .orElse(Stream.empty());
-        }
     }
 
     /**
