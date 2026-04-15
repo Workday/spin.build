@@ -9,9 +9,9 @@ package build.spin.module.java;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,20 +21,12 @@ package build.spin.module.java;
  */
 
 import build.base.io.PathSet;
-import build.base.io.PathSetBuilder;
 import build.spin.Plugin;
-import build.spin.Project;
-import build.spin.Task;
 import build.spin.annotation.Before;
 import build.spin.annotation.From;
-import build.spin.common.task.AbstractCopy;
-import build.spin.common.task.DetectSourcePaths;
 import build.spin.module.clean.CleanPlugin;
-import build.spin.option.TargetDirectoryName;
-import jakarta.inject.Inject;
 import jakarta.inject.Named;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -47,53 +39,34 @@ public class ResourcePlugin
     implements Plugin {
 
     /**
-     * A {@link Task} to detect the {@link Path}s of resources for a Java-based Module.
+     * A {@link build.spin.Task} to detect the {@link Path}s of resources for a Java-based Module.
      */
     @Named("detect.module.resource.paths")
     public static class DetectModuleResourcePaths
-        implements DetectSourcePaths {
-
-        @Inject
-        private Path projectPath;
+        extends AbstractResourcePlugin.DetectResourcePaths {
 
         @Override
-        public PathSet detect() {
-
-            final PathSetBuilder builder = PathSetBuilder.create();
-
-            final Path defaultPath = this.projectPath.resolve("src/main/resources");
-            builder.add(defaultPath);
-
-            return builder.build();
+        protected String sourcePath() {
+            return "src/main/resources";
         }
     }
 
     /**
-     * A {@link Task} to copy the source module resources into the build.
+     * A {@link build.spin.Task} to copy the source module resources into the build.
      */
     @Named("copy.module.resources")
     @Before(JavaCompilerPlugin.Compile.class)
     public static class CopyModuleResources
-        extends AbstractCopy {
+        extends AbstractResourcePlugin.CopyResources {
 
-        @Inject
-        private Path path;
-
-        @Inject
-        private TargetDirectoryName target;
+        @Override
+        protected String destinationPrefix() {
+            return "main/";
+        }
 
         public PathSet copy(final @From(DetectModuleResourcePaths.class) PathSet paths,
                             final @From(CleanPlugin.CreateBuildPath.class) Path buildPath) {
-
-            final PathSetBuilder builder = PathSetBuilder.create();
-            final Path destination = buildPath.resolve("main/" + this.target.get());
-
-            paths.stream()
-                .map(source -> super.copy(source, destination))
-                .flatMap(PathSet::stream)
-                .forEach(builder::add);
-
-            return builder.build();
+            return super.doCopy(paths, buildPath);
         }
     }
 
@@ -101,18 +74,16 @@ public class ResourcePlugin
      * The {@link Plugin.MetaClass} for {@link ResourcePlugin}.
      */
     public static class MetaClass
-        implements Plugin.MetaClass {
+        extends AbstractResourcePlugin.MetaClass {
 
         @Override
-        public boolean isDetectedIn(final Path path) {
-            // we only detect Resources for Java-based Projects, not based on the presence in a Path
-            return false;
+        protected Class<? extends Plugin> pluginClass() {
+            return JavaCompilerPlugin.class;
         }
 
         @Override
-        public boolean isDetectedIn(final Project project) {
-            return project.plugins(JavaCompilerPlugin.class).findFirst().isPresent()
-                && Files.exists(project.path().resolve("src/main/resources"));
+        protected String resourceDirectory() {
+            return "src/main/resources";
         }
     }
 }
