@@ -6,6 +6,7 @@ import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.option.WorkingDirectory;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
@@ -92,7 +93,7 @@ public abstract class AbstractTest
 
         // JUnit 6+ uses subcommands; JUnit 5 uses flat options
         final String jupiterVersion = this.versioning.getVersion("org.junit.jupiter")
-            .map(ModuleDescriptor.Version::get)
+            .map(Version::get)
             .orElse("5.6.0");
         final boolean useSubcommand = AbstractDetectTestResolution.jupiterMajorVersion(jupiterVersion) >= 6;
 

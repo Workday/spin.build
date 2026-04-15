@@ -20,6 +20,9 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.version.Version;
+import build.base.version.VersionConstraint;
+
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -33,11 +36,10 @@ import java.util.stream.Stream;
  * <p>
  * {@link ModuleCatalog}s provide mappings from Java Module names to {@link Artifact}s specified by
  * {@link Artifact.Constraint}s, whereby each {@link Artifact.Constraint} specifies the Apache Maven Coordinates of one
- * or more {@link Artifact}s using {@link Artifact.Version.Range}s.
+ * or more {@link Artifact}s using {@link VersionConstraint}s.
  *
  * @see Artifact
  * @see Artifact.Constraint
- * @see Artifact.Version.Range
  *
  * @author brian.oliver
  * @since Sep-2019
@@ -96,8 +98,7 @@ public interface ModuleCatalog {
             return Optional.empty();
         }
 
-        final Artifact.Version version = reference.version()
-            .map(v -> Artifact.Version.parse(v.get()))
+        final Version version = reference.version()
             .orElseThrow(() -> new MissingModuleVersionException(reference));
 
         return constraints(reference.name())
@@ -156,9 +157,8 @@ public interface ModuleCatalog {
         Objects.requireNonNull(artifact, "The Artifact must not be null");
 
         final var name = getDerivedModuleName(artifact);
-        final var version = ModuleDescriptor.Version.parse(artifact.version().toString());
 
-        return ModuleReference.of(name, version);
+        return ModuleReference.of(name, artifact.version());
     }
 
     /**
@@ -204,7 +204,7 @@ public interface ModuleCatalog {
                 .filter(entry -> entry.getValue().stream().anyMatch(constraint -> constraint.contains(artifact)))
                 .map(Map.Entry::getKey)
                 .findFirst()
-                .map(name -> ModuleReference.of(name, ModuleDescriptor.Version.parse(artifact.version().get())));
+                .map(name -> ModuleReference.of(name, artifact.version()));
         }
 
         @Override

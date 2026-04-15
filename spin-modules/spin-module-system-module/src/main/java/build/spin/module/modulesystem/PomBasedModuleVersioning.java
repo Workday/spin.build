@@ -21,6 +21,7 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.codemodel.injection.PostInject;
 import build.spin.Project;
 import build.spin.Resource;
@@ -81,12 +82,12 @@ public class PomBasedModuleVersioning
     static ModuleVersioning buildFromWorkspace(final Path workspacePath,
                                                final Path localRepo,
                                                final TelemetryRecorder recorder) {
-        final Map<String, ModuleDescriptor.Version> versions = new LinkedHashMap<>();
+        final Map<String, Version> versions = new LinkedHashMap<>();
 
         PomWorkspaceWalker.walk(workspacePath, localRepo, recorder,
             (names, groupId, artifactId, rawVersion) -> {
                 try {
-                    final ModuleDescriptor.Version version = ModuleDescriptor.Version.parse(rawVersion);
+                    final Version version = Version.parse(rawVersion);
                     names.forEach(name -> versions.putIfAbsent(name, version));
                 } catch (final Exception e) {
                     recorder.warn(e, "PomBasedModuleVersioning failed to parse version [%s] for [%s:%s]",
@@ -100,12 +101,12 @@ public class PomBasedModuleVersioning
     }
 
     @Override
-    public Optional<ModuleDescriptor.Version> getVersion(final String moduleName) {
+    public Optional<Version> getVersion(final String moduleName) {
         return this.versioning.getVersion(moduleName);
     }
 
     @Override
-    public Optional<ModuleDescriptor.Version> getVersion(final ModuleDescriptor descriptor) {
+    public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
         return this.versioning.getVersion(descriptor);
     }
 
@@ -134,19 +135,19 @@ public class PomBasedModuleVersioning
      */
     private static final class MapBackedVersioning implements ModuleVersioning {
 
-        private final Map<String, ModuleDescriptor.Version> versions;
+        private final Map<String, Version> versions;
 
-        private MapBackedVersioning(final Map<String, ModuleDescriptor.Version> versions) {
+        private MapBackedVersioning(final Map<String, Version> versions) {
             this.versions = versions;
         }
 
         @Override
-        public Optional<ModuleDescriptor.Version> getVersion(final String moduleName) {
+        public Optional<Version> getVersion(final String moduleName) {
             return Optional.ofNullable(this.versions.get(moduleName));
         }
 
         @Override
-        public Optional<ModuleDescriptor.Version> getVersion(final ModuleDescriptor descriptor) {
+        public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
             return descriptor == null ? Optional.empty() : getVersion(descriptor.name());
         }
     }

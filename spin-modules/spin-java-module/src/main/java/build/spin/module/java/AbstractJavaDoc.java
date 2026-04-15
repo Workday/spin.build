@@ -25,6 +25,7 @@ import build.base.io.PathSet;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Activity;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.spawn.application.Application;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
@@ -123,9 +124,9 @@ public abstract class AbstractJavaDoc
         //  attempting to generate javadoc across different tools)
         if (this.defaultJavaVersion.major() == this.javaVersion.major()) {
             // determine the version of the Module being documented (or use a default version)
-            final ModuleDescriptor.Version version = this.versioning
+            final Version version = this.versioning
                 .getVersion(this.moduleDescriptor)
-                .orElse(ModuleDescriptor.Version.DEFAULT);
+                .orElse(ModuleDescriptor.DEFAULT_VERSION);
 
             final Activity documentation = this.recorder
                 .commence("Generating Documentation %d file(s) for [%s]", sourceCode.size(), this.project.path());

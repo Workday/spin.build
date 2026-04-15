@@ -29,6 +29,7 @@ import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.table.Table;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.spawn.application.Application;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
@@ -165,8 +166,8 @@ public abstract class AbstractJavaDependencyAnalysis
             });
         final var javaHome = jdk.home().path();
 
-        // determine a ModuleDescriptor.Version for the Java Development Kit Modules
-        final ModuleDescriptor.Version jdkVersion = ModuleDescriptor.Version.parse(jdk.version().get());
+        // determine a Version for the Java Development Kit Modules
+        final Version jdkVersion = Version.parse(jdk.version().get());
 
         // -----
         // obtain the non-Java Platform artifacts transitively, inside and outside the Workspace
@@ -522,7 +523,7 @@ public abstract class AbstractJavaDependencyAnalysis
                 modulesTable.addRow("Module Name", "Version", "Type");
                 modules.stream().forEach(descriptor ->
                     modulesTable.addRow(descriptor.name(),
-                        descriptor.version().map(ModuleDescriptor.Version::get).orElse("(unknown version)"),
+                        descriptor.version().map(Version::get).orElse("(unknown version)"),
                         descriptor.isAutomatic() ? "automatic module" : "fully-blown module"));
                 this.recorder.diagnostic("Explicit Modules\n%s", modulesTable);
             }
@@ -532,7 +533,7 @@ public abstract class AbstractJavaDependencyAnalysis
                 nonModulesTable.addRow("Module Name (generated)", "Version");
                 nonModules.stream().forEach(descriptor -> nonModulesTable.addRow(
                     descriptor.name(),
-                    descriptor.version().map(ModuleDescriptor.Version::get).orElse("(unknown version)")));
+                    descriptor.version().map(Version::get).orElse("(unknown version)")));
                 this.recorder.diagnostic("Unnamed Modules\n%s", nonModulesTable);
             }
 

@@ -26,6 +26,7 @@ import build.base.expression.compat.Variable;
 import build.base.foundation.Capture;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
+import build.base.version.Version;
 import build.codemodel.injection.PostInject;
 import build.spin.Plugin;
 import build.spin.Project;
@@ -152,7 +153,7 @@ public class MavenPlugin
         private ModuleDescriptor descriptor;
 
         @Inject
-        private ModuleDescriptor.Version version;
+        private Version version;
 
         /**
          * Creates an initial {@link Manifest} for packaging.
@@ -440,18 +441,17 @@ public class MavenPlugin
         public Document create(final @From(ResourcePlugin.DetectModuleResourcePaths.class) Optional<PathSet> resourcePaths)
             throws ParserConfigurationException, SAXException, IOException {
 
-            // determine the ModuleDescriptor.Version for this module
-            final ModuleDescriptor.Version moduleVersion = this.descriptor.version()
+            // determine the Version for this module
+            final Version moduleVersion = this.descriptor.version()
                 .orElseGet(() -> {
                     // TODO: log ("The module [" + this.descriptor.name()
                     //                    + "] does not specify a version in Versioning (version.properties)")
                     // (and we're using the default)
 
-                    return ModuleDescriptor.Version.DEFAULT;
+                    return ModuleDescriptor.DEFAULT_VERSION;
                 });
 
-            // establish an Artifact.Version for the ModuleDescriptor.Version
-            final Artifact.Version artifactVersion = Artifact.Version.parse(moduleVersion.get());
+            final Version artifactVersion = moduleVersion;
 
             final DocumentBuilder documentBuilder = this.documentBuilderFactory.newDocumentBuilder();
 
@@ -535,18 +535,17 @@ public class MavenPlugin
                 .filter(requires -> !JavaPlatform.isJavaPlatformModule(
                     requires.name()))  //filter out Java Platform dependencies
                 .map(require -> {
-                    // determine the Artifact and Version for the dependency
-                    final Artifact.Version version = Artifact.Version.parse(require.version()
+                    // determine the Version for the dependency
+                    final Version version = require.version()
                         .orElseGet(() ->
                             this.versioning.getVersion(require.name())
                                 .orElseThrow(() -> new RuntimeException(
                                     "Failed to determine the Artifact Version for [" + require.name() + "]"))
-                        )
-                        .get());
+                        );
 
                     // establish the required dependency
                     final ModuleReference reference =
-                        ModuleReference.of(require.name(), ModuleDescriptor.Version.parse(version.get()));
+                        ModuleReference.of(require.name(), version);
 
                     final Artifact artifact = this.catalog.getArtifact(reference)
                         .orElseThrow(() -> new RuntimeException(

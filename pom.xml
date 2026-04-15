@@ -167,6 +167,12 @@
 
             <dependency>
                 <groupId>build.base</groupId>
+                <artifactId>base-version</artifactId>
+                <version>${base.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>build.base</groupId>
                 <artifactId>base-foundation</artifactId>
                 <version>${base.version}</version>
             </dependency>

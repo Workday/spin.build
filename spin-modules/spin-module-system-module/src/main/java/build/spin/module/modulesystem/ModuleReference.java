@@ -20,11 +20,13 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.version.Version;
+
 import java.util.Objects;
 import java.util.Optional;
 
 /**
- * A reference to a named and {@link Optional}ly {@link ModuleDescriptor.Version}ed {@link ModuleDescriptor}.
+ * A reference to a named and {@link Optional}ly {@link Version}ed {@link ModuleDescriptor}.
  *
  * @author brian.oliver
  * @since Mar-2021
@@ -39,11 +41,11 @@ public interface ModuleReference {
     String name();
 
     /**
-     * Obtains the {@link Optional} {@link ModuleDescriptor.Version} of the {@link ModuleDescriptor} being referenced.
+     * Obtains the {@link Optional} {@link Version} of the {@link ModuleDescriptor} being referenced.
      *
-     * @return the {@link Optional} {@link ModuleDescriptor.Version}
+     * @return the {@link Optional} {@link Version}
      */
-    Optional<ModuleDescriptor.Version> version();
+    Optional<Version> version();
 
     /**
      * Creates a {@link ModuleReference} for the specified {@link ModuleDescriptor}.
@@ -69,25 +71,25 @@ public interface ModuleReference {
 
     /**
      * Creates a {@link ModuleReference} to the specifically named {@link ModuleDescriptor} and
-     * {@link ModuleDescriptor.Version}.
+     * {@link Version}.
      *
      * @param name the name of the {@link ModuleDescriptor}
-     * @param version the {@link ModuleDescriptor.Version}
+     * @param version the {@link Version}
      * @return a new {@link ModuleReference}
      */
-    static ModuleReference of(final String name, final ModuleDescriptor.Version version) {
+    static ModuleReference of(final String name, final Version version) {
         return new Implementation(name, Optional.ofNullable(version));
     }
 
     /**
      * Creates a {@link ModuleReference} to the specifically named {@link ModuleDescriptor} and {@link Optional}
-     * {@link ModuleDescriptor.Version}.
+     * {@link Version}.
      *
      * @param name the name of the module
-     * @param version the {@link Optional} {@link ModuleDescriptor.Version}
+     * @param version the {@link Optional} {@link Version}
      * @return a new {@link ModuleReference}
      */
-    static ModuleReference of(final String name, final Optional<ModuleDescriptor.Version> version) {
+    static ModuleReference of(final String name, final Optional<Version> version) {
         return new Implementation(name, version);
     }
 
@@ -103,18 +105,18 @@ public interface ModuleReference {
         private final String name;
 
         /**
-         * The {@link Optional} {@link ModuleDescriptor.Version} of the referenced module.
+         * The {@link Optional} {@link Version} of the referenced module.
          */
-        private final Optional<ModuleDescriptor.Version> version;
+        private final Optional<Version> version;
 
         /**
          * Constructs an {@link Implementation} of a {@link ModuleReference}.
          *
          * @param name the name of the referenced module
-         * @param version the {@link Optional} {@link ModuleDescriptor.Version} of the referenced module
+         * @param version the {@link Optional} {@link Version} of the referenced module
          */
         private Implementation(final String name,
-                               final Optional<ModuleDescriptor.Version> version) {
+                               final Optional<Version> version) {
             this.name = Objects.requireNonNull(name, "The ModuleDescriptor.Reference name must not be null");
             this.version = version == null ? Optional.empty() : version;
         }
@@ -125,7 +127,7 @@ public interface ModuleReference {
         }
 
         @Override
-        public Optional<ModuleDescriptor.Version> version() {
+        public Optional<Version> version() {
             return this.version;
         }
 

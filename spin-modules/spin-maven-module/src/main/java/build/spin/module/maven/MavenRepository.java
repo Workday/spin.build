@@ -24,6 +24,7 @@ import build.base.configuration.Configuration;
 import build.base.foundation.Exceptional;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.codemodel.injection.PostInject;
 import build.spin.Service;
 import build.spin.module.java.JavaPlatform;
@@ -290,7 +291,7 @@ public class MavenRepository
                         });
 
                     // choose the correct version
-                    final Optional<ModuleDescriptor.Version> overridden = versioning
+                    final Optional<Version> overridden = versioning
                         .getVersion(descriptor.name());
 
                     if (!(descriptor.version().equals(overridden))
@@ -301,7 +302,7 @@ public class MavenRepository
                             this.recorder.warn("Overriding %s version %s with %s",
                                 descriptor.name(),
                                 descriptor.version()
-                                    .map(ModuleDescriptor.Version::toString)
+                                    .map(Version::toString)
                                     .orElse("(unspecified)"),
                                 overridden.get()));
                     } else {
@@ -339,7 +340,7 @@ public class MavenRepository
                         .noLocation();
                 });
 
-            builder.setVersion(ModuleDescriptor.Version.parse(artifact.version().get()));
+            builder.setVersion(artifact.version());
 
             // attempt to resolve the pom.xml for the Artifact
             // (we can use this to reverse-engineer the ModuleDescriptor)
@@ -390,8 +391,8 @@ public class MavenRepository
                                     ? EnumSet.of(ModuleDescriptor.Requires.Modifier.STATIC)
                                     : EnumSet.of(ModuleDescriptor.Requires.Modifier.TRANSITIVE);
 
-                                final ModuleDescriptor.Version parsed = reference.version().get();
-                                final Optional<ModuleDescriptor.Version> overridden = versioning
+                                final Version parsed = reference.version().get();
+                                final Optional<Version> overridden = versioning
                                     .getVersion(reference.name());
 
                                 if (!parsed.equals(overridden.orElse(null))) {
@@ -403,7 +404,7 @@ public class MavenRepository
                                 }
 
                                 // use the overridden version (when available)
-                                final ModuleDescriptor.Version version = overridden.orElse(parsed);
+                                final Version version = overridden.orElse(parsed);
 
                                 builder.requires(reference.name(), modifiers, version);
 

@@ -28,6 +28,7 @@ import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.spawn.application.Application;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
@@ -205,14 +206,11 @@ public class CustomizationPlugin
             else if (!includedModules.contains(requires.name())) {
 
                 // determine the Version of the Module to be used
-                final ModuleDescriptor.Version moduleVersion = requires.version()
+                final Version moduleVersion = requires.version()
                     .orElseGet(() -> this.versioning.getVersion(requires.name())
                         .orElseThrow(() -> new IllegalArgumentException(
                             "The version of module [" + requires.name()
                                 + " is not defined in Versioning (version.properties)")));
-
-                // determine the Artifact.Version for the ModuleDescriptor.Version
-                final Artifact.Version artifactVersion = Artifact.Version.parse(moduleVersion.get());
 
                 // use the Catalog to locate the Artifact
                 final Optional<Artifact> optional = this.catalog.getArtifact(requires.reference());

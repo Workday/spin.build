@@ -22,6 +22,7 @@ package build.spin.module.modulesystem;
 
 import build.base.parsing.ParseException;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.codemodel.injection.PostInject;
 import build.spin.Project;
 import build.spin.Resource;
@@ -64,9 +65,9 @@ public class ProjectModuleVersioning
     private final Project project;
 
     /**
-     * The {@link ModuleDescriptor.Version} information defined for the {@link Project}.
+     * The {@link Version} information defined for the {@link Project}.
      */
-    private final LinkedHashMap<Pattern, ModuleDescriptor.Version> versions;
+    private final LinkedHashMap<Pattern, Version> versions;
 
     /**
      * Constructs the {@link ProjectModuleVersioning}.
@@ -82,7 +83,7 @@ public class ProjectModuleVersioning
     }
 
     /**
-     * Once the {@link ProjectModuleVersioning} is created, initialize (and cache) the available {@link ModuleDescriptor.Version}s.
+     * Once the {@link ProjectModuleVersioning} is created, initialize (and cache) the available {@link Version}s.
      */
     @PostInject
     private void onInjected() {
@@ -99,7 +100,7 @@ public class ProjectModuleVersioning
                             final String moduleVersion = properties.getProperty(moduleName);
 
                             final Pattern pattern = Globs.toPattern(moduleName);
-                            final ModuleDescriptor.Version version = ModuleDescriptor.Version.parse(moduleVersion);
+                            final Version version = Version.parse(moduleVersion);
 
                             this.versions.put(pattern, version);
                         } catch (final ParseException | PatternSyntaxException e) {
@@ -120,9 +121,9 @@ public class ProjectModuleVersioning
     }
 
     @Override
-    public Optional<ModuleDescriptor.Version> getVersion(final String moduleName) {
+    public Optional<Version> getVersion(final String moduleName) {
         // attempt to determine the version defined specifically for this project
-        final Optional<ModuleDescriptor.Version> projectVersion = this.versions.entrySet().stream()
+        final Optional<Version> projectVersion = this.versions.entrySet().stream()
             .filter(entry -> entry.getKey().matcher(moduleName).matches())
             .map(Map.Entry::getValue)
             .findFirst();
@@ -142,7 +143,7 @@ public class ProjectModuleVersioning
     }
 
     @Override
-    public Optional<ModuleDescriptor.Version> getVersion(final ModuleDescriptor descriptor) {
+    public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
         return descriptor == null ? Optional.empty() : getVersion(descriptor.name());
     }
 

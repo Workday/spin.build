@@ -21,6 +21,7 @@ package build.spin.module.java;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.module.modulesystem.Artifact;
@@ -178,10 +179,10 @@ public abstract class AbstractDetectResolution
         final List<Path> externalCandidates = new ArrayList<>();
 
         for (final ModuleDescriptor.Requires r : externalRequires.values()) {
-            final Optional<ModuleDescriptor.Version> moduleVersion = this.versioning.getVersion(r.name());
-            final Optional<ModuleDescriptor.Version> requiresVersion = r.version();
+            final Optional<Version> moduleVersion = this.versioning.getVersion(r.name());
+            final Optional<Version> requiresVersion = r.version();
 
-            final ModuleDescriptor.Version requiredVersion;
+            final Version requiredVersion;
             if (moduleVersion.isPresent()) {
                 requiredVersion = moduleVersion.get();
             }

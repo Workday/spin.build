@@ -20,6 +20,9 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.version.Version;
+import build.base.version.VersionOrder;
+
 import java.io.IOException;
 import java.lang.module.Configuration;
 import java.lang.module.FindException;
@@ -64,7 +67,7 @@ import java.util.regex.Pattern;
  *   <li><b>Package inversion.</b> Build a map of {@code package → owners}; any package owned
  *       by more than one candidate is a conflict.</li>
  *   <li><b>Version dedupe.</b> Conflicting jars with the same base name (version stripped)
- *       are grouped; newest wins via semantic version ordering ({@link Artifact.Version}),
+ *       are grouped; newest wins via semantic version ordering ({@link Version}),
  *       older versions are <em>superseded</em> and routed to classpath (or discarded at
  *       link time).</li>
  *   <li><b>Subset dedupe.</b> If jar A's packages are a strict subset of jar B's packages,
@@ -555,7 +558,7 @@ public final class ModuleGraphClassifier {
 
     /**
      * Returns a {@link Comparator} that orders jars by version descending using semantic
-     * version ordering via {@link Artifact.Version}, so that {@code 11.0.0} correctly wins
+     * version ordering via {@link Version}, so that {@code 11.0.0} correctly wins
      * over {@code 2.0.0} — lexicographic ordering would prefer {@code 2} because {@code
      * '2' > '1'}. Jars without a parseable version fall back to lexicographic ordering.
      */
@@ -573,7 +576,7 @@ public final class ModuleGraphClassifier {
                 return -1;
             }
             try {
-                return Artifact.Version.parse(vb).compareTo(Artifact.Version.parse(va));
+                return VersionOrder.MAVEN.compare(Version.parse(vb), Version.parse(va));
             }
             catch (final IllegalArgumentException ignored) {
                 return vb.compareTo(va);

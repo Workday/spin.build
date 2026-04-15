@@ -1,64 +1,47 @@
 package build.spin.module.modulesystem;
 
+import build.base.version.Version;
+import build.base.version.VersionBound;
 import org.junit.jupiter.api.Test;
-
-import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Tests for {@link Artifact.Version.Bound}s.
+ * Tests for {@link VersionBound}s.
  *
- * @author brian.oliver
  * @since Dec-2020
  */
 class ArtifactVersionBoundTests {
 
-    /**
-     * Ensure {@link Artifact.Version.Bound} {@link Predicate}s are evaluated correctly using a variety of
-     * {@link Artifact.Version}s.
-     */
     @Test
     void shouldEvaluateBoundsPredicate() {
 
-        final Artifact.Version.Bound strictlyAfter = Artifact.Version.Bound.of(
-            Artifact.Version.Bound.Inclusivity.STRICTLY,
-            Artifact.Version.Bound.Constraint.AFTER,
-            "2.0");
+        final VersionBound strictlyAfter = VersionBound.lower(Version.parse("2.0"), false);
 
-        assertThat(strictlyAfter.test(Artifact.Version.parse("1.0"))).isFalse();
-        assertThat(strictlyAfter.test(Artifact.Version.parse("2.0"))).isFalse();
-        assertThat(strictlyAfter.test(Artifact.Version.parse("3.0"))).isTrue();
-        assertThat(strictlyAfter.test(Artifact.Version.parse("2.3.2.Final"))).isTrue();
+        assertThat(strictlyAfter.test(Version.parse("1.0"))).isFalse();
+        assertThat(strictlyAfter.test(Version.parse("2.0"))).isFalse();
+        assertThat(strictlyAfter.test(Version.parse("3.0"))).isTrue();
+        assertThat(strictlyAfter.test(Version.parse("2.3.2.Final"))).isTrue();
 
-        final Artifact.Version.Bound inclusivelyAfter = Artifact.Version.Bound.of(
-            Artifact.Version.Bound.Inclusivity.INCLUSIVELY,
-            Artifact.Version.Bound.Constraint.AFTER,
-            "2.0");
+        final VersionBound inclusivelyAfter = VersionBound.lower(Version.parse("2.0"), true);
 
-        assertThat(inclusivelyAfter.test(Artifact.Version.parse("1.0"))).isFalse();
-        assertThat(inclusivelyAfter.test(Artifact.Version.parse("2.0"))).isTrue();
-        assertThat(inclusivelyAfter.test(Artifact.Version.parse("3.0"))).isTrue();
-        assertThat(inclusivelyAfter.test(Artifact.Version.parse("2.3.2.Final"))).isTrue();
+        assertThat(inclusivelyAfter.test(Version.parse("1.0"))).isFalse();
+        assertThat(inclusivelyAfter.test(Version.parse("2.0"))).isTrue();
+        assertThat(inclusivelyAfter.test(Version.parse("3.0"))).isTrue();
+        assertThat(inclusivelyAfter.test(Version.parse("2.3.2.Final"))).isTrue();
 
-        final Artifact.Version.Bound strictlyBefore = Artifact.Version.Bound.of(
-            Artifact.Version.Bound.Inclusivity.STRICTLY,
-            Artifact.Version.Bound.Constraint.BEFORE,
-            "2.0");
+        final VersionBound strictlyBefore = VersionBound.upper(Version.parse("2.0"), false);
 
-        assertThat(strictlyBefore.test(Artifact.Version.parse("1.0"))).isTrue();
-        assertThat(strictlyBefore.test(Artifact.Version.parse("2.0"))).isFalse();
-        assertThat(strictlyBefore.test(Artifact.Version.parse("3.0"))).isFalse();
-        assertThat(strictlyBefore.test(Artifact.Version.parse("2.3.2.Final"))).isFalse();
+        assertThat(strictlyBefore.test(Version.parse("1.0"))).isTrue();
+        assertThat(strictlyBefore.test(Version.parse("2.0"))).isFalse();
+        assertThat(strictlyBefore.test(Version.parse("3.0"))).isFalse();
+        assertThat(strictlyBefore.test(Version.parse("2.3.2.Final"))).isFalse();
 
-        final Artifact.Version.Bound inclusivelyBefore = Artifact.Version.Bound.of(
-            Artifact.Version.Bound.Inclusivity.INCLUSIVELY,
-            Artifact.Version.Bound.Constraint.BEFORE,
-            "2.0");
+        final VersionBound inclusivelyBefore = VersionBound.upper(Version.parse("2.0"), true);
 
-        assertThat(inclusivelyBefore.test(Artifact.Version.parse("1.0"))).isTrue();
-        assertThat(inclusivelyBefore.test(Artifact.Version.parse("2.0"))).isTrue();
-        assertThat(inclusivelyBefore.test(Artifact.Version.parse("3.0"))).isFalse();
-        assertThat(inclusivelyBefore.test(Artifact.Version.parse("2.3.2.Final"))).isFalse();
+        assertThat(inclusivelyBefore.test(Version.parse("1.0"))).isTrue();
+        assertThat(inclusivelyBefore.test(Version.parse("2.0"))).isTrue();
+        assertThat(inclusivelyBefore.test(Version.parse("3.0"))).isFalse();
+        assertThat(inclusivelyBefore.test(Version.parse("2.3.2.Final"))).isFalse();
     }
 }
