@@ -20,6 +20,7 @@ package build.spin.module.junit;
  * #L%
  */
 
+import build.base.option.JDKVersion;
 import build.codemodel.injection.Provides;
 import build.spin.Project;
 import build.spin.module.java.AbstractJavaPlugin;
@@ -38,6 +39,25 @@ import java.nio.file.Path;
 public abstract class AbstractJUnitPlugin
     extends AbstractJavaPlugin
     implements JUnitPlugin {
+
+    /**
+     * The {@link JDKVersion} for the {@link JUnitPlugin}.
+     */
+    private final JDKVersion javaVersion;
+
+    /**
+     * Constructs an {@link AbstractJUnitPlugin}.
+     *
+     * @param javaVersion the {@link JDKVersion}
+     */
+    protected AbstractJUnitPlugin(final JDKVersion javaVersion) {
+        this.javaVersion = javaVersion;
+    }
+
+    @Override
+    public JDKVersion getJavaVersion() {
+        return this.javaVersion;
+    }
 
     @Override
     protected Path getSourceRootPath() {
