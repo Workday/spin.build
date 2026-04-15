@@ -21,6 +21,7 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -64,7 +65,7 @@ class PomBasedModuleCatalogTests {
         // are a walker concern — see PomWorkspaceWalkerTests)
         assertThat(catalog.constraints("org.assertj"))
             .isNotEmpty()
-            .anyMatch(c -> c.contains(Artifact.Version.parse("3.25.0")));
+            .anyMatch(c -> c.contains(Version.parse("3.25.0")));
     }
 
     @Test

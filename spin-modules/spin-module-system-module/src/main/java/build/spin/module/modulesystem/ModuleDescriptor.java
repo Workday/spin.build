@@ -27,10 +27,10 @@ import build.base.foundation.iterator.FilteringIterator;
 import build.base.foundation.predicate.Predicates;
 import build.base.foundation.stream.Streamable;
 import build.base.foundation.tuple.Triple;
-import build.base.parsing.Evaluator;
 import build.base.parsing.Filter;
 import build.base.parsing.ParseException;
 import build.base.parsing.Scanner;
+import build.base.version.Version;
 import build.spin.Project;
 import build.spin.Visitor;
 
@@ -51,7 +51,6 @@ import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
@@ -89,6 +88,11 @@ public interface ModuleDescriptor {
      * The name of the source file containing a {@link ModuleDescriptor}.
      */
     String SOURCE_FILENAME = "module-info.java";
+
+    /**
+     * The default {@link Version} used when no version is specified.
+     */
+    Version DEFAULT_VERSION = Version.parse("1.0.0-SNAPSHOT");
 
     /**
      * Obtains the name of the module.
@@ -648,340 +652,6 @@ public interface ModuleDescriptor {
         ENHANCED
     }
 
-    /**
-     * Immutable version information concerning a module.
-     * <p>
-     * A version consists of three components: The version number itself, an optional pre-release version, and an
-     * optional build version. Each component is a sequence of elements; each element is either a non-negative integer
-     * or a string.  Elements are separated by the punctuation characters '.', '-', or '+', or by transitions from a
-     * sequence of digits to a sequence of characters that are neither digits nor punctuation characters, or vice versa.
-     * <p>
-     * The version number is a sequence of elements separated by '.' characters, terminated by the first '-' or '+'
-     * character.  The pre-release version is a sequence of elements separated by '.' or '-' characters, terminated by
-     * the first '+' character.  The build version is a sequence of elements separated by '.', '-', or '+' characters.
-     * <p>
-     * When comparing two version strings, the elements of their corresponding components are compared in point wise
-     * fashion. If one component is longer than the other, but otherwise equal to it, then the first component
-     * is considered the greater of the two; otherwise, if two corresponding elements are integers then they are
-     * compared as such; otherwise, at least one of the elements is a string, so the other is converted into a string if
-     * it is an integer and the two are compared lexicographically. Trailing integer elements with the value zero are
-     * ignored.
-     * <p>
-     * Given two version strings, if their version numbers differ then the result of comparing them is the result of
-     * comparing their version numbers; otherwise, if one of them has a pre-release version but the other does not then
-     * the first is considered to precede the second, otherwise the result of comparing them is the result of comparing
-     * their pre-release versions; otherwise, the result of comparing them is the result of comparing their build
-     * versions.
-     *
-     * @see <a href="https://docs.oracle.com/javase/9/docs/api/java/lang/module/ModuleDescriptor.Version.html">
-     *     Java Platform Specification</a>
-     */
-    final class Version
-        implements Comparable<Version> {
-
-        /**
-         * The default {@link Version}.
-         */
-        public static final Version DEFAULT = Version.parse("1.0.0-SNAPSHOT");
-
-        /**
-         * The raw version, from which the {@link Version} was created.
-         */
-        private final String rawVersion;
-
-        /**
-         * The version {@link Element}s.
-         */
-        private final ArrayList<Element> sequence;
-
-        /**
-         * The pre-release version {@link Element}s.
-         */
-        private final ArrayList<Element> prerelease;
-
-        /**
-         * The build version {@link Element}s.
-         */
-        private final ArrayList<Element> build;
-
-        /**
-         * An immutable {@link Element} in the {@link Version}.
-         */
-        public static class Element
-            implements Comparable<Element> {
-
-            /**
-             * A default {@link Element} value.
-             */
-            private static final Element ZERO = new Element(0);
-
-            /**
-             * The value of the {@link Element}, either an {@link Integer} or a {@link String}.
-             */
-            private final Comparable value;
-
-            /**
-             * Constructs an {@link Integer}-based {@link Element}.
-             *
-             * @param value the {@link Integer} value
-             */
-            private Element(final Integer value) {
-                this.value = value;
-            }
-
-            /**
-             * Constructs a {@link String}-based {@link Element}.
-             *
-             * @param value the {@link String} value
-             */
-            private Element(final String value) {
-                this.value = value;
-            }
-
-            /**
-             * Obtains the value of the {@link Element}.
-             *
-             * @return the value
-             */
-            public Object getValue() {
-                return this.value;
-            }
-
-            @Override
-            @SuppressWarnings("unchecked")
-            public int compareTo(final Element other) {
-                // when both types of values are the same, we can just compare them
-                if ((this.value instanceof Integer && other.value instanceof Integer) ||
-                    (this.value instanceof String && other.value instanceof String)) {
-                    return this.value.compareTo(other.value);
-                }
-
-                // otherwise revert to comparing as Strings
-                return this.value.toString().compareTo(other.value.toString());
-            }
-
-            @Override
-            public boolean equals(final Object object) {
-                if (this == object) {
-                    return true;
-                }
-                if (object == null || getClass() != object.getClass()) {
-                    return false;
-                }
-                final Element other = (Element) object;
-                return Objects.equals(this.value, other.value);
-            }
-
-            @Override
-            public int hashCode() {
-                return Objects.hash(this.value);
-            }
-        }
-
-        /**
-         * Constructs a {@link Version} given a raw version {@link String}.
-         * <p>
-         * The format of the raw version should be: Element+ ('-' Element+)? ('+' Element+)?
-         * <p>
-         * Elements are separated by '.' or '-', or by changes between alpha and numeric characters.
-         *
-         * @param rawVersion the raw version {@link String}
-         *
-         * @throws ParseException when the specified raw version is invalid
-         */
-        private Version(final String rawVersion)
-            throws ParseException {
-
-            this.rawVersion = Objects.requireNonNull(rawVersion, "The raw version must not be null").trim();
-            this.sequence = new ArrayList<>(3);
-            this.prerelease = new ArrayList<>(2);
-            this.build = new ArrayList<>(2);
-
-            final Pattern STRING = Pattern.compile("[\\pL]+");
-
-            final Scanner scanner = new Scanner(this.rawVersion);
-
-            scanner.register(Integer.class, Evaluator.create("[\\pN]+", Integer::parseInt));
-
-            // add the initial NUMBER Token (all Versions must have a number)
-            this.sequence.add(new Element(scanner.consume(Integer.class)));
-
-            // parse the sequence
-            while (scanner.hasNext() && !scanner.follows("-") && !scanner.follows("+")) {
-                if (scanner.follows(".")) {
-                    scanner.consume(".");
-                }
-
-                if (scanner.follows(Integer.class)) {
-                    this.sequence.add(new Element(scanner.consume(Integer.class)));
-                }
-                else {
-                    this.sequence.add(new Element(scanner.consume(STRING)));
-                }
-            }
-
-            // parse pre-release
-            if (scanner.follows("-")) {
-                while (scanner.hasNext() && !scanner.follows("+")) {
-                    if (scanner.follows(".") || scanner.follows("-")) {
-                        scanner.consume(1);
-                    }
-
-                    if (scanner.follows(Integer.class)) {
-                        this.prerelease.add(new Element(scanner.consume(Integer.class)));
-                    }
-                    else {
-                        this.prerelease.add(new Element(scanner.consume(STRING)));
-                    }
-                }
-            }
-
-            // parse build
-            if (scanner.follows("+")) {
-                while (scanner.hasNext()) {
-                    if (scanner.follows(".") || scanner.follows("-") || scanner.follows("+")) {
-                        scanner.consume(1);
-                    }
-
-                    if (scanner.follows(Integer.class)) {
-                        this.build.add(new Element(scanner.consume(Integer.class)));
-                    }
-                    else {
-                        this.build.add(new Element(scanner.consume(STRING)));
-                    }
-                }
-            }
-
-            // ensure there's no more information in the version
-            if (scanner.hasNext()) {
-                throw new ParseException(scanner.getLocation(), "(end of input)", scanner.consume(10));
-            }
-        }
-
-        @Override
-        public int hashCode() {
-            return this.rawVersion.hashCode();
-        }
-
-        @Override
-        public boolean equals(final Object object) {
-            return object instanceof Version && compareTo((Version) object) == 0;
-        }
-
-        /**
-         * Compares two {@link List}s of {@link Element}s.
-         *
-         * @param elements1 the first {@link List} of {@link Element}s
-         * @param elements2 the second {@link List} of {@link Element}s
-         * @return a negative, zero or positive number when the first list is less than, equal to,
-         *          or greater than the second
-         */
-        private int compare(final List<Element> elements1, final List<Element> elements2) {
-            // compare the common elements first
-            final int commonSize = Math.min(elements1.size(), elements2.size());
-
-            for (int i = 0; i < commonSize; i++) {
-                final int result = elements1.get(i).compareTo(elements2.get(i));
-
-                if (result != 0) {
-                    return result;
-                }
-            }
-
-            // compare the remaining elements with zero
-            final List<Element> remaining = elements1.size() > elements2.size() ? elements1 : elements2;
-            for (int i = commonSize; i < remaining.size(); i++) {
-                if (remaining.get(i).compareTo(Element.ZERO) != 0) {
-                    return elements1.size() - elements2.size();
-                }
-            }
-            return 0;
-        }
-
-        @Override
-        public int compareTo(final Version other) {
-            // compare the sequences first
-            int c = compare(this.sequence, other.sequence);
-
-            if (c != 0) {
-                return c;
-            }
-
-            // compare the pre-releases should the sequences match
-            if (this.prerelease.isEmpty()) {
-                if (!other.prerelease.isEmpty()) {
-                    return +1;
-                }
-            }
-            else {
-                if (other.prerelease.isEmpty()) {
-                    return -1;
-                }
-            }
-
-            c = compare(this.prerelease, other.prerelease);
-            if (c != 0) {
-                return c;
-            }
-
-            // lastly compare the builds should the sequences and pre-releases match
-            return compare(this.build, other.build);
-        }
-
-        @Override
-        public String toString() {
-            return "Version{" + this.rawVersion + "}";
-        }
-
-        /**
-         * Obtains the raw version {@link String}.
-         *
-         * @return the raw version {@link String}
-         */
-        public String get() {
-            return this.rawVersion;
-        }
-
-        /**
-         * Obtains the {@link Stream} of {@link Element}s in the {@link Version} sequence.
-         *
-         * @return a {@link Stream} of {@link Element}s
-         */
-        public Stream<Element> sequence() {
-            return this.sequence.stream();
-        }
-
-        /**
-         * Obtains the {@link Stream} of {@link Element}s in the {@link Version} prerelease version.
-         *
-         * @return a {@link Stream} of {@link Element}s
-         */
-        public Stream<Element> prerelease() {
-            return this.prerelease.stream();
-        }
-
-        /**
-         * Obtains the {@link Stream} of {@link Element}s in the {@link Version} build version.
-         *
-         * @return a {@link Stream} of {@link Element}s
-         */
-        public Stream<Element> build() {
-            return this.build.stream();
-        }
-
-        /**
-         * Creates a {@link Version} by parsing the specified {@link String} as a {@link ModuleDescriptor.Version}
-         * according to the
-         * <a href="https://docs.oracle.com/javase/9/docs/api/java/lang/module/ModuleDescriptor.Version.html">
-         * Java Platform Specification</a>
-         *
-         * @param rawVersion the raw version {@link String}
-         * @return a {@link Version}
-         */
-        public static Version parse(final String rawVersion) {
-            return new Version(rawVersion);
-        }
-    }
 
     /**
      * Parses the specified text-based {@code module-info.java} formatted {@link Reader} to produce a
@@ -1221,10 +891,10 @@ public interface ModuleDescriptor {
                             modifiers.add(ModuleDescriptor.Requires.Modifier.MANDATED);
                         }
 
-                        final ModuleDescriptor.Version version = req.requiresVersion()
+                        final Version version = req.requiresVersion()
                             .map(v -> v.stringValue())
                             .filter(v -> !Strings.isEmpty(v))
-                            .map(ModuleDescriptor.Version::parse)
+                            .map(Version::parse)
                             .orElse(null);
 
                         builder.requires(req.requires().name().stringValue(), modifiers, version);

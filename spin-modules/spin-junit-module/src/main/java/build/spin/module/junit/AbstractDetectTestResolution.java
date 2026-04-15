@@ -20,9 +20,9 @@ package build.spin.module.junit;
  * #L%
  */
 
+import build.base.version.Version;
 import build.spin.module.java.AbstractDetectResolution;
 import build.spin.module.modulesystem.Artifact;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleVersioning;
 import jakarta.inject.Inject;
 
@@ -47,7 +47,7 @@ public abstract class AbstractDetectTestResolution
     @Override
     protected Stream<Artifact> additionalArtifacts() {
         final String jupiterVersion = this.versioning.getVersion("org.junit.jupiter")
-            .map(ModuleDescriptor.Version::get)
+            .map(Version::get)
             .orElse("5.6.0");
         final String platformVersion = derivePlatformVersion(jupiterVersion);
 

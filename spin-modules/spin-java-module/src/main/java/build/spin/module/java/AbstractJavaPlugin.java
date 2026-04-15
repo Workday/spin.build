@@ -21,6 +21,7 @@ package build.spin.module.java;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.codemodel.injection.Provides;
 import build.spawn.jdk.JDK;
 import build.spin.Plugin;
@@ -192,14 +193,14 @@ public abstract class AbstractJavaPlugin
     }
 
     /**
-     * Obtains the {@link ModuleDescriptor.Version} for the {@link Project}
+     * Obtains the {@link Version} for the {@link Project}
      *
-     * @return the {@link ModuleDescriptor.Version}
+     * @return the {@link Version}
      */
     @Provides
-    public ModuleDescriptor.Version getVersion() {
+    public Version getVersion() {
         return this.versioning.getVersion(getModuleDescriptor())
-            .orElse(ModuleDescriptor.Version.DEFAULT);
+            .orElse(ModuleDescriptor.DEFAULT_VERSION);
     }
 }
 

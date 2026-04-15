@@ -30,6 +30,11 @@
 
         <dependency>
             <groupId>build.base</groupId>
+            <artifactId>base-version</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
             <artifactId>base-foundation</artifactId>
         </dependency>
 

@@ -67,6 +67,11 @@
         </dependency>
 
         <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-version</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>build.codemodel</groupId>
             <artifactId>dependency-injection</artifactId>
         </dependency>

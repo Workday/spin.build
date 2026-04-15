@@ -1,6 +1,7 @@
 package build.spin.module.modulesystem;
 
 import build.base.foundation.Exceptional;
+import build.base.version.Version;
 import build.base.foundation.iterator.matching.IteratorPatternMatcher;
 import build.base.foundation.iterator.matching.IteratorPatternMatchers;
 import build.spin.common.util.CollectingVisitor;
@@ -105,7 +106,7 @@ class ModuleDescriptorTests {
     @Test
     void shouldParseModuleDescriptorVersions() {
 
-        final ModuleDescriptor.Version version = ModuleDescriptor.Version.parse("1.21.0-SNAPSHOT+42");
+        final Version version = Version.parse("1.21.0-SNAPSHOT+42");
 
         final IteratorPatternMatcher<Object> sequence = IteratorPatternMatchers.starts()
             .then().matches(1)
@@ -122,46 +123,46 @@ class ModuleDescriptorTests {
             .then().ends();
 
         assertThat(version).isNotNull();
-        assertThat(sequence.test(version.sequence().map(ModuleDescriptor.Version.Element::getValue))).isTrue();
-        assertThat(prerelease.test(version.prerelease().map(ModuleDescriptor.Version.Element::getValue))).isTrue();
-        assertThat(build.test(version.build().map(ModuleDescriptor.Version.Element::getValue))).isTrue();
+        assertThat(sequence.test(version.sequence().stream().map(Version.Element::getValue))).isTrue();
+        assertThat(prerelease.test(version.prerelease().stream().map(Version.Element::getValue))).isTrue();
+        assertThat(build.test(version.build().stream().map(Version.Element::getValue))).isTrue();
     }
 
     @Test
     void shouldCompareModuleDescriptorVersions() {
 
-        final ModuleDescriptor.Version v0 = ModuleDescriptor.Version.parse("0");
-        final ModuleDescriptor.Version otherV0 = ModuleDescriptor.Version.parse("0");
+        final Version v0 = Version.parse("0");
+        final Version otherV0 = Version.parse("0");
 
         assertThat(v0).isEqualTo(otherV0);
         assertThat(otherV0).isEqualTo(v0);
 
-        final ModuleDescriptor.Version v0_0 = ModuleDescriptor.Version.parse("0.0");
+        final Version v0_0 = Version.parse("0.0");
         assertThat(v0).isEqualTo(v0_0);
         assertThat(v0_0).isEqualTo(v0);
 
-        final ModuleDescriptor.Version v0_0_SNAPSHOT = ModuleDescriptor.Version.parse("0.0-SNAPSHOT");
+        final Version v0_0_SNAPSHOT = Version.parse("0.0-SNAPSHOT");
         assertThat(v0).isGreaterThan(v0_0_SNAPSHOT);
         assertThat(v0_0_SNAPSHOT).isLessThan(v0);
         assertThat(v0).isNotEqualTo(v0_0_SNAPSHOT);
 
-        final ModuleDescriptor.Version v0_0_SNAPSHOT_1 = ModuleDescriptor.Version.parse("0.0-SNAPSHOT+1");
+        final Version v0_0_SNAPSHOT_1 = Version.parse("0.0-SNAPSHOT+1");
 
         assertThat(v0_0_SNAPSHOT_1).isGreaterThan(v0_0_SNAPSHOT);
         assertThat(v0_0_SNAPSHOT).isLessThan(v0_0_SNAPSHOT_1);
         assertThat(v0_0_SNAPSHOT).isNotEqualTo(v0_0_SNAPSHOT_1);
 
-        final ModuleDescriptor.Version v0_0_SNAPSHOT_2 = ModuleDescriptor.Version.parse("0.0-SNAPSHOT+2");
+        final Version v0_0_SNAPSHOT_2 = Version.parse("0.0-SNAPSHOT+2");
         assertThat(v0_0_SNAPSHOT_2).isGreaterThan(v0_0_SNAPSHOT_1);
         assertThat(v0_0_SNAPSHOT_1).isLessThan(v0_0_SNAPSHOT_2);
         assertThat(v0_0_SNAPSHOT_1).isNotEqualTo(v0_0_SNAPSHOT_2);
 
-        final ModuleDescriptor.Version v1 = ModuleDescriptor.Version.parse("1");
+        final Version v1 = Version.parse("1");
         assertThat(v1).isGreaterThan(v0);
         assertThat(v0).isLessThan(v1);
         assertThat(v0).isNotEqualTo(v1);
 
-        final ModuleDescriptor.Version v1_1 = ModuleDescriptor.Version.parse("1.1");
+        final Version v1_1 = Version.parse("1.1");
         assertThat(v1_1).isGreaterThan(v1);
         assertThat(v1).isLessThan(v1_1);
         assertThat(v1).isNotEqualTo(v1_1);

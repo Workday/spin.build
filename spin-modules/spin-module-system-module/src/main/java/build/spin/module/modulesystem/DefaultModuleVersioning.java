@@ -20,6 +20,7 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.version.Version;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Workspace;
@@ -39,12 +40,12 @@ public class DefaultModuleVersioning
     implements ModuleVersioning, Resource {
 
     @Override
-    public Optional<ModuleDescriptor.Version> getVersion(final String moduleName) {
+    public Optional<Version> getVersion(final String moduleName) {
         return Optional.empty();
     }
 
     @Override
-    public Optional<ModuleDescriptor.Version> getVersion(final ModuleDescriptor descriptor) {
+    public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
         return Optional.empty();
     }
 

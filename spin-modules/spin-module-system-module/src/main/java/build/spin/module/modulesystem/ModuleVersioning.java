@@ -20,10 +20,12 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.version.Version;
+
 import java.util.Optional;
 
 /**
- * Provides the ability to resolve a required {@link ModuleDescriptor.Version} for a module.
+ * Provides the ability to resolve a required {@link Version} for a module.
  *
  * @author brian.oliver
  * @since May-2020
@@ -31,18 +33,18 @@ import java.util.Optional;
 public interface ModuleVersioning {
 
     /**
-     * Attempts to obtain the {@link ModuleDescriptor.Version} for the specified module name.
+     * Attempts to obtain the {@link Version} for the specified module name.
      *
      * @param moduleName the module name
-     * @return {@link Optional} {@link ModuleDescriptor.Version}
+     * @return {@link Optional} {@link Version}
      */
-    Optional<ModuleDescriptor.Version> getVersion(String moduleName);
+    Optional<Version> getVersion(String moduleName);
 
     /**
-     * Attempts to obtain the {@link ModuleDescriptor.Version} for the specified {@link ModuleDescriptor}.
+     * Attempts to obtain the {@link Version} for the specified {@link ModuleDescriptor}.
      *
      * @param descriptor the {@link ModuleDescriptor}
-     * @return {@link Optional} {@link ModuleDescriptor.Version}
+     * @return {@link Optional} {@link Version}
      */
-    Optional<ModuleDescriptor.Version> getVersion(ModuleDescriptor descriptor);
+    Optional<Version> getVersion(ModuleDescriptor descriptor);
 }

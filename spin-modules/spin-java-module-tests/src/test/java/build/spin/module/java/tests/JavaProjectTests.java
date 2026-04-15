@@ -1,6 +1,7 @@
 package build.spin.module.java.tests;
 
 import build.base.assertion.Eventually;
+import build.base.version.Version;
 import build.base.flow.CompletingSubscriber;
 import build.base.flow.RecordingSubscriber;
 import build.base.foundation.Strings;
@@ -257,7 +258,7 @@ public class JavaProjectTests {
         final var classPathBuilder = PathSetBuilder.create();
 
         var initial = ModuleReference.of("build.spawn.platform.local",
-            ModuleDescriptor.Version.parse("0.1.0"));
+            Version.parse("0.1.0"));
 
         pending.push(initial);
 
@@ -312,8 +313,8 @@ public class JavaProjectTests {
                 deduplicated.put(moduleName, entry);
             }
             else {
-                var existingVersion = ModuleDescriptor.Version.parse(existing.getKey().version().get());
-                var newVersion = ModuleDescriptor.Version.parse(entry.getKey().version().get());
+                var existingVersion = Version.parse(existing.getKey().version().get());
+                var newVersion = Version.parse(entry.getKey().version().get());
                 if (newVersion.compareTo(existingVersion) > 0) {
                     deduplicated.put(moduleName, entry);
                 }
@@ -410,8 +411,8 @@ public class JavaProjectTests {
                 }
             };
 
-            // determine a ModuleDescriptor.Version for the Java Development Kit Modules
-            final ModuleDescriptor.Version jdkVersion = ModuleDescriptor.Version.parse(jdk.version().get());
+            // determine a Version for the Java Development Kit Modules
+            final Version jdkVersion = Version.parse(jdk.version().get());
 
             recordingObserver.items()
                 .map(String::trim)
@@ -445,7 +446,7 @@ public class JavaProjectTests {
                 modules.stream()
                     .forEach(descriptor -> System.out.printf("  %s @ %s (%s) [%s]\n",
                         descriptor.name(),
-                        descriptor.version().map(ModuleDescriptor.Version::get).orElse("(unknown version)"),
+                        descriptor.version().map(Version::get).orElse("(unknown version)"),
                         descriptor.isAutomatic() ? "automatic module" : "fully-blown module",
                         artifactPaths.get(artifacts.get(descriptor))));
             }
@@ -455,7 +456,7 @@ public class JavaProjectTests {
                 nonModules.stream()
                     .forEach(descriptor -> System.out.printf("  %s @ %s [%s]\n",
                         descriptor.name(),
-                        descriptor.version().map(ModuleDescriptor.Version::get).orElse("(unknown version)"),
+                        descriptor.version().map(Version::get).orElse("(unknown version)"),
                         artifactPaths.get(artifacts.get(descriptor))));
             }
 

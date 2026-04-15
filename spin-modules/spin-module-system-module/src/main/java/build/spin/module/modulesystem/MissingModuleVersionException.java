@@ -20,11 +20,13 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.version.Version;
+
 import java.util.Objects;
 
 /**
  * A {@link ModuleSystemException} thrown when a {@link ModuleReference} is expected to have a
- * {@link ModuleDescriptor.Version}, but it is missing.
+ * {@link Version}, but it is missing.
  *
  * @author brian.oliver
  * @since Mar-2021
@@ -33,7 +35,7 @@ public class MissingModuleVersionException
     extends ModuleSystemException {
 
     /**
-     * The {@link ModuleReference} for which the {@link ModuleDescriptor.Version} is missing.
+     * The {@link ModuleReference} for which the {@link Version} is missing.
      */
     private final ModuleReference reference;
 
@@ -56,7 +58,7 @@ public class MissingModuleVersionException
     }
 
     /**
-     * Obtains the {@link ModuleReference} that is missing {@link ModuleDescriptor.Version} information.
+     * Obtains the {@link ModuleReference} that is missing {@link Version} information.
      *
      * @return the {@link ModuleReference}
      */

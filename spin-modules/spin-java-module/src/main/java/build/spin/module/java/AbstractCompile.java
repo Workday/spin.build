@@ -28,6 +28,7 @@ import build.base.option.JDKVersion;
 import build.base.telemetry.Activity;
 import build.base.telemetry.Meter;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Name;
@@ -164,9 +165,9 @@ public abstract class AbstractCompile
         final boolean isDefaultJavaVersion = this.javaVersion.major() == this.systemJavaVersion.major();
 
         // determine the version of the Module being compiled (or use the system provided version)
-        final ModuleDescriptor.Version version = this.versioning
+        final Version version = this.versioning
             .getVersion(this.moduleDescriptor)
-            .orElse(ModuleDescriptor.Version.DEFAULT);
+            .orElse(ModuleDescriptor.DEFAULT_VERSION);
 
         final Activity compilation = this.recorder
             .commence("Compiling %d file(s) for [%s] as [%s] ", sourceCode.size(), this.project.path(), version);

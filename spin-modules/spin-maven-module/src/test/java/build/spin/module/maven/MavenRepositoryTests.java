@@ -1,6 +1,7 @@
 package build.spin.module.maven;
 
 import build.base.foundation.Exceptional;
+import build.base.version.Version;
 import build.base.foundation.UniformResource;
 import build.base.telemetry.TelemetryRecorder;
 import build.spin.common.telemetry.TelemetryPublisher;
@@ -56,12 +57,12 @@ public class MavenRepositoryTests {
         this.moduleCatalog = ModuleCatalog.HeapBased.create();
         this.versioning = new ModuleVersioning() {
             @Override
-            public Optional<ModuleDescriptor.Version> getVersion(final String moduleName) {
+            public Optional<Version> getVersion(final String moduleName) {
                 return Optional.empty();
             }
 
             @Override
-            public Optional<ModuleDescriptor.Version> getVersion(final ModuleDescriptor descriptor) {
+            public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
                 return Optional.empty();
             }
         };
