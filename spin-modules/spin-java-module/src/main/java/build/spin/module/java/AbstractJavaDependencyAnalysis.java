@@ -66,6 +66,7 @@ import java.util.Objects;
 import java.util.Stack;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 /**
  * An abstract {@link Task} to perform Java Dependency Analysis using the Java Platform
@@ -427,7 +428,7 @@ public abstract class AbstractJavaDependencyAnalysis
         final var classPath = Streams.reverse(classPathSet.stream())
             .map(Path::toString)
             .map(Strings::doubleQuoteIfContainsWhiteSpace)
-            .reduce("", (left, right) -> left.isEmpty() ? right : left + File.pathSeparator + right);
+            .collect(Collectors.joining(File.pathSeparator));
 
         final var jdepsPath = javaHome.resolve("bin/jdeps");
 

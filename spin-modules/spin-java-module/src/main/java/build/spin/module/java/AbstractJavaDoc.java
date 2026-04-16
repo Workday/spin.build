@@ -53,6 +53,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.stream.Collectors;
 /**
  * An abstract {@link Task} that compiles and produces Java Documentation for the Java Source Code in a {@link Project}
  * using the Java Platform {@code javadoc} command.
@@ -162,13 +163,13 @@ public abstract class AbstractJavaDoc
                 if (!modulePath.isEmpty()) {
                     final String mp = modulePath.stream()
                         .map(Path::toString)
-                        .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
+                        .collect(Collectors.joining(File.pathSeparator));
                     writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
                 }
                 if (!classPath.isEmpty()) {
                     final String cp = classPath.stream()
                         .map(Path::toString)
-                        .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
+                        .collect(Collectors.joining(File.pathSeparator));
                     writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
                 }
 

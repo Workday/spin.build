@@ -57,6 +57,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static build.spin.module.clean.CleanPlugin.delete;
@@ -236,12 +237,12 @@ public abstract class AbstractCompile
                 if (!modulePath.isEmpty()) {
                     this.recorder.diagnostic("Module Path (%d entries)", modulePath.size());
                     writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(
-                        joinPaths(modulePath.stream())));
+                        modulePath.stream().map(Path::toString).collect(Collectors.joining(File.pathSeparator))));
                 }
                 if (!compilationClassPath.isEmpty()) {
                     this.recorder.diagnostic("Class Path (%d entries)", compilationClassPath.size());
                     writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(
-                        joinPaths(compilationClassPath.stream())));
+                        compilationClassPath.stream().map(Path::toString).collect(Collectors.joining(File.pathSeparator))));
                 }
             } else {
                 // unnamed-module sources: merge module path + classpath into one flat classpath
@@ -250,7 +251,7 @@ public abstract class AbstractCompile
                 if (!flatClassPath.isEmpty()) {
                     this.recorder.diagnostic("Class Path [unnamed-module] (%d entries)", flatClassPath.size());
                     writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(
-                        joinPaths(flatClassPath.stream())));
+                        flatClassPath.stream().map(Path::toString).collect(Collectors.joining(File.pathSeparator))));
                 }
             }
 
@@ -376,8 +377,4 @@ public abstract class AbstractCompile
         return PathSetBuilder.create(path).build();
     }
 
-    private static String joinPaths(final Stream<Path> paths) {
-        return paths.map(Path::toString)
-            .reduce("", (l, r) -> l.isEmpty() ? r : l + File.pathSeparator + r);
-    }
 }

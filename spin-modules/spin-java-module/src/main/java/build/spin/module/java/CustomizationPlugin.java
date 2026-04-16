@@ -370,7 +370,7 @@ public class CustomizationPlugin
                     if (!classPath.isEmpty()) {
                         final String cp = classPath.stream()
                             .map(Path::toString)
-                            .reduce("", (left, right) -> left.isEmpty() ? right : left + File.pathSeparator + right);
+                            .collect(Collectors.joining(File.pathSeparator));
 
                         writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
                     }
