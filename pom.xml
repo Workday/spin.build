@@ -66,8 +66,8 @@
         <java.version>25</java.version>
 
         <!-- Module Dependency Versions -->
-        <base.version>0.22.0</base.version>
-        <codemodel.version>0.20.0</codemodel.version>
+        <base.version>0.22.1</base.version>
+        <codemodel.version>0.20.1</codemodel.version>
         <checkstyle.version>13.3.0</checkstyle.version>
         <freemarker.version>2.3.34</freemarker.version>
         <assertj.version>3.27.7</assertj.version>
@@ -79,8 +79,8 @@
         <maven.resolver.version>2.0.16</maven.resolver.version>
         <mockito.version>5.23.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
-        <serve.version>0.1.0</serve.version>
-        <spawn.version>0.1.1</spawn.version>
+        <serve.version>0.1.1</serve.version>
+        <spawn.version>0.1.2</spawn.version>
 
         <!-- Plugin Dependency Versions -->
         <maven-assembly-plugin.version>3.8.0</maven-assembly-plugin.version>
