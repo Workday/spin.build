@@ -305,7 +305,8 @@ class PomXmlUtils {
      */
     static List<String[]> readRawDependencies(final DocumentBuilder builder,
                                               final Path pomPath,
-                                              final Map<String, String> properties) {
+                                              final Map<String, String> properties,
+                                              final Map<String, String> rootDm) {
         final List<String[]> result = new ArrayList<>();
         try {
             final Document doc = builder.parse(pomPath.toFile());
@@ -316,12 +317,15 @@ class PomXmlUtils {
                 }
                 final String groupId = textContent(dep, "groupId");
                 final String artifactId = textContent(dep, "artifactId");
-                final String rawVersion = textContent(dep, "version");
-                if (groupId == null || artifactId == null || rawVersion == null) {
+                if (groupId == null || artifactId == null) {
                     continue;
                 }
-                final String resolvedVersion = resolveProperty(rawVersion, properties);
+                final String rawVersion = textContent(dep, "version");
+                String resolvedVersion = resolveProperty(rawVersion, properties);
                 if (resolvedVersion == null || resolvedVersion.contains("${")) {
+                    resolvedVersion = rootDm.get(groupId + ":" + artifactId);
+                }
+                if (resolvedVersion == null) {
                     continue;
                 }
                 final String scope = textContent(dep, "scope");
@@ -385,5 +389,42 @@ class PomXmlUtils {
             }
         }
         return properties;
+    }
+
+    /**
+     * Reads the {@code <dependencyManagement>} section of the given pom and returns a map of
+     * {@code groupId:artifactId} to resolved version string. Property references are resolved
+     * against the supplied {@code properties} map. Entries whose version cannot be resolved are
+     * omitted.
+     */
+    static Map<String, String> readDependencyManagement(final DocumentBuilder builder,
+                                                        final Path pomPath,
+                                                        final Map<String, String> properties) {
+        final Map<String, String> dm = new HashMap<>();
+        try {
+            final Document doc = builder.parse(pomPath.toFile());
+            final NodeList dmNodes = doc.getElementsByTagName("dependencyManagement");
+            if (dmNodes.getLength() == 0) {
+                return dm;
+            }
+            final NodeList deps = ((Element) dmNodes.item(0)).getElementsByTagName("dependency");
+            for (int i = 0; i < deps.getLength(); i++) {
+                if (!(deps.item(i) instanceof Element dep)) {
+                    continue;
+                }
+                final String groupId = textContent(dep, "groupId");
+                final String artifactId = textContent(dep, "artifactId");
+                final String rawVersion = textContent(dep, "version");
+                if (groupId == null || artifactId == null || rawVersion == null) {
+                    continue;
+                }
+                final String resolved = resolveProperty(rawVersion, properties);
+                if (resolved != null && !resolved.contains("${")) {
+                    dm.put(groupId + ":" + artifactId, resolved);
+                }
+            }
+        } catch (final Exception ignored) {
+        }
+        return dm;
     }
 }

@@ -31,7 +31,6 @@ import org.w3c.dom.NodeList;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
 import javax.xml.parsers.DocumentBuilder;
 
 /**
@@ -40,7 +39,8 @@ import javax.xml.parsers.DocumentBuilder;
  * {@code src/test/java/module-info.java} is present.
  * <p>
  * This resource is workspace-level. The {@link #get(Project)} method reads the specific
- * sub-project's {@code pom.xml} on each call, using properties from the workspace root pom.
+ * sub-project's {@code pom.xml} on each call. Dependencies without an explicit version are still
+ * registered; their versions are resolved later via {@code ModuleVersioning}.
  *
  * @author reed.vonredwitz
  * @since Apr-2026
@@ -53,9 +53,6 @@ public class PomBasedTestModuleDescriptor
     @Inject
     private TelemetryRecorder recorder;
 
-    @Inject
-    private Workspace workspace;
-
     @Override
     public ModuleDescriptor get(final Project project) {
         final ModuleDescriptor.Builder builder =
@@ -64,19 +61,12 @@ public class PomBasedTestModuleDescriptor
                 .setOpen(true)
                 .setAutomatic(true);
 
-        final Path rootPom = workspace.path().resolve(POM_FILENAME);
-        if (!Files.exists(rootPom)) {
-            return builder.build();
-        }
-
         try {
             final DocumentBuilder xmlBuilder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
 
-            final Map<String, String> properties = PomXmlUtils.readProperties(xmlBuilder, rootPom);
-
             final Path projectPom = project.path().resolve(POM_FILENAME);
             if (Files.exists(projectPom)) {
-                registerTestRequires(xmlBuilder, projectPom, properties, builder);
+                registerTestRequires(xmlBuilder, projectPom, builder);
             }
 
         } catch (final Exception e) {
@@ -88,7 +78,6 @@ public class PomBasedTestModuleDescriptor
 
     private void registerTestRequires(final DocumentBuilder builder,
                                       final Path pomPath,
-                                      final Map<String, String> properties,
                                       final ModuleDescriptor.Builder descriptorBuilder) {
         try {
             final Document doc = builder.parse(pomPath.toFile());
@@ -107,14 +96,8 @@ public class PomBasedTestModuleDescriptor
 
                 final String groupId = PomXmlUtils.textContent(dep, "groupId");
                 final String artifactId = PomXmlUtils.textContent(dep, "artifactId");
-                final String rawVersion = PomXmlUtils.textContent(dep, "version");
 
-                if (groupId == null || artifactId == null || rawVersion == null) {
-                    continue;
-                }
-
-                final String resolvedVersion = PomXmlUtils.resolveProperty(rawVersion, properties);
-                if (resolvedVersion == null || resolvedVersion.contains("${")) {
+                if (groupId == null || artifactId == null) {
                     continue;
                 }
 

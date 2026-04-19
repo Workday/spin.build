@@ -82,6 +82,7 @@ final class PomWorkspaceWalker {
         try {
             final DocumentBuilder builder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
             final Map<String, String> rootProperties = PomXmlUtils.readProperties(builder, rootPom);
+            final Map<String, String> rootDm = PomXmlUtils.readDependencyManagement(builder, rootPom, rootProperties);
 
             final Deque<String[]> queue = new ArrayDeque<>();
             final Set<String> visited = new HashSet<>();
@@ -93,8 +94,8 @@ final class PomWorkspaceWalker {
                 .filter(Files::isRegularFile)
                 .filter(p -> !p.toString().contains("/target/"))
                 .forEach(pomPath -> {
-                    walkPom(builder, pomPath, rootProperties, rootPom, localRepo, recorder, visitor);
-                    PomXmlUtils.readRawDependencies(builder, pomPath, rootProperties)
+                    walkPom(builder, pomPath, rootProperties, rootDm, rootPom, localRepo, recorder, visitor);
+                    PomXmlUtils.readRawDependencies(builder, pomPath, rootProperties, rootDm)
                         .forEach(d -> {
                             if (visited.add(d[0] + ":" + d[1])) {
                                 queue.add(d);
@@ -112,7 +113,7 @@ final class PomWorkspaceWalker {
                         try {
                             final Map<String, String> pomProperties =
                                 PomXmlUtils.readProperties(builder, pomPath);
-                            PomXmlUtils.readRawDependencies(builder, pomPath, pomProperties)
+                            PomXmlUtils.readRawDependencies(builder, pomPath, pomProperties, Map.of())
                                 .stream()
                                 .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))
                                 .forEach(d -> {
@@ -140,6 +141,7 @@ final class PomWorkspaceWalker {
     private static void walkPom(final DocumentBuilder builder,
                                 final Path pomPath,
                                 final Map<String, String> properties,
+                                final Map<String, String> rootDm,
                                 final Path rootPomPath,
                                 final Path localRepo,
                                 final TelemetryRecorder recorder,
@@ -159,13 +161,16 @@ final class PomWorkspaceWalker {
 
                 final String groupId = PomXmlUtils.textContent(dep, "groupId");
                 final String artifactId = PomXmlUtils.textContent(dep, "artifactId");
-                final String rawVersion = PomXmlUtils.textContent(dep, "version");
-                if (groupId == null || artifactId == null || rawVersion == null) {
+                if (groupId == null || artifactId == null) {
                     continue;
                 }
 
-                final String resolvedVersion = PomXmlUtils.resolveProperty(rawVersion, properties);
+                final String rawVersion = PomXmlUtils.textContent(dep, "version");
+                String resolvedVersion = PomXmlUtils.resolveProperty(rawVersion, properties);
                 if (resolvedVersion == null || resolvedVersion.contains("${")) {
+                    resolvedVersion = rootDm.get(groupId + ":" + artifactId);
+                }
+                if (resolvedVersion == null) {
                     continue;
                 }
 

@@ -106,6 +106,52 @@ class PomWorkspaceWalkerTests {
         assertThat(visitor.forCoordinate("org.assertj", "assertj-core").version).isEqualTo("3.25.0");
     }
 
+    @Test
+    void walk_resolvesDependencyManagementVersionForSubmodule(@TempDir final Path workspace) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <properties>
+                <base.version>0.22.1</base.version>
+              </properties>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>${base.version}</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final Path submodule = Files.createDirectory(workspace.resolve("sub"));
+        writePom(submodule.resolve("pom.xml"), """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>root</artifactId>
+                <version>1.0.0</version>
+              </parent>
+              <artifactId>sub</artifactId>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-marshalling</artifactId>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+
+        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
+    }
+
     // -------------------------------------------------------------------------
     // derivation heuristics — positive cases
     // -------------------------------------------------------------------------
