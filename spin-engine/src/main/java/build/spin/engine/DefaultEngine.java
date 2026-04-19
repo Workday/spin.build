@@ -32,10 +32,12 @@ import build.base.foundation.UniformResource;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.injection.Binder;
 import build.codemodel.injection.ConfigurationResolver;
 import build.codemodel.injection.Context;
 import build.codemodel.injection.DefaultOptionResolver;
 import build.codemodel.injection.InjectionFramework;
+import build.codemodel.injection.Module;
 import build.codemodel.injection.OptionalResolver;
 import build.codemodel.injection.QualifiedResolver;
 import build.codemodel.injection.Resolver;
@@ -182,13 +184,7 @@ public final class DefaultEngine implements Engine {
         }
 
         // establish the Dependency Injection context for the Engine
-        this.context = this.framework.newContext();
-
-        this.context.bind(InjectionFramework.class).to(this.framework);
-        this.context.bind(FileSystem.class).to(fileSystem);
-        this.context.bind(Configuration.class).to(optionsByType);
-        this.context.bind(LocalMachine.class).to(LocalMachine.get());
-        this.context.bind(DocumentBuilderFactory.class).to(DocumentBuilderFactory.newInstance());
+        this.context = this.framework.newContext(new EngineModule(this.framework, this.fileSystem, this.optionsByType));
 
         // allow the @Default JDKVersion to be resolved for injection
         this.optionsByType.getOptional(JDKVersion.class)
@@ -197,9 +193,6 @@ public final class DefaultEngine implements Engine {
         this.context.addResolver(SystemPropertyResolver.of(this.framework.codeModel()));
         this.context.addResolver(ConfigurationResolver.of(optionsByType));
         this.context.addResolver(DefaultOptionResolver.of(this.framework));
-
-        // include the ability to create Caches on the fly
-        this.context.bind(Cache.class).to(HeapBasedCache::new);
 
         this.metaClasses = new LinkedHashMap<>();
         this.contexts = new LinkedHashMap<>();
@@ -250,6 +243,8 @@ public final class DefaultEngine implements Engine {
         this.commandLineParser
             .ifPresent(parser -> metaClasses()
                 .forEach(metaClass -> metaClass.getCommandLineClasses().forEach(parser::add)));
+
+        this.context.validate().initializeEagerSingletons();
     }
 
     /**
@@ -265,11 +260,10 @@ public final class DefaultEngine implements Engine {
         final Class<T> extensionMetaClassClass,
         final Context context) {
 
-        final Context metaClassContext = context.newContext();
-
         final URI classUri = UniformResource.createURI("class",
             UniformResource.sanitize(Introspection.describe(extensionMetaClassClass)));
 
+        final Context metaClassContext = context.newContext();
         metaClassContext.bind(TelemetryRecorder.class).to(new TelemetryPublisher(classUri, this::publish));
         metaClassContext.bind(Engine.class).to(this);
         metaClassContext.bind(Context.class).to(metaClassContext);
@@ -301,35 +295,28 @@ public final class DefaultEngine implements Engine {
     @SuppressWarnings("unchecked")
     private Extension createExtension(final Extension.MetaClass metaClass, final Context metaClassContext) {
 
-        // establish a Context to create the Extension
         final Context extensionContext = metaClassContext.newContext();
+        extensionContext.bind((Class<Extension.MetaClass>) metaClass.getClass()).to(metaClass);
+        extensionContext.bind(TelemetryRecorder.class).to(new TelemetryPublisher(
+            UniformResource.createURI(metaClass.scheme(), Introspection.describe(metaClass.getExtensionClass())),
+            this::publish));
+        extensionContext.bind(Context.class).to(extensionContext);
 
-        // include command line options for the Extension.MetaClass
         this.commandLineParser.ifPresent(parser -> {
-            // parse the command line arguments and include them as options
             final Configuration parsedOptions = parser.parse(arguments).build();
             final Configuration serviceOptionsByType = Configuration.of(
-                Stream.concat(this.optionsByType.stream(), parsedOptions.stream())
-                    .toArray(Option[]::new));
-
+                Stream.concat(this.optionsByType.stream(), parsedOptions.stream()).toArray(Option[]::new));
             extensionContext.bind(Configuration.class).to(serviceOptionsByType);
             extensionContext.addResolver(ConfigurationResolver.of(serviceOptionsByType));
         });
 
-        extensionContext.bind(Context.class).to(extensionContext);
-        extensionContext.bind((Class<Extension.MetaClass>) metaClass.getClass()).to(metaClass);
+        return extensionContext.create(metaClass.getExtensionClass());
+    }
 
-        // establish a TelemetryRecorder to be injected into the Service
-        extensionContext.bind(TelemetryRecorder.class)
-            .to(new TelemetryPublisher(
-                UniformResource.createURI(metaClass.scheme(),
-                    Introspection.describe(metaClass.getExtensionClass())),
-                this::publish));
-
-        // attempt to create the Extension
-        final var extension = extensionContext.create(metaClass.getExtensionClass());
-
-        return extension;
+    @Override
+    public void close() {
+        this.contexts.values().forEach(Context::close);
+        this.context.close();
     }
 
     @Override
@@ -464,6 +451,24 @@ public final class DefaultEngine implements Engine {
      * @param path   the Project {@link Path}
      * @return an {@link Optional} {@link Project}
      */
+    /**
+     * Core value bindings for the engine {@link Context}. Extracted as a {@link Module} so tests
+     * can override individual bindings via {@link build.codemodel.injection.Modules#override}.
+     */
+    record EngineModule(InjectionFramework framework, FileSystem fileSystem, Configuration optionsByType)
+        implements Module {
+
+        @Override
+        public void configure(final Binder binder) {
+            binder.bind(InjectionFramework.class).to(this.framework);
+            binder.bind(FileSystem.class).to(this.fileSystem);
+            binder.bind(Configuration.class).to(this.optionsByType);
+            binder.bind(LocalMachine.class).to(LocalMachine.get());
+            binder.bind(DocumentBuilderFactory.class).to(DocumentBuilderFactory.newInstance());
+            binder.bind(Cache.class).to(HeapBasedCache::new);
+        }
+    }
+
     private Optional<Project> createProject(final Optional<Project> parent, final Path path) {
 
         // ensure the Path is a Folder
@@ -488,40 +493,22 @@ public final class DefaultEngine implements Engine {
             || metaClasses(Plugin.MetaClass.class)
             .anyMatch(metaClass -> metaClass.isDetectedIn(path))) {
 
-            // establish the project in which to add child projects
-            final AbstractProject project;
-
-            // establish a Context that can be used to discover the Project
-            final Context context = this.framework.newContext();
-
-            // allow fallback resolution using the Engine Context
-            context.addResolver(context().resolver());
-
-            // allow the Engine to be injected
-            context.bind(Engine.class).to(this);
-
-            // allow the Project Path to be injected
-            context.bind(Path.class).to(path);
-
-            // allow the parent Optional<Project> to be resolved and injected
             final Resolver<Optional<Project>> parentResolver =
                 parent.map(parentProject -> OptionalResolver.of(Project.class, parentProject))
                     .orElseGet(() -> OptionalResolver.empty(Project.class));
 
+            final Context context = this.framework.newContext(binder -> {
+                binder.bind(Engine.class).to(this);
+                binder.bind(Path.class).to(path);
+            });
+            context.addResolver(context().resolver());
             context.addResolver(parentResolver);
 
-            // create the Workspace (when there's no parent) or sub-Project
-            // (when there's a parent)
-            project = parent.isEmpty() ? context.create(DefaultWorkspace.class) : context.create(DefaultProject.class);
+            final AbstractProject project =
+                parent.isEmpty() ? context.create(DefaultWorkspace.class) : context.create(DefaultProject.class);
 
-            // allow the Project to be injected
             context.bind(Project.class).to(project);
-
-            // allow the Workspace to be injected
             context.bind(Workspace.class).to(project.workspace());
-
-            // allow the resolution of Project Resources for injection
-            // (especially into Plugins)
             context.addResolver(new ProjectResourceResolver(project));
 
             // establish Resources for the project (allowing them to be injected

@@ -297,16 +297,7 @@ public class Spin {
                 // close the Workspace AutoClosables
                 workspace.close();
 
-                // close the Engine services that are AutoCloseable
-                engine.services(AutoCloseable.class)
-                        .forEach(closable -> {
-                            try {
-                                closable.close();
-                            } catch (final Exception e) {
-                                System.err.printf("Failed to close [%s] (continuing to terminate)\n", closable);
-                                e.printStackTrace(System.err);
-                            }
-                        });
+                engine.close();
 
                 // attempt to exit with the termination status code
                 System.exit(terminationFuture.get());
