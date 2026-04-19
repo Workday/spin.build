@@ -131,9 +131,15 @@ public final class DefaultEngine implements Engine {
     private final LinkedHashMap<Class<? extends Extension>, Extension.MetaClass> metaClasses;
 
     /**
-     * The {@link Context}s used by each {@link Extension}.
+     * The {@link Context}s used by each {@link Extension.MetaClass}.
      */
     private final LinkedHashMap<Class<? extends Extension>, Context> contexts;
+
+    /**
+     * The {@link Context}s in which each {@link Extension} instance was created, keyed by extension class.
+     * Stored so {@link #close()} can invoke {@link build.codemodel.injection.PreDestroy} lifecycle methods.
+     */
+    private final LinkedHashMap<Class<? extends Extension>, Context> extensionContexts;
 
     /**
      * The {@link Service}s provided by the {@link Engine}.
@@ -196,6 +202,7 @@ public final class DefaultEngine implements Engine {
 
         this.metaClasses = new LinkedHashMap<>();
         this.contexts = new LinkedHashMap<>();
+        this.extensionContexts = new LinkedHashMap<>();
         this.services = new LinkedHashMap<>();
 
         // allow Services to be resolved and injected
@@ -310,11 +317,14 @@ public final class DefaultEngine implements Engine {
             extensionContext.addResolver(ConfigurationResolver.of(serviceOptionsByType));
         });
 
-        return extensionContext.create(metaClass.getExtensionClass());
+        final var extension = extensionContext.create(metaClass.getExtensionClass());
+        this.extensionContexts.put(metaClass.getExtensionClass(), extensionContext);
+        return extension;
     }
 
     @Override
     public void close() {
+        this.extensionContexts.values().forEach(Context::close);
         this.contexts.values().forEach(Context::close);
         this.context.close();
     }
