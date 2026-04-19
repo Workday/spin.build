@@ -64,6 +64,54 @@ class PomBasedModuleVersioningTests {
     }
 
     @Test
+    void buildFromWorkspace_resolvesDependencyManagementVersionForSubmodule(@TempDir final Path workspace)
+        throws Exception {
+        Files.writeString(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <properties>
+                <base.version>0.22.1</base.version>
+              </properties>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>${base.version}</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final Path submodule = Files.createDirectory(workspace.resolve("sub"));
+        Files.writeString(submodule.resolve("pom.xml"), """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>root</artifactId>
+                <version>1.0.0</version>
+              </parent>
+              <artifactId>sub</artifactId>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-marshalling</artifactId>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final ModuleVersioning versioning = PomBasedModuleVersioning.buildFromWorkspace(workspace, RECORDER);
+
+        assertThat(versioning.getVersion("base.marshalling"))
+            .isPresent()
+            .hasValueSatisfying(v -> assertThat(v.get()).isEqualTo("0.22.1"));
+    }
+
+    @Test
     void buildFromWorkspace_returnsEmptyWhenNoPomExists(@TempDir final Path workspace) {
         final ModuleVersioning versioning = PomBasedModuleVersioning.buildFromWorkspace(workspace, RECORDER);
         assertThat(versioning.getVersion("anything")).isEmpty();
