@@ -39,7 +39,7 @@ import java.util.stream.Stream;
  * @since Dec-2022
  */
 public interface Engine
-    extends Publicist<Telemetry> {
+    extends Publicist<Telemetry>, AutoCloseable {
 
     /**
      * Obtains the {@link Configuration} used by the {@link Engine}.
@@ -148,5 +148,13 @@ public interface Engine
      * @return a new {@link Program}
      */
     Program createProgram(Project project, Option... options);
+
+    /**
+     * Closes the {@link Engine}, invoking any {@link build.codemodel.injection.PreDestroy} lifecycle
+     * methods on instantiated extension singletons in reverse dependency order.
+     */
+    @Override
+    default void close() {
+    }
 
 }

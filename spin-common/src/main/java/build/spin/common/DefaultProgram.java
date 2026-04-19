@@ -27,9 +27,11 @@ import build.base.foundation.UniformResource;
 import build.base.telemetry.Activity;
 import build.base.telemetry.Meter;
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.injection.Binder;
 import build.codemodel.injection.ConfigurationResolver;
 import build.codemodel.injection.Context;
 import build.codemodel.injection.InjectionFramework;
+import build.codemodel.injection.Module;
 import build.codemodel.injection.ProvidesResolver;
 import build.codemodel.injection.Resolver;
 import build.codemodel.injection.ValueBinding;
@@ -126,24 +128,11 @@ public final class DefaultProgram
         final URI uri = UniformResource.createURI("program", this);
         this.recorder = new TelemetryPublisher(uri, this.engine::publish);
 
-        // establish a Context for the Program
-        this.context = this.framework.newContext();
-
-        // allow the Program Configuration to be injected
-        this.context.bind(Configuration.class).to(optionsByType);
-
-        // allow the Program Configuration to be resolved
-        this.context.addResolver(ConfigurationResolver.of(optionsByType));
-
-        // allow the Engine to resolve InjectionPoints as a fallback
-        // (this allows injection of Services)
+        this.context = this.framework.newContext(new ProgramModule(this.optionsByType, project.workspace()));
+        this.context.addResolver(ConfigurationResolver.of(this.optionsByType));
         this.context.addResolver(this.engine.context().resolver());
-
-        // allow the Workspace to be injected
-        this.context.bind(Workspace.class).to(project.workspace());
-
-        // allow the Program to be injected
         this.context.bind(Program.class).to(this);
+        this.context.validate();
 
         // determine the Task.Pattern
         final Task.Pattern pattern = this.optionsByType
@@ -189,10 +178,11 @@ public final class DefaultProgram
                 // include the Project in the Projects being tracked
                 projects.computeIfAbsent(taskProject, existing -> new HashSet<>());
 
-                // establish a Context allow for injection of common values (not for Task Execution)
-                final Context taskContext = this.framework.newContext();
+                // establish a TelemetryRecorder for the publishing Task specific Telemetry
+                final URI taskURI = taskInvocable.getURI();
+                final TelemetryPublisher publisher = new TelemetryPublisher(taskURI, this.engine::publish);
 
-                // allow the Plugin to provide Injectable values for injection into Tasks
+                final Context taskContext = this.framework.newContext(new TaskContextModule(taskProject, publisher));
                 taskContext.addResolver(ProvidesResolver.of(taskPlugin, this.framework));
 
                 // add a Resolver for Iterable of Plugins implementing the specified interface
@@ -222,24 +212,8 @@ public final class DefaultProgram
                     return Optional.empty();
                 });
 
-                // allows the Workspace to be injected into Tasks
-                taskContext.bind(Workspace.class).to(taskProject.workspace());
-
-                // allow the Project to be injected into Tasks
-                taskContext.bind(Project.class).to(taskProject);
-
-                // allow the Project Path to be injected into Tasks
-                taskContext.bind(Path.class).to(taskProject.path());
-
                 // bind the interfaces implemented by the Plugin
-                Introspection.getAll(taskPlugin.getClass(), Class::getInterfaces)
-                    .forEach(definedInterface ->
-                        taskContext.bind((Class) definedInterface).to(definedInterface.cast(taskPlugin)));
-
-                // establish a TelemetryRecorder for the publishing Task specific Telemetry
-                final URI taskURI = taskInvocable.getURI();
-                final TelemetryPublisher publisher = new TelemetryPublisher(taskURI, this.engine::publish);
-                taskContext.bind(TelemetryRecorder.class).to(publisher);
+                taskContext.bind(taskPlugin).asAllInterfaces();
 
                 // allow project resources to be resolved and injected
                 taskContext.addResolver(new ProjectResourceResolver(taskProject));
@@ -356,6 +330,26 @@ public final class DefaultProgram
                 deps.forEach(dep -> this.recorder.diagnostic("   requires %s", dep.name()));
             }
         });
+    }
+
+    record ProgramModule(Configuration options, Workspace workspace) implements Module {
+
+        @Override
+        public void configure(final Binder binder) {
+            binder.bind(Configuration.class).to(this.options);
+            binder.bind(Workspace.class).to(this.workspace);
+        }
+    }
+
+    record TaskContextModule(Project project, TelemetryPublisher recorder) implements Module {
+
+        @Override
+        public void configure(final Binder binder) {
+            binder.bind(Workspace.class).to(this.project.workspace());
+            binder.bind(Project.class).to(this.project);
+            binder.bind(Path.class).to(this.project.path());
+            binder.bind(TelemetryRecorder.class).to(this.recorder);
+        }
     }
 
     @Override
