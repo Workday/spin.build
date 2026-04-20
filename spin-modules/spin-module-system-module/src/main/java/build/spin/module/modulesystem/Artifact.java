@@ -26,6 +26,7 @@ import build.base.io.LookaheadReader;
 import build.base.parsing.ParseException;
 import build.base.version.Version;
 import build.base.version.VersionConstraint;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.Project;
 import build.spin.Task;
 
@@ -379,7 +380,7 @@ public interface Artifact {
     }
 
     /**
-     * Provides the ability to resolve the {@link Path} and {@link ModuleDescriptor} of {@link Artifact}s so that
+     * Provides the ability to resolve the {@link Path} and {@link JDKModuleDescriptor} of {@link Artifact}s so that
      * they may be used by {@link Task}s.
      */
     interface Resolver {
@@ -415,17 +416,17 @@ public interface Artifact {
                                                         ModuleCatalog catalog);
 
         /**
-         * Attempt to obtain the {@link ModuleDescriptor} for the specified {@link Artifact}.
+         * Attempt to obtain the {@link JDKModuleDescriptor} for the specified {@link Artifact}.
          *
          * @param artifact the {@link Artifact}
          * @param catalog the {@link ModuleCatalog}
          * @param versioning the {@link ModuleVersioning}
          *
-         * @return an {@link Exceptional} {@link ModuleDescriptor} for the specified {@link Artifact}
+         * @return an {@link Exceptional} {@link JDKModuleDescriptor} for the specified {@link Artifact}
          */
-        Exceptional<ModuleDescriptor> getModuleDescriptor(Artifact artifact,
-                                                          ModuleCatalog catalog,
-                                                          ModuleVersioning versioning);
+        Exceptional<JDKModuleDescriptor> getModuleDescriptor(Artifact artifact,
+                                                             ModuleCatalog catalog,
+                                                             ModuleVersioning versioning);
 
         /**
          * Attempts to transitively resolve the specified {@link Artifact} and all of its

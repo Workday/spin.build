@@ -43,6 +43,7 @@ module build.spin.module.maven {
     requires build.base.option;
     requires build.base.telemetry;
     requires build.codemodel.injection;
+    requires build.codemodel.jdk;
     requires build.spin;
     requires build.spin.module.clean;
     requires jakarta.inject;

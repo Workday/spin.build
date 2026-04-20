@@ -142,11 +142,6 @@ public class ProjectModuleVersioning
             .map(Optional::get);
     }
 
-    @Override
-    public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
-        return descriptor == null ? Optional.empty() : getVersion(descriptor.name());
-    }
-
     /**
      * The {@link Resource.MetaClass} for {@link ProjectModuleVersioning}.
      */

@@ -7,6 +7,7 @@ import build.base.option.JDKVersion;
 import build.base.option.WorkingDirectory;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
@@ -27,7 +28,6 @@ import build.spin.annotation.Category;
 import build.spin.annotation.System;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.java.JavaPlugin;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
@@ -64,7 +64,7 @@ public abstract class AbstractTest
     private ModuleVersioning versioning;
 
     @Inject
-    private ModuleDescriptor moduleDescriptor;
+    private JDKModuleDescriptor moduleDescriptor;
 
     @Inject
     private JDKVersion javaVersion;
@@ -130,10 +130,10 @@ public abstract class AbstractTest
                 .filter(plugin -> plugin.getJavaVersion().major() == this.javaVersion.major())
                 .findFirst()
                 .map(JavaCompilerPlugin::getModuleDescriptor)
-                .map(ModuleDescriptor::name)
-                .orElse(this.moduleDescriptor.name());
+                .map(d -> d.moduleName().toString())
+                .orElse(this.moduleDescriptor.moduleName().toString());
         } else {
-            rootModule = this.moduleDescriptor.name();
+            rootModule = this.moduleDescriptor.moduleName().toString();
         }
 
         final JDKHome javaHome = this.javaDevelopmentKit.home();

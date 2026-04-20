@@ -9,9 +9,9 @@ package build.spin.module.modulesystem;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,7 +23,7 @@ package build.spin.module.modulesystem;
 import java.util.Objects;
 
 /**
- * A {@link ModuleSystemException} thrown when a {@link ModuleDescriptor} for an {@link Artifact} can't be resolved
+ * A {@link ModuleSystemException} thrown when a {@link build.codemodel.jdk.descriptor.JDKModuleDescriptor} for an {@link Artifact} can't be resolved
  * using a {@link Artifact.Resolver}.
  *
  * @author brian.oliver
@@ -33,7 +33,7 @@ public class UnresolvableModuleDescriptorException
     extends ModuleSystemException {
 
     /**
-     * The {@link Artifact} for which the {@link ModuleDescriptor} could not be resolved.
+     * The {@link Artifact} for which the {@link build.codemodel.jdk.descriptor.JDKModuleDescriptor} could not be resolved.
      */
     private final Artifact artifact;
 
@@ -61,7 +61,7 @@ public class UnresolvableModuleDescriptorException
     }
 
     /**
-     * Obtains the {@link Artifact} for which the {@link ModuleDescriptor} was unresolvable.
+     * Obtains the {@link Artifact} for which the {@link build.codemodel.jdk.descriptor.JDKModuleDescriptor} was unresolvable.
      *
      * @return the {@link Artifact}
      */

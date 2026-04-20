@@ -28,6 +28,8 @@ import build.base.io.PathSet;
 import build.base.option.JDKVersion;
 import build.base.version.Version;
 import build.codemodel.injection.PostInject;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
@@ -43,7 +45,6 @@ import build.spin.module.java.ResourcePlugin;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.module.modulesystem.UnresolvableModuleException;
@@ -151,7 +152,7 @@ public class MavenPlugin
         private Project project;
 
         @Inject
-        private ModuleDescriptor descriptor;
+        private JDKModuleDescriptor descriptor;
 
         @Inject
         private Version version;
@@ -170,7 +171,7 @@ public class MavenPlugin
             mainAttributes.put(Attributes.Name.MANIFEST_VERSION, "1.0.0");
 
             // include the automatic module name
-            mainAttributes.put(new Attributes.Name("Automatic-Module-Name"), this.descriptor.name());
+            mainAttributes.put(new Attributes.Name("Automatic-Module-Name"), this.descriptor.moduleName().toString());
 
             // include the implementation title and version for the Module
             mainAttributes.put(Attributes.Name.IMPLEMENTATION_TITLE, this.project.name());
@@ -231,7 +232,10 @@ public class MavenPlugin
         implements build.spin.module.java.PackageModule {
 
         @Inject
-        private ModuleDescriptor descriptor;
+        private JDKModuleDescriptor descriptor;
+
+        @Inject
+        private Version version;
 
         @Inject
         private ModuleCatalog catalog;
@@ -248,7 +252,8 @@ public class MavenPlugin
                                           final @From(CreateModuleArchiveBuilder.class) JarBuilder archiveBuilder) {
 
             // determine the Artifact to generate based on the ModuleDescriptor
-            return this.catalog.getArtifact(this.descriptor.reference())
+            final ModuleReference ref = ModuleReference.of(this.descriptor.moduleName().toString(), this.version);
+            return this.catalog.getArtifact(ref)
                 .map(artifact -> {
                     // establish the name of the archive
                     final String artifactName = artifact.artifactId() + "-" + artifact.version().get() + ".jar";
@@ -261,10 +266,10 @@ public class MavenPlugin
                         throw new RuntimeException("Failed to create Artifact [" + artifactName + "]", e);
                     }
 
-                    return ArtifactDescriptor.create(this.descriptor.reference(), artifact, artifactPath);
+                    return ArtifactDescriptor.create(ref, artifact, artifactPath);
 
                 })
-                .orElseThrow(() -> new UnresolvableModuleException(this.descriptor.reference()));
+                .orElseThrow(() -> new UnresolvableModuleException(ref));
         }
     }
 
@@ -278,7 +283,10 @@ public class MavenPlugin
         implements Task<ArtifactDescriptor> {
 
         @Inject
-        private ModuleDescriptor descriptor;
+        private JDKModuleDescriptor descriptor;
+
+        @Inject
+        private Version version;
 
         @Inject
         private ModuleCatalog catalog;
@@ -312,7 +320,8 @@ public class MavenPlugin
                 });
 
             // determine the Artifact to generate based on the ModuleDescriptor
-            return this.catalog.getArtifact(this.descriptor.reference())
+            final ModuleReference ref = ModuleReference.of(this.descriptor.moduleName().toString(), this.version);
+            return this.catalog.getArtifact(ref)
                 .map(artifact -> {
                     // establish the name of the archive
                     final String artifactName = artifact.artifactId() + "-" + artifact.version().get() + "-sources.jar";
@@ -326,7 +335,7 @@ public class MavenPlugin
                     }
 
                     return ArtifactDescriptor.create(
-                        this.descriptor.reference(),
+                        ref,
                         Artifact.create(
                             artifact.groupId(),
                             artifact.artifactId(),
@@ -335,7 +344,7 @@ public class MavenPlugin
                             "sources"),
                         artifactPath);
                 })
-                .orElseThrow(() -> new UnresolvableModuleException(this.descriptor.reference()));
+                .orElseThrow(() -> new UnresolvableModuleException(ref));
         }
     }
 
@@ -349,7 +358,10 @@ public class MavenPlugin
         implements Task<ArtifactDescriptor> {
 
         @Inject
-        private ModuleDescriptor descriptor;
+        private JDKModuleDescriptor descriptor;
+
+        @Inject
+        private Version version;
 
         @Inject
         private ModuleCatalog catalog;
@@ -381,7 +393,8 @@ public class MavenPlugin
                 });
 
             // determine the Artifact to generate based on the ModuleDescriptor
-            return this.catalog.getArtifact(this.descriptor.reference())
+            final ModuleReference ref = ModuleReference.of(this.descriptor.moduleName().toString(), this.version);
+            return this.catalog.getArtifact(ref)
                 .map(artifact -> {
                     // establish the name of the archive
                     final String artifactName = artifact.artifactId() + "-" + artifact.version().get() + "-javadoc.jar";
@@ -395,7 +408,7 @@ public class MavenPlugin
                     }
 
                     return ArtifactDescriptor.create(
-                        this.descriptor.reference(),
+                        ref,
                         Artifact.create(
                             artifact.groupId(),
                             artifact.artifactId(),
@@ -404,7 +417,7 @@ public class MavenPlugin
                             "javadoc"),
                         artifactPath);
                 })
-                .orElseThrow(() -> new UnresolvableModuleException(this.descriptor.reference()));
+                .orElseThrow(() -> new UnresolvableModuleException(ref));
         }
     }
 
@@ -423,7 +436,7 @@ public class MavenPlugin
         private Project project;
 
         @Inject
-        private ModuleDescriptor descriptor;
+        private JDKModuleDescriptor descriptor;
 
         @Inject
         private ModuleCatalog catalog;
@@ -444,14 +457,9 @@ public class MavenPlugin
             throws ParserConfigurationException, SAXException, IOException {
 
             // determine the Version for this module
-            final Version moduleVersion = this.descriptor.version()
-                .orElseGet(() -> {
-                    // TODO: log ("The module [" + this.descriptor.name()
-                    //                    + "] does not specify a version in Versioning (version.properties)")
-                    // (and we're using the default)
-
-                    return ModuleDescriptor.DEFAULT_VERSION;
-                });
+            final Version moduleVersion = this.versioning
+                .getVersion(this.descriptor.moduleName().toString())
+                .orElse(ModuleVersioning.DEFAULT_VERSION);
 
             final Version artifactVersion = moduleVersion;
 
@@ -461,9 +469,10 @@ public class MavenPlugin
             final Path projectPOMPath = this.project.path().resolve("pom.xml");
 
             // attempt to locate the Artifact.Constraint for this module based on the module name and version
-            final Optional<Artifact.Constraint> catalogConstraint = this.catalog.constraints(this.descriptor.name())
-                .filter(c -> c.contains(artifactVersion))
-                .findFirst();
+            final Optional<Artifact.Constraint> catalogConstraint =
+                this.catalog.constraints(this.descriptor.moduleName().toString())
+                    .filter(c -> c.contains(artifactVersion))
+                    .findFirst();
 
             // when no catalog entry exists but a pom.xml is present, return it as-is —
             // no template substitution or dependency rewriting is possible without coordinates
@@ -472,7 +481,7 @@ public class MavenPlugin
             }
 
             final Artifact.Constraint constraint = catalogConstraint
-                .orElseThrow(() -> new IllegalArgumentException("The module [" + this.descriptor.name()
+                .orElseThrow(() -> new IllegalArgumentException("The module [" + this.descriptor.moduleName().toString()
                     + "] does not define an Artifact.Constraint in the Module Catalog"));
 
             // load the template to use. Use Class.getResourceAsStream (not ClassLoader's) so
@@ -533,21 +542,21 @@ public class MavenPlugin
             // generate the <dependencies> for the project based on the Module Descriptor
             final Node dependenciesNode = document.createElement("dependencies");
 
-            this.descriptor.requires()
+            this.descriptor.requiresClauses()
                 .filter(requires -> !JavaPlatform.isJavaPlatformModule(
-                    requires.name()))  //filter out Java Platform dependencies
+                    requires.requiresModuleName().toString()))  //filter out Java Platform dependencies
                 .map(require -> {
                     // determine the Version for the dependency
-                    final Version version = require.version()
+                    final Version version = JDKModuleDescriptor.requiresVersion(require)
                         .orElseGet(() ->
-                            this.versioning.getVersion(require.name())
+                            this.versioning.getVersion(require.requiresModuleName().toString())
                                 .orElseThrow(() -> new RuntimeException(
-                                    "Failed to determine the Artifact Version for [" + require.name() + "]"))
+                                    "Failed to determine the Artifact Version for [" + require.requiresModuleName().toString() + "]"))
                         );
 
                     // establish the required dependency
                     final ModuleReference reference =
-                        ModuleReference.of(require.name(), version);
+                        ModuleReference.of(require.requiresModuleName().toString(), version);
 
                     final Artifact artifact = this.catalog.getArtifact(reference)
                         .orElseThrow(() -> new RuntimeException(
@@ -578,7 +587,7 @@ public class MavenPlugin
                         dependencyNode.appendChild(classifierNode);
                     });
 
-                    if (require.isStatic()) {
+                    if (require.traits(RequiresModifier.class).anyMatch(m -> m == RequiresModifier.STATIC)) {
                         final Node optionalNode = document.createElement("optional");
                         optionalNode.setTextContent("true");
                         dependenciesNode.appendChild(optionalNode);

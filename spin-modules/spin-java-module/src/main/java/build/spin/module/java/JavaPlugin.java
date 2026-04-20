@@ -22,11 +22,11 @@ package build.spin.module.java;
 
 import build.base.option.JDKVersion;
 import build.codemodel.injection.Provides;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.jdk.JDK;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
-import build.spin.module.modulesystem.ModuleDescriptor;
 
 /**
  * A {@link Plugin} defining {@link Task}s for a Java-based {@link Project}s.
@@ -55,7 +55,7 @@ public interface JavaPlugin
     JDK getJDK();
 
     /**
-     * Obtains the {@link ModuleDescriptor} for the {@link Project}, as defined by the {@code module-info.java} file.
+     * Obtains the {@link JDKModuleDescriptor} for the {@link Project}, as defined by the {@code module-info.java} file.
      * <p>
      * Should the {@link Project} not define a {@code module-info.java} file, say because the source is for a
      * non-modular version of Java (pre Java 9), an attempt will be made to create a synthetic one based on the
@@ -64,8 +64,8 @@ public interface JavaPlugin
      * For example, one may be produce using information contained in a Apache Maven POM, Apache Ivy configuration or
      * Gradle Build File.
      *
-     * @return the {@link ModuleDescriptor}
+     * @return the {@link JDKModuleDescriptor}
      */
     @Provides
-    ModuleDescriptor getModuleDescriptor();
+    JDKModuleDescriptor getModuleDescriptor();
 }

@@ -21,6 +21,12 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
+import build.codemodel.foundation.naming.ModuleName;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.codemodel.jdk.descriptor.ModuleModifier;
+import build.codemodel.jdk.descriptor.OpenModule;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Workspace;
@@ -53,32 +59,38 @@ public class PomBasedTestModuleDescriptor
     @Inject
     private TelemetryRecorder recorder;
 
+    @Inject
+    private CodeModel codeModel;
+
     @Override
-    public ModuleDescriptor get(final Project project) {
-        final ModuleDescriptor.Builder builder =
-            ModuleDescriptor.Builder.create(project.name().replace("-", "."))
-                .noLocation()
-                .setOpen(true)
-                .setAutomatic(true);
+    public JDKModuleDescriptor get(final Project project) {
+        final String name = project.name().replace("-", ".");
+        final ModuleName moduleName = this.codeModel.getNameProvider().getModuleName(name).orElseThrow();
+        // Use of() rather than createModuleDescriptor() — this is a transient descriptor used only
+        // to carry pom-derived requires into the caller's merge; it must not occupy the shared
+        // CodeModel registry slot that parse() needs for the real module descriptor.
+        final JDKModuleDescriptor descriptor = JDKModuleDescriptor.of(this.codeModel, moduleName);
+        descriptor.addTrait(OpenModule.OPEN);
+        descriptor.addTrait(ModuleModifier.AUTOMATIC);
 
         try {
             final DocumentBuilder xmlBuilder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
 
             final Path projectPom = project.path().resolve(POM_FILENAME);
             if (Files.exists(projectPom)) {
-                registerTestRequires(xmlBuilder, projectPom, builder);
+                registerTestRequires(xmlBuilder, projectPom, descriptor);
             }
 
         } catch (final Exception e) {
             this.recorder.warn(e, "PomBasedTestModuleDescriptor failed for [%s]", project.name());
         }
 
-        return builder.build();
+        return descriptor;
     }
 
     private void registerTestRequires(final DocumentBuilder builder,
                                       final Path pomPath,
-                                      final ModuleDescriptor.Builder descriptorBuilder) {
+                                      final JDKModuleDescriptor descriptor) {
         try {
             final Document doc = builder.parse(pomPath.toFile());
             final NodeList deps = doc.getElementsByTagName("dependency");
@@ -102,14 +114,21 @@ public class PomBasedTestModuleDescriptor
                 }
 
                 // register under the same three key conventions used by PomBasedModuleCatalog
-                descriptorBuilder.requires(groupId, null, null);
+                final ModuleName groupIdName =
+                    this.codeModel.getNameProvider().getModuleName(groupId).orElseThrow();
+                descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, groupIdName));
 
                 final String derivedName = PomXmlUtils.derivedModuleName(artifactId);
-                descriptorBuilder.requires(derivedName, null, null);
+                final ModuleName derivedModuleName =
+                    this.codeModel.getNameProvider().getModuleName(derivedName).orElseThrow();
+                descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, derivedModuleName));
 
                 final String lastSegment = PomXmlUtils.lastHyphenSegment(artifactId);
                 if (!lastSegment.isEmpty()) {
-                    descriptorBuilder.requires(groupId + "." + lastSegment, null, null);
+                    final String combinedName = groupId + "." + lastSegment;
+                    final ModuleName combinedModuleName =
+                        this.codeModel.getNameProvider().getModuleName(combinedName).orElseThrow();
+                    descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, combinedModuleName));
                 }
             }
         } catch (final Exception e) {

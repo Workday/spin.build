@@ -29,6 +29,8 @@ import build.base.telemetry.Activity;
 import build.base.telemetry.Meter;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Name;
@@ -47,7 +49,6 @@ import build.spin.annotation.System;
 import build.spin.common.reactive.ConditionalConsumingObserver;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.BuildDirectoryName;
@@ -95,7 +96,7 @@ public abstract class AbstractCompile
     private JDK javaDevelopmentKit;
 
     @Inject
-    private ModuleDescriptor moduleDescriptor;
+    private JDKModuleDescriptor moduleDescriptor;
 
     @Inject
     private ModuleVersioning versioning;
@@ -122,14 +123,15 @@ public abstract class AbstractCompile
     private static final String ANNOTATION_PROCESSOR_SERVICE = "javax.annotation.processing.Processor";
 
     private Stream<Project> annotationProcessorProjects() {
-        if (this.moduleDescriptor.annotations().findAny().isEmpty()) {
+        if (this.moduleDescriptor.annotationClauses().findAny().isEmpty()) {
             return Stream.empty();
         }
         return this.project.workspace().stream()
             .filter(prj -> prj.plugins(JavaCompilerPlugin.class)
                 .findFirst()
                 .map(JavaCompilerPlugin::getModuleDescriptor)
-                .map(d -> d.provides().anyMatch(p -> ANNOTATION_PROCESSOR_SERVICE.equals(p.service())))
+                .map(d -> d.providesClauses().anyMatch(
+                    p -> ANNOTATION_PROCESSOR_SERVICE.equals(p.serviceType().toString())))
                 .orElse(false));
     }
 
@@ -144,8 +146,8 @@ public abstract class AbstractCompile
                                       final List<Path> paths,
                                       final Set<String> visited) {
         prj.plugins(JavaCompilerPlugin.class).findFirst().ifPresent(plugin -> {
-            final ModuleDescriptor desc = plugin.getModuleDescriptor();
-            if (!visited.add(desc.name())) {
+            final JDKModuleDescriptor desc = plugin.getModuleDescriptor();
+            if (!visited.add(desc.moduleName().toString())) {
                 return;
             }
             paths.add(outputPath(prj));
@@ -153,16 +155,16 @@ public abstract class AbstractCompile
         });
     }
 
-    private void collectTransitiveRequires(final ModuleDescriptor descriptor,
+    private void collectTransitiveRequires(final JDKModuleDescriptor descriptor,
                                            final List<Path> paths,
                                            final Set<String> visited) {
-        final LinkedList<ModuleDescriptor.Requires> frontier = descriptor.requires()
-            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.name()))
+        final LinkedList<RequiresModuleDescriptor> frontier = descriptor.requiresClauses()
+            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
             .collect(Collectors.toCollection(LinkedList::new));
 
         while (!frontier.isEmpty()) {
-            final ModuleDescriptor.Requires req = frontier.remove();
-            final String name = req.name();
+            final RequiresModuleDescriptor req = frontier.remove();
+            final String name = req.requiresModuleName().toString();
             if (!visited.add(name)) {
                 continue;
             }
@@ -171,12 +173,12 @@ public abstract class AbstractCompile
             if (sibling.isPresent()) {
                 paths.add(outputPath(sibling.get()));
                 sibling.get().plugins(JavaCompilerPlugin.class).findFirst()
-                    .ifPresent(p -> p.getModuleDescriptor().requires()
-                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.name()))
-                        .filter(r -> !visited.contains(r.name()))
+                    .ifPresent(p -> p.getModuleDescriptor().requiresClauses()
+                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                        .filter(r -> !visited.contains(r.requiresModuleName().toString()))
                         .forEach(frontier::add));
             } else {
-                this.versioning.getVersion(name).or(req::version)
+                this.versioning.getVersion(name).or(() -> JDKModuleDescriptor.requiresVersion(req))
                     .flatMap(v -> this.catalog.getArtifact(ModuleReference.of(name, v)))
                     .ifPresent(artifact -> this.resolver.resolveTransitive(artifact)
                         .ifPresent(paths::addAll));
@@ -188,7 +190,7 @@ public abstract class AbstractCompile
         return this.project.workspace().stream()
             .filter(p -> p.plugins(JavaCompilerPlugin.class).findFirst()
                 .map(JavaCompilerPlugin::getModuleDescriptor)
-                .map(d -> moduleName.equals(d.name()))
+                .map(d -> moduleName.equals(d.moduleName().toString()))
                 .orElse(false))
             .findFirst();
     }
@@ -205,8 +207,8 @@ public abstract class AbstractCompile
         // locate projects with in the Workspace that this project requires
         // (and add if they are Java project, add a prerequisite on the appropriate
         //  JavaCompilerPlugin.Compiler task for the project)
-        final Stream<Reference> requiresDeps = this.moduleDescriptor.requires()
-            .map(ModuleDescriptor.Requires::name)
+        final Stream<Reference> requiresDeps = this.moduleDescriptor.requiresClauses()
+            .map(r -> r.requiresModuleName().toString())
             .flatMap(name -> workspace.stream()
                 .map(prj -> {
                     // capture the JavaCompilerPlugin in the Project with the same or lower JDKVersion used by
@@ -228,7 +230,7 @@ public abstract class AbstractCompile
                     // NOTE: using "endsWith" here is super important.
                     // It allows project names to match module names for automatic modules.
                     return capture
-                        .filter(plugin -> name.endsWith(plugin.getModuleDescriptor().name())
+                        .filter(plugin -> name.endsWith(plugin.getModuleDescriptor().moduleName().toString())
                             || prj.name().equals(name))
                         .map(plugin ->
                             // locate the JavaCompilerPlugin.Compiler task for the CompilerPlugin
@@ -264,10 +266,9 @@ public abstract class AbstractCompile
      *
      * @param sourceCode the source code
      * @param modulePath the {@link ModulePath} (empty for non-modular projects)
-     * @param classPath the {@link ClassPath}
-     * @param buildPath the build {@link Path} (.build)
+     * @param classPath  the {@link ClassPath}
+     * @param buildPath  the build {@link Path} (.build)
      * @param targetPath the path in which to place the compiled classes
-     *
      * @return the {@link PathSet} containing the compiled classes
      * @throws Exception should compilation fail
      */
@@ -284,8 +285,8 @@ public abstract class AbstractCompile
 
         // determine the version of the Module being compiled (or use the system provided version)
         final Version version = this.versioning
-            .getVersion(this.moduleDescriptor)
-            .orElse(ModuleDescriptor.DEFAULT_VERSION);
+            .getVersion(this.moduleDescriptor.moduleName().toString())
+            .orElse(ModuleVersioning.DEFAULT_VERSION);
 
         final Activity compilation = this.recorder
             .commence("Compiling %d file(s) for [%s] as [%s] ", sourceCode.size(), this.project.path(), version);
@@ -297,8 +298,7 @@ public abstract class AbstractCompile
             // when the system provided JDKVersion and the JDKVersion for the Plugin are the same,
             // we use the specified targetPath as the target
             target = targetPath;
-        }
-        else {
+        } else {
             // otherwise place the compiled classes in a target folder for the major version of java
             target = targetPath.resolve("../" + targetPath.getFileName() + "-" + this.javaVersion.major() + "/");
         }
@@ -306,8 +306,7 @@ public abstract class AbstractCompile
         // create the target path for the compiled classes
         try {
             Files.createDirectories(target);
-        }
-        catch (final IOException e) {
+        } catch (final IOException e) {
             throw new RuntimeException("Failed to create compilation target [" + target + "]", e);
         }
 
@@ -319,8 +318,7 @@ public abstract class AbstractCompile
             builder.addAll(classPath.stream());
             builder.add(targetPath);
             compilationClassPath = ClassPath.of(builder.build().stream());
-        }
-        else {
+        } else {
             compilationClassPath = classPath;
         }
 
@@ -413,8 +411,7 @@ public abstract class AbstractCompile
                 if (checkingCount.getAndIncrement() == 0) {
                     parsing.ifPresent(Activity::complete);
                     compiling.set(this.recorder.commence(parseCount.get(), "Compiling"));
-                }
-                else {
+                } else {
                     compiling.ifPresent(meter ->
                         meter.progress("Compiling [%s]",
                             string.substring(parsingPrefix.length(), string.length() - 1)));
@@ -428,8 +425,7 @@ public abstract class AbstractCompile
                 // capture the error
                 if (error.isPresent()) {
                     error.set(error.get() + "\n" + string);
-                }
-                else {
+                } else {
                     error.set(string);
                 }
             })
@@ -460,8 +456,7 @@ public abstract class AbstractCompile
                 .ifPresent(value -> {
                     if (value == 0) {
                         compilation.complete();
-                    }
-                    else {
+                    } else {
                         final RuntimeException runtimeException =
                             new RuntimeException("Compilation Failed (exit code :" + value + ")");
 
@@ -481,16 +476,14 @@ public abstract class AbstractCompile
 
         if (isDefaultJavaVersion) {
             path = target;
-        }
-        else {
+        } else {
             // when this java version is not the system version, move the compiled classes into the appropriate
             // versions folder
             final Path versions = targetPath.resolve("META-INF/versions/");
 
             try {
                 Files.createDirectories(versions);
-            }
-            catch (final IOException e) {
+            } catch (final IOException e) {
                 throw new RuntimeException("Failed to create [" + versions + "]", e);
             }
 

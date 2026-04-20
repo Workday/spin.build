@@ -22,11 +22,15 @@ package build.spin.module.java;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.naming.ModuleName;
 import build.codemodel.injection.Provides;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.codemodel.jdk.descriptor.ModuleModifier;
+import build.codemodel.jdk.descriptor.OpenModule;
 import build.spawn.jdk.JDK;
 import build.spin.Plugin;
 import build.spin.Project;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleVersioning;
 import jakarta.inject.Inject;
 
@@ -61,10 +65,13 @@ public abstract class AbstractJavaPlugin
     @Inject
     protected JavaPlatform platform;
 
+    @Inject
+    private CodeModel codeModel;
+
     /**
-     * The cached {@link ModuleDescriptor} determined for the {@link Project}.
+     * The cached {@link JDKModuleDescriptor} determined for the {@link Project}.
      */
-    private final AtomicReference<ModuleDescriptor> moduleDescriptor;
+    private final AtomicReference<JDKModuleDescriptor> moduleDescriptor;
 
     /**
      * Constructs a {@link AbstractJavaPlugin}.
@@ -95,101 +102,89 @@ public abstract class AbstractJavaPlugin
 
     @Override
     @Provides
-    public ModuleDescriptor getModuleDescriptor() {
+    public JDKModuleDescriptor getModuleDescriptor() {
 
         // determine the ModuleDescriptor only once
         return this.moduleDescriptor.updateAndGet(descriptor -> {
             if (descriptor == null) {
-                // attempt to locate the module-info.java for the project
-
                 // create a list of places to look for module-info.java (based on priority)
                 final List<Path> moduleInfoPaths = new ArrayList<>();
 
-                // include the unversioned Module Info (from the root of the project source)
                 final Path unversionedModuleInfoPath = getSourceRootPath()
                     .resolve("java/")
-                    .resolve(ModuleDescriptor.SOURCE_FILENAME);
+                    .resolve(JDKModuleDescriptor.SOURCE_FILENAME);
 
                 if (Files.exists(unversionedModuleInfoPath)) {
                     moduleInfoPaths.add(unversionedModuleInfoPath);
                 }
 
-                // include the versioned Module Info (from the root of the project source)
                 final Path versionedModuleInfoPath = getSourceRootPath()
                     .resolve("java" + getJavaVersion().major() + "/")
-                    .resolve(ModuleDescriptor.SOURCE_FILENAME);
+                    .resolve(JDKModuleDescriptor.SOURCE_FILENAME);
 
                 if (Files.exists(versionedModuleInfoPath)) {
                     moduleInfoPaths.add(versionedModuleInfoPath);
                 }
 
-                // include the versioned module-info.java to the list (in reverse version order)
                 final Path versions = getSourceRootPath()
                     .resolve("resources/META-INF/versions/");
                 if (Files.exists(versions)) {
                     try {
                         Files.list(versions)
-                            .filter(path -> Files.exists(path.resolve(ModuleDescriptor.SOURCE_FILENAME)))
+                            .filter(path -> Files.exists(path.resolve(JDKModuleDescriptor.SOURCE_FILENAME)))
                             .map(path -> {
                                 try {
                                     return Integer.parseInt(path.getFileName().toString());
                                 } catch (final NumberFormatException e) {
-                                    // ignore directories that aren't numbers
                                     return null;
                                 }
                             })
                             .filter(Objects::nonNull)
                             .sorted(Comparator.reverseOrder())
                             .map(version -> versions.resolve(version.toString())
-                                .resolve(ModuleDescriptor.SOURCE_FILENAME))
+                                .resolve(JDKModuleDescriptor.SOURCE_FILENAME))
                             .forEach(moduleInfoPaths::add);
                     } catch (final IOException e) {
-                        // we ignore exceptions when we can't read the versions
+                        // ignored
                     }
                 }
 
-                // normalize the project name, so it's a valid module name (just in case we need it)
                 final String normalizedProjectName = this.project.name().replace("-", ".");
 
-                // create a ModuleDescriptor using the Module Info
-                final ModuleDescriptor.Builder builder = moduleInfoPaths.stream()
+                return moduleInfoPaths.stream()
                     .findFirst()
                     .map(path -> {
                         try (BufferedReader reader = Files.newBufferedReader(path)) {
-                            // the ModuleDescriptor contains the prerequisites
-                            return ModuleDescriptor.parse(reader);
+                            return JDKModuleDescriptor.parse(this.codeModel, reader);
                         } catch (final IOException e) {
-                            this.recorder
-                                .warn(e,
-                                    "Failed to read [%s] for [%s]. Defaulting to an empty ModuleDescriptor.",
-                                    this.project, this.project.name(), e);
-
-                            return ModuleDescriptor.Builder.create(normalizedProjectName)
-                                .noLocation()
-                                .setOpen(true)
-                                .setAutomatic(true);
+                            this.recorder.warn(e,
+                                "Failed to read [%s] for [%s]. Defaulting to an empty ModuleDescriptor.",
+                                path, this.project.name());
+                            return automaticDescriptor(normalizedProjectName);
                         }
                     })
                     .orElseGet(() -> {
                         this.recorder.warn(
                             "[%s] does not define a ModuleDescriptor. Defaulting to an empty ModuleDescriptor.",
                             this.project.name());
-
-                        return ModuleDescriptor.Builder.create(normalizedProjectName)
-                            .noLocation()
-                            .setOpen(true)
-                            .setAutomatic(true);
+                        return automaticDescriptor(normalizedProjectName);
                     });
-
-                // attempt to determine the Version of the module
-                this.versioning.getVersion(builder.getName())
-                    .ifPresent(builder::setVersion);
-
-                return builder.build();
             }
 
             return descriptor;
         });
+    }
+
+    private JDKModuleDescriptor automaticDescriptor(final String name) {
+        final ModuleName moduleName = this.codeModel.getNameProvider().getModuleName(name).orElseThrow();
+        // Use of() directly rather than createModuleDescriptor() to avoid registering this fallback
+        // in the shared CodeModel cache — if a real module-info.java is later parsed for the same
+        // module name (e.g. by a sibling plugin), parse() must be able to create the registry entry
+        // uncontested.
+        final JDKModuleDescriptor descriptor = JDKModuleDescriptor.of(this.codeModel, moduleName);
+        descriptor.addTrait(OpenModule.OPEN);
+        descriptor.addTrait(ModuleModifier.AUTOMATIC);
+        return descriptor;
     }
 
     /**
@@ -199,8 +194,8 @@ public abstract class AbstractJavaPlugin
      */
     @Provides
     public Version getVersion() {
-        return this.versioning.getVersion(getModuleDescriptor())
-            .orElse(ModuleDescriptor.DEFAULT_VERSION);
+        return this.versioning.getVersion(getModuleDescriptor().moduleName().toString())
+            .orElse(ModuleVersioning.DEFAULT_VERSION);
     }
 }
 

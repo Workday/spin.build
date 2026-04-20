@@ -21,12 +21,13 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.version.Version;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 
 import java.util.Objects;
 import java.util.Optional;
 
 /**
- * A reference to a named and {@link Optional}ly {@link Version}ed {@link ModuleDescriptor}.
+ * A reference to a named and {@link Optional}ly {@link Version}ed {@link JDKModuleDescriptor}.
  *
  * @author brian.oliver
  * @since Mar-2021
@@ -34,35 +35,35 @@ import java.util.Optional;
 public interface ModuleReference {
 
     /**
-     * Obtains the name of the {@link ModuleDescriptor} being referenced.
+     * Obtains the name of the {@link JDKModuleDescriptor} being referenced.
      *
-     * @return the name of the {@link ModuleDescriptor}
+     * @return the name of the {@link JDKModuleDescriptor}
      */
     String name();
 
     /**
-     * Obtains the {@link Optional} {@link Version} of the {@link ModuleDescriptor} being referenced.
+     * Obtains the {@link Optional} {@link Version} of the {@link JDKModuleDescriptor} being referenced.
      *
      * @return the {@link Optional} {@link Version}
      */
     Optional<Version> version();
 
     /**
-     * Creates a {@link ModuleReference} for the specified {@link ModuleDescriptor}.
+     * Creates a {@link ModuleReference} for the specified {@link JDKModuleDescriptor}.
      *
-     * @param descriptor the {@link ModuleDescriptor}
+     * @param descriptor the {@link JDKModuleDescriptor}
      * @return a new {@link ModuleReference}
      */
-    static ModuleReference of(final ModuleDescriptor descriptor) {
-        Objects.requireNonNull(descriptor, "The ModuleDescriptor must not be null");
+    static ModuleReference of(final JDKModuleDescriptor descriptor) {
+        Objects.requireNonNull(descriptor, "The JDKModuleDescriptor must not be null");
 
-        return of(descriptor.name(), descriptor.version());
+        return of(descriptor.moduleName().toString(), descriptor.version());
     }
 
     /**
-     * Creates a {@link ModuleReference} to the specified named {@link ModuleDescriptor}.
+     * Creates a {@link ModuleReference} to the specified named {@link JDKModuleDescriptor}.
      *
-     * @param name the name of the {@link ModuleDescriptor}
+     * @param name the name of the {@link JDKModuleDescriptor}
      * @return a new {@link ModuleReference}
      */
     static ModuleReference of(final String name) {
@@ -70,10 +71,10 @@ public interface ModuleReference {
     }
 
     /**
-     * Creates a {@link ModuleReference} to the specifically named {@link ModuleDescriptor} and
+     * Creates a {@link ModuleReference} to the specifically named {@link JDKModuleDescriptor} and
      * {@link Version}.
      *
-     * @param name the name of the {@link ModuleDescriptor}
+     * @param name the name of the {@link JDKModuleDescriptor}
      * @param version the {@link Version}
      * @return a new {@link ModuleReference}
      */
@@ -82,7 +83,7 @@ public interface ModuleReference {
     }
 
     /**
-     * Creates a {@link ModuleReference} to the specifically named {@link ModuleDescriptor} and {@link Optional}
+     * Creates a {@link ModuleReference} to the specifically named {@link JDKModuleDescriptor} and {@link Optional}
      * {@link Version}.
      *
      * @param name the name of the module
@@ -117,7 +118,7 @@ public interface ModuleReference {
          */
         private Implementation(final String name,
                                final Optional<Version> version) {
-            this.name = Objects.requireNonNull(name, "The ModuleDescriptor.Reference name must not be null");
+            this.name = Objects.requireNonNull(name, "The ModuleReference name must not be null");
             this.version = version == null ? Optional.empty() : version;
         }
 
