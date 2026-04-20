@@ -217,6 +217,16 @@ public interface ModuleDescriptor {
     Stream<Opens> opens();
 
     /**
+     * Obtains the fully qualified class names of annotations declared on the {@code module} declaration
+     * (i.e. annotations that appear in {@code module-info.java} before the {@code module} keyword).
+     *
+     * @return a {@link Stream} of fully qualified annotation class names (without the leading {@code @})
+     */
+    default Stream<String> annotations() {
+        return Stream.empty();
+    }
+
+    /**
      * Performs a depth-first-traversal of the {@link ModuleDescriptor}, including any dependencies defined by
      * {@link Requires}s.
      *
@@ -700,6 +710,16 @@ public interface ModuleDescriptor {
             scanner.consume(SEMICOLON);
         }
 
+        // capture annotations that legally precede the module declaration (e.g. @SomeAnnotation or @Some.Annotation(...))
+        final ArrayList<String> moduleAnnotations = new ArrayList<>();
+        while (scanner.follows(Pattern.compile("@[\\w.]+"))) {
+            final String token = scanner.consume(Pattern.compile("@[\\w.]+"));
+            moduleAnnotations.add(token.substring(1)); // strip leading @
+            if (scanner.follows(Pattern.compile("\\("))) {
+                scanner.consume(Pattern.compile("\\([^)]*\\)"));
+            }
+        }
+
         final Optional<String> open = scanner.optionallyConsume(OPEN);
 
         scanner.consume(MODULE);
@@ -712,6 +732,7 @@ public interface ModuleDescriptor {
             .noLocation();
 
         builder.setOpen(open.isPresent());
+        moduleAnnotations.forEach(builder::annotation);
 
         scanner.consume(OPEN_BRACE);
 
@@ -1045,6 +1066,11 @@ public interface ModuleDescriptor {
         private final LinkedList<Opens> opens;
 
         /**
+         * The fully qualified class names of annotations declared on the module declaration.
+         */
+        private final LinkedList<String> annotations;
+
+        /**
          * Constructs a {@link ModuleDescriptor} {@link Builder}.
          *
          * @param name the name of the module
@@ -1059,6 +1085,7 @@ public interface ModuleDescriptor {
             this.uses = new LinkedHashSet<>();
             this.exports = new LinkedList<>();
             this.opens = new LinkedList<>();
+            this.annotations = new LinkedList<>();
         }
 
         /**
@@ -1515,6 +1542,17 @@ public interface ModuleDescriptor {
         }
 
         /**
+         * Records a fully qualified annotation class name declared on the {@code module} declaration.
+         *
+         * @param annotationClassName the fully qualified annotation class name (without the leading {@code @})
+         * @return this {@link Builder} to allow fluent-style method calls
+         */
+        public Builder annotation(final String annotationClassName) {
+            this.annotations.add(Objects.requireNonNull(annotationClassName, "annotationClassName must not be null"));
+            return this;
+        }
+
+        /**
          * Builds a new {@link ModuleDescriptor} given the current state of the {@link Builder}.
          *
          * @return a new {@link ModuleDescriptor}
@@ -1528,7 +1566,8 @@ public interface ModuleDescriptor {
                 this.provides.stream(),
                 this.uses.stream(),
                 this.exports.stream(),
-                this.opens.stream());
+                this.opens.stream(),
+                this.annotations.stream());
         }
     }
 
@@ -1588,6 +1627,7 @@ public interface ModuleDescriptor {
         private final ArrayList<String> uses;
         private final ArrayList<Exports> exports;
         private final ArrayList<Opens> opens;
+        private final ArrayList<String> annotations;
 
         /**
          * Constructs a {@link ModuleDescriptor} {@link Implementation}.
@@ -1600,7 +1640,8 @@ public interface ModuleDescriptor {
                                final Stream<Provides> provides,
                                final Stream<String> uses,
                                final Stream<Exports> exports,
-                               final Stream<Opens> opens) {
+                               final Stream<Opens> opens,
+                               final Stream<String> annotations) {
 
             this.reference = ModuleReference.of(name, version);
             this.location = location == null ? Optional.empty() : location;
@@ -1610,6 +1651,7 @@ public interface ModuleDescriptor {
             this.uses = uses.collect(Collectors.toCollection(ArrayList::new));
             this.exports = exports.collect(Collectors.toCollection(ArrayList::new));
             this.opens = opens.collect(Collectors.toCollection(ArrayList::new));
+            this.annotations = annotations.collect(Collectors.toCollection(ArrayList::new));
         }
 
         @Override
@@ -1665,6 +1707,11 @@ public interface ModuleDescriptor {
         @Override
         public Stream<Opens> opens() {
             return this.opens.stream();
+        }
+
+        @Override
+        public Stream<String> annotations() {
+            return this.annotations.stream();
         }
 
         @Override

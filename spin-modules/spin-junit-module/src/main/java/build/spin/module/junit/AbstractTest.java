@@ -165,7 +165,11 @@ public abstract class AbstractTest
             // Emit --add-opens for every compiled test package so JUnit's reflection can
             // instantiate and invoke test classes without InaccessibleObjectException.
             args.add(modulePath);
-            args.add(effectiveClassPath);
+            // classpath entry makes ClassLoader.getResourceAsStream() find test resources;
+            // --patch-module alone only serves Module.getResourceAsStream() in named-module context.
+            final ClassPath classPathWithTestDir = ClassPath.of(
+                Stream.of(testClassesDir), effectiveClassPath.stream());
+            args.add(classPathWithTestDir);
             args.add(PatchModule.of(rootModule, testClassesDir.toString()));
             args.add(AddModules.of(rootModule, "ALL-MODULE-PATH"));
             args.add(JDKOption.of("--add-reads"));

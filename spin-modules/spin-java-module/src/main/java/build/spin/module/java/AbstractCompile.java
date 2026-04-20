@@ -45,8 +45,13 @@ import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.annotation.System;
 import build.spin.common.reactive.ConditionalConsumingObserver;
+import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleDescriptor;
+import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.option.BuildDirectoryName;
+import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
 import java.io.File;
@@ -55,7 +60,13 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -90,11 +101,102 @@ public abstract class AbstractCompile
     private ModuleVersioning versioning;
 
     @Inject
+    private ModuleCatalog catalog;
+
+    @Inject
+    private Artifact.Resolver resolver;
+
+    @Inject
     @System
     private JDKVersion systemJavaVersion;
 
     @Inject
     private JDKVersion javaVersion;
+
+    @Inject
+    private BuildDirectoryName buildDirectoryName;
+
+    @Inject
+    private TargetDirectoryName targetDirectoryName;
+
+    private static final String ANNOTATION_PROCESSOR_SERVICE = "javax.annotation.processing.Processor";
+
+    private Stream<Project> annotationProcessorProjects() {
+        if (this.moduleDescriptor.annotations().findAny().isEmpty()) {
+            return Stream.empty();
+        }
+        return this.project.workspace().stream()
+            .filter(prj -> prj.plugins(JavaCompilerPlugin.class)
+                .findFirst()
+                .map(JavaCompilerPlugin::getModuleDescriptor)
+                .map(d -> d.provides().anyMatch(p -> ANNOTATION_PROCESSOR_SERVICE.equals(p.service())))
+                .orElse(false));
+    }
+
+    private String buildProcessorModulePath() {
+        final List<Path> paths = new ArrayList<>();
+        final Set<String> visited = new HashSet<>();
+        annotationProcessorProjects().forEach(prj -> collectProcessorDeps(prj, paths, visited));
+        return paths.stream().map(Path::toString).collect(Collectors.joining(File.pathSeparator));
+    }
+
+    private void collectProcessorDeps(final Project prj,
+                                      final List<Path> paths,
+                                      final Set<String> visited) {
+        prj.plugins(JavaCompilerPlugin.class).findFirst().ifPresent(plugin -> {
+            final ModuleDescriptor desc = plugin.getModuleDescriptor();
+            if (!visited.add(desc.name())) {
+                return;
+            }
+            paths.add(outputPath(prj));
+            collectTransitiveRequires(desc, paths, visited);
+        });
+    }
+
+    private void collectTransitiveRequires(final ModuleDescriptor descriptor,
+                                           final List<Path> paths,
+                                           final Set<String> visited) {
+        final LinkedList<ModuleDescriptor.Requires> frontier = descriptor.requires()
+            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.name()))
+            .collect(Collectors.toCollection(LinkedList::new));
+
+        while (!frontier.isEmpty()) {
+            final ModuleDescriptor.Requires req = frontier.remove();
+            final String name = req.name();
+            if (!visited.add(name)) {
+                continue;
+            }
+
+            final Optional<Project> sibling = findSiblingByModuleName(name);
+            if (sibling.isPresent()) {
+                paths.add(outputPath(sibling.get()));
+                sibling.get().plugins(JavaCompilerPlugin.class).findFirst()
+                    .ifPresent(p -> p.getModuleDescriptor().requires()
+                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.name()))
+                        .filter(r -> !visited.contains(r.name()))
+                        .forEach(frontier::add));
+            } else {
+                this.versioning.getVersion(name).or(req::version)
+                    .flatMap(v -> this.catalog.getArtifact(ModuleReference.of(name, v)))
+                    .ifPresent(artifact -> this.resolver.resolveTransitive(artifact)
+                        .ifPresent(paths::addAll));
+            }
+        }
+    }
+
+    private Optional<Project> findSiblingByModuleName(final String moduleName) {
+        return this.project.workspace().stream()
+            .filter(p -> p.plugins(JavaCompilerPlugin.class).findFirst()
+                .map(JavaCompilerPlugin::getModuleDescriptor)
+                .map(d -> moduleName.equals(d.name()))
+                .orElse(false))
+            .findFirst();
+    }
+
+    private Path outputPath(final Project prj) {
+        return prj.path().resolve(
+            this.buildDirectoryName.get() + "/main/" + this.targetDirectoryName.get());
+    }
 
     @Override
     public Stream<Reference> dependencies() {
@@ -103,7 +205,7 @@ public abstract class AbstractCompile
         // locate projects with in the Workspace that this project requires
         // (and add if they are Java project, add a prerequisite on the appropriate
         //  JavaCompilerPlugin.Compiler task for the project)
-        return this.moduleDescriptor.requires()
+        final Stream<Reference> requiresDeps = this.moduleDescriptor.requires()
             .map(ModuleDescriptor.Requires::name)
             .flatMap(name -> workspace.stream()
                 .map(prj -> {
@@ -140,6 +242,21 @@ public abstract class AbstractCompile
                         .orElse(null);
                 })
                 .filter(Objects::nonNull));
+
+        // also depend on any workspace annotation processor modules so they are compiled before us
+        final Stream<Reference> processorDeps = annotationProcessorProjects()
+            .flatMap(prj -> prj.plugins(JavaCompilerPlugin.class)
+                .findFirst()
+                .map(plugin -> prj.invocables()
+                    .filter(definition -> definition.getPlugin() == plugin
+                        && JavaCompilerPlugin.Compile.class.isAssignableFrom(definition.getTaskClass()))
+                    .findFirst()
+                    .map(Invocable::getTaskClass)
+                    .map(taskClass -> Reference.of(prj, taskClass))
+                    .stream())
+                .orElse(Stream.empty()));
+
+        return Stream.concat(requiresDeps, processorDeps);
     }
 
     /**
@@ -255,6 +372,14 @@ public abstract class AbstractCompile
                 }
             }
 
+            // add annotation processor modules (+ their full transitive dep closure) to
+            // --processor-module-path so javac discovers and runs them without an explicit `requires`
+            final String processorModulePath = buildProcessorModulePath();
+            if (!processorModulePath.isEmpty()) {
+                writer.println("--processor-module-path "
+                    + Strings.doubleQuoteIfContainsWhiteSpace(processorModulePath));
+            }
+
             // lastly include the source code to compile
             sourceCode.stream()
                 .peek(path -> this.recorder.diagnostic("Preparing [%s] for compilation", path))
@@ -325,6 +450,10 @@ public abstract class AbstractCompile
 
             // wait for "javac" to exit
             javac.onExit().get();
+
+            // flush any error lines that were not followed by a subsequent "[" line
+            error.ifPresent(e -> this.recorder.error(e));
+            error.clear();
 
             // output the exit value for the completion
             javac.exitValue()
