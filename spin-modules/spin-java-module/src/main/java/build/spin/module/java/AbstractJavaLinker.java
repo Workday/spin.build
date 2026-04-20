@@ -22,6 +22,7 @@ package build.spin.module.java;
 
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Application;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
@@ -32,7 +33,6 @@ import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.System;
 import build.spin.module.modulesystem.Artifact;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import freemarker.template.Configuration;
@@ -75,7 +75,7 @@ public abstract class AbstractJavaLinker
     private Project project;
 
     @Inject
-    private ModuleDescriptor descriptor;
+    private JDKModuleDescriptor descriptor;
 
     @Inject
     @System
@@ -162,7 +162,7 @@ public abstract class AbstractJavaLinker
                 .flatMap(dep -> dep.artifactDescriptor().path().stream())
                 .toList();
 
-            final var rootModule = this.descriptor.name();
+            final var rootModule = this.descriptor.moduleName().toString();
 
             // Classify against an empty parent configuration. We cannot use
             // ModuleLayer.boot().configuration() as the parent (as build.spin.application.Launcher
@@ -218,7 +218,7 @@ public abstract class AbstractJavaLinker
 
             // include the version number (if present)
             this.descriptor.version()
-                .ifPresent(version -> model.put("version", version.get()));
+                .ifPresent(version -> model.put("version", version.toString()));
 
             // TODO: (one day... include all of the jlink configuration parameters from the configuration file)
 

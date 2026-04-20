@@ -36,7 +36,7 @@ import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.DefaultModuleCatalog;
 import build.spin.module.modulesystem.DefaultModuleVersioning;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
@@ -133,8 +133,8 @@ public class JavaProjectTests {
 
         assertThat(testDescriptor).isInstanceOf(PomBasedTestModuleDescriptor.class);
 
-        final ModuleDescriptor descriptor = testDescriptor.get(workspace);
-        assertThat(descriptor.requires().map(ModuleDescriptor.Requires::name))
+        final JDKModuleDescriptor descriptor = testDescriptor.get(workspace);
+        assertThat(descriptor.requiresClauses().map(r -> r.requiresModuleName().toString()))
             .contains("org.junit.jupiter", "junit.jupiter.api");
     }
 
@@ -253,7 +253,7 @@ public class JavaProjectTests {
         final var pending = new Stack<ModuleReference>();
         final var processed = new LinkedHashSet<ModuleReference>();
 
-        final var artifactModuleDescriptors = new LinkedHashMap<Artifact, ModuleDescriptor>();
+        final var artifactModuleDescriptors = new LinkedHashMap<Artifact, JDKModuleDescriptor>();
         final var artifactPaths = new LinkedHashMap<Artifact, Path>();
         final var classPathBuilder = PathSetBuilder.create();
 
@@ -285,9 +285,10 @@ public class JavaProjectTests {
                     processed.add(reference);
 
                     // push the non-Java Platform required modules onto the stack for processing
-                    moduleDescriptor.requires()
-                        .filter(requires -> !JavaPlatform.isJavaPlatformModule(requires.name()))
-                        .map(ModuleDescriptor.Requires::reference)
+                    moduleDescriptor.requiresClauses()
+                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                        .map(r -> ModuleReference.of(r.requiresModuleName().toString(),
+                            JDKModuleDescriptor.requiresVersion(r)))
                         .filter(module -> !processed.contains(module))
                         .forEach(pending::push);
                 }
@@ -307,7 +308,7 @@ public class JavaProjectTests {
         final var deduplicated = new LinkedHashMap<String, Map.Entry<Artifact, Path>>();
         artifactPaths.entrySet().forEach(entry -> {
             var descriptor = artifactModuleDescriptors.get(entry.getKey());
-            var moduleName = descriptor != null ? descriptor.name() : entry.getKey().artifactId();
+            var moduleName = descriptor != null ? descriptor.moduleName().toString() : entry.getKey().artifactId();
             var existing = deduplicated.get(moduleName);
             if (existing == null) {
                 deduplicated.put(moduleName, entry);
@@ -390,20 +391,20 @@ public class JavaProjectTests {
 
             // build maps of java platform, module and non-module dependencies
             final LinkedHashSet<ModuleReference> javaPlatformModules = new LinkedHashSet<>();
-            final LinkedHashSet<ModuleDescriptor> modules = new LinkedHashSet<>();
-            final LinkedHashSet<ModuleDescriptor> nonModules = new LinkedHashSet<>();
-            final LinkedHashMap<ModuleDescriptor, Artifact> artifacts = new LinkedHashMap<>();
+            final LinkedHashSet<JDKModuleDescriptor> modules = new LinkedHashSet<>();
+            final LinkedHashSet<JDKModuleDescriptor> nonModules = new LinkedHashSet<>();
+            final LinkedHashMap<JDKModuleDescriptor, Artifact> artifacts = new LinkedHashMap<>();
             final LinkedHashSet<String> unknownModules = new LinkedHashSet<>();
 
             // a Consumer of Artifacts together with their ModuleDescriptors
             // (to collect and categorize the ModuleDescriptors)
-            final Consumer<Map.Entry<Artifact, ModuleDescriptor>> consumeArtifact = entry -> {
+            final Consumer<Map.Entry<Artifact, JDKModuleDescriptor>> consumeArtifact = entry -> {
                 final Artifact artifact = entry.getKey();
-                final ModuleDescriptor descriptor = entry.getValue();
+                final JDKModuleDescriptor descriptor = entry.getValue();
 
                 artifacts.put(descriptor, artifact);
 
-                if (descriptor.location().isPresent()) {
+                if (!descriptor.isAutomatic()) {
                     modules.add(descriptor);
                 }
                 else {
@@ -424,7 +425,7 @@ public class JavaProjectTests {
                     }
                     else {
                         artifactModuleDescriptors.entrySet().stream()
-                            .filter(entry -> entry.getValue().name().equals(moduleName))
+                            .filter(entry -> entry.getValue().moduleName().toString().equals(moduleName))
                             .findFirst()
                             .ifPresentOrElse(consumeArtifact, () -> unknownModules.add(moduleName));
                     }
@@ -445,8 +446,8 @@ public class JavaProjectTests {
                 System.out.println("\nModules: ");
                 modules.stream()
                     .forEach(descriptor -> System.out.printf("  %s @ %s (%s) [%s]\n",
-                        descriptor.name(),
-                        descriptor.version().map(Version::get).orElse("(unknown version)"),
+                        descriptor.moduleName().toString(),
+                        descriptor.version().map(Version::toString).orElse("(unknown version)"),
                         descriptor.isAutomatic() ? "automatic module" : "fully-blown module",
                         artifactPaths.get(artifacts.get(descriptor))));
             }
@@ -455,8 +456,8 @@ public class JavaProjectTests {
                 System.out.println("\nNon-Modules: (for classpath)");
                 nonModules.stream()
                     .forEach(descriptor -> System.out.printf("  %s @ %s [%s]\n",
-                        descriptor.name(),
-                        descriptor.version().map(Version::get).orElse("(unknown version)"),
+                        descriptor.moduleName().toString(),
+                        descriptor.version().map(Version::toString).orElse("(unknown version)"),
                         artifactPaths.get(artifacts.get(descriptor))));
             }
 

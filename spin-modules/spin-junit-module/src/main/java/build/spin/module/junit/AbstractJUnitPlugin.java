@@ -21,14 +21,17 @@ package build.spin.module.junit;
  */
 
 import build.base.option.JDKVersion;
+import build.codemodel.foundation.CodeModel;
 import build.codemodel.injection.Provides;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.Project;
 import build.spin.module.java.AbstractJavaPlugin;
 import build.spin.module.java.JavaCompilerPlugin;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.TestModuleDescriptor;
+import jakarta.inject.Inject;
 
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * An abstract {@link JUnitPlugin} for Java-based {@link Project}s.
@@ -39,6 +42,11 @@ import java.nio.file.Path;
 public abstract class AbstractJUnitPlugin
     extends AbstractJavaPlugin
     implements JUnitPlugin {
+
+    @Inject
+    private CodeModel codeModel;
+
+    private final AtomicReference<JDKModuleDescriptor> testModuleDescriptor = new AtomicReference<>();
 
     /**
      * The {@link JDKVersion} for the {@link JUnitPlugin}.
@@ -66,39 +74,27 @@ public abstract class AbstractJUnitPlugin
 
     @Override
     @Provides
-    public ModuleDescriptor getModuleDescriptor() {
+    public JDKModuleDescriptor getModuleDescriptor() {
+        return this.testModuleDescriptor.updateAndGet(descriptor -> {
+            if (descriptor == null) {
+                final JDKModuleDescriptor base = super.getModuleDescriptor();
+                // Use of() rather than createModuleDescriptor() so this test-augmented view does not
+                // overwrite the canonical descriptor already registered by the compiler plugin's parse().
+                final JDKModuleDescriptor merged = JDKModuleDescriptor.of(this.codeModel, base.moduleName());
+                merged.include(base);
 
-        // obtain the ModuleDescriptor
-        final ModuleDescriptor moduleDescriptor = super.getModuleDescriptor();
+                this.project.findResource(TestModuleDescriptor.class)
+                    .ifPresent(res -> merged.include(res.get(this.project)));
 
-        // establish a new ModuleDescriptor to allow patching in the Java Compiler
-        // Plugin ModuleDescriptor
-        final ModuleDescriptor.Builder builder = ModuleDescriptor.Builder.create(moduleDescriptor.name());
-        builder.include(moduleDescriptor);
+                this.project.plugins(JavaCompilerPlugin.class)
+                    .filter(plugin -> plugin.getJavaVersion().major() == getJavaVersion().major())
+                    .findFirst()
+                    .ifPresent(plugin -> merged.include(plugin.getModuleDescriptor()));
 
-        // include test-scoped dependencies provided by a TestModuleDescriptor resource, if present
-        // (e.g. from pom.xml for Maven projects without a src/test/java/module-info.java)
-        this.project.findResource(TestModuleDescriptor.class)
-            .ifPresent(res -> builder.include(res.get(this.project)));
-
-        // attempt to patch in the ModuleDescriptor provided by the Java Compiler Plugin
-        // (for the same version)
-        this.project.plugins(JavaCompilerPlugin.class)
-            .filter(plugin -> plugin.getJavaVersion().major() == getJavaVersion().major())
-            .findFirst()
-            .ifPresent(plugin -> {
-
-                // include the ModuleDescriptor in the builder
-                builder.include(plugin.getModuleDescriptor());
-
-                // include the ModuleDescriptor version in the builder
-                // (the test module has the same version as the Java module)
-                moduleDescriptor.version().ifPresent(builder::setVersion);
-
-                // TODO: warn if the module names are different
-            });
-
-        return builder.build();
+                return merged;
+            }
+            return descriptor;
+        });
     }
 
 }

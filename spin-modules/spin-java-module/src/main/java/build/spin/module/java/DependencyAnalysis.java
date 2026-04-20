@@ -20,8 +20,8 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.module.modulesystem.ArtifactDescriptor;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
 
 import java.nio.file.Path;
@@ -38,7 +38,7 @@ import java.util.stream.Stream;
 public interface DependencyAnalysis {
 
     /**
-     * Obtains the {@link Dependency} information of the {@link ModuleDescriptor} for which the
+     * Obtains the {@link Dependency} information of the {@link JDKModuleDescriptor} for which the
      * {@link DependencyAnalysis} was performed.
      *
      * @return the {@link Dependency}
@@ -47,7 +47,7 @@ public interface DependencyAnalysis {
 
     /**
      * Obtains a {@link Stream} of {@link ModuleReference}s the Java Platform modules used by the
-     * {@link ModuleDescriptor}.
+     * {@link JDKModuleDescriptor}.
      *
      * @return a {@link Stream} of {@link ModuleReference}s
      */
@@ -55,14 +55,14 @@ public interface DependencyAnalysis {
 
     /**
      * Obtains a {@link Stream} of {@link Dependency} information for the modules required by the module defined by
-     * the {@link ModuleDescriptor}.
+     * the {@link JDKModuleDescriptor}.
      *
      * @return a {@link Stream} of {@link Dependency}s
      */
     Stream<Dependency> dependencies();
 
     /**
-     * Obtains the {@link Stream} of module names for which no {@link ModuleDescriptor} could be determined.
+     * Obtains the {@link Stream} of module names for which no {@link JDKModuleDescriptor} could be determined.
      *
      * @return the {@link Stream} of unknown module names
      */
@@ -76,16 +76,16 @@ public interface DependencyAnalysis {
     Path modulePath();
 
     /**
-     * Dependency information for {@link ModuleDescriptor}, including it's resolved {@link ArtifactDescriptor}.
+     * Dependency information for {@link JDKModuleDescriptor}, including it's resolved {@link ArtifactDescriptor}.
      */
     interface Dependency {
 
         /**
-         * The {@link ModuleDescriptor}.
+         * The {@link JDKModuleDescriptor}.
          *
-         * @return the {@link ModuleDescriptor}
+         * @return the {@link JDKModuleDescriptor}
          */
-        ModuleDescriptor moduleDescriptor();
+        JDKModuleDescriptor moduleDescriptor();
 
         /**
          * The {@link ArtifactDescriptor}.

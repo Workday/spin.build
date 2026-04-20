@@ -92,6 +92,16 @@
         </dependency>
 
         <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>jdk-codemodel</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>codemodel-foundation</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>jakarta.inject</groupId>
             <artifactId>jakarta.inject-api</artifactId>
         </dependency>

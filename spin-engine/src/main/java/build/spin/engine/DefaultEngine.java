@@ -9,9 +9,9 @@ package build.spin.engine;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -32,6 +32,8 @@ import build.base.foundation.UniformResource;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.injection.Binder;
 import build.codemodel.injection.ConfigurationResolver;
 import build.codemodel.injection.Context;
@@ -43,6 +45,7 @@ import build.codemodel.injection.QualifiedResolver;
 import build.codemodel.injection.Resolver;
 import build.codemodel.injection.SystemPropertyResolver;
 import build.codemodel.injection.ValueBinding;
+import build.codemodel.jdk.JDKCodeModel;
 import build.codemodel.jdk.TypeUsages;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Cache;
@@ -472,6 +475,7 @@ public final class DefaultEngine implements Engine {
         public void configure(final Binder binder) {
             binder.bind(InjectionFramework.class).to(this.framework);
             binder.bind(FileSystem.class).to(this.fileSystem);
+            binder.bind(CodeModel.class).to(new JDKCodeModel(new NonCachingNameProvider()));
             binder.bind(Configuration.class).to(this.optionsByType);
             binder.bind(LocalMachine.class).to(LocalMachine.get());
             binder.bind(DocumentBuilderFactory.class).to(DocumentBuilderFactory.newInstance());

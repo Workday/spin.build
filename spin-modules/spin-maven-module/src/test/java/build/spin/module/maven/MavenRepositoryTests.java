@@ -4,10 +4,13 @@ import build.base.foundation.Exceptional;
 import build.base.version.Version;
 import build.base.foundation.UniformResource;
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
+import build.codemodel.jdk.JDKCodeModel;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.codemodel.injection.Context;
@@ -49,8 +52,11 @@ public class MavenRepositoryTests {
             UniformResource.createURI("maven", "MavenRepository"),
             System.out::println);
 
+        final CodeModel codeModel = new JDKCodeModel(new NonCachingNameProvider());
+
         final Context context = InjectionFramework.create().newContext();
         context.bind(TelemetryRecorder.class).to(recorder);
+        context.bind(CodeModel.class).to(codeModel);
 
         this.repository = context.create(MavenRepository.class);
 
@@ -61,10 +67,6 @@ public class MavenRepositoryTests {
                 return Optional.empty();
             }
 
-            @Override
-            public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
-                return Optional.empty();
-            }
         };
     }
 
@@ -77,7 +79,7 @@ public class MavenRepositoryTests {
 
         assertThat(path.isPresent()).isTrue();
 
-        final Exceptional<ModuleDescriptor> moduleDescriptor =
+        final Exceptional<JDKModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
         assertThat(moduleDescriptor.isPresent()).isTrue();
@@ -92,7 +94,7 @@ public class MavenRepositoryTests {
 
         assertThat(optional.isPresent()).isTrue();
 
-        final Exceptional<ModuleDescriptor> moduleDescriptor =
+        final Exceptional<JDKModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
         assertThat(moduleDescriptor.isPresent()).isTrue();
@@ -107,10 +109,10 @@ public class MavenRepositoryTests {
 
         assertThat(optional.isPresent()).isTrue();
 
-        final Exceptional<ModuleDescriptor> moduleDescriptor =
+        final Exceptional<JDKModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
-        moduleDescriptor.orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
+        moduleDescriptor.orElseThrow(() -> new AssertionError("Expected JDKModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
         assertThat(moduleDescriptor.isPresent()).isTrue();
     }
 
@@ -123,7 +125,7 @@ public class MavenRepositoryTests {
 
         assertThat(optional.isPresent()).isTrue();
 
-        final Exceptional<ModuleDescriptor> moduleDescriptor =
+        final Exceptional<JDKModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
         assertThat(moduleDescriptor.isPresent()).isTrue();
@@ -134,11 +136,11 @@ public class MavenRepositoryTests {
 
         final Artifact artifact = Artifact.parse("org.apache.maven:maven-core:jar:3.8.6");
 
-        final ModuleDescriptor moduleDescriptor = this.repository
+        final JDKModuleDescriptor moduleDescriptor = this.repository
             .getModuleDescriptor(artifact, this.moduleCatalog, this.versioning)
-            .orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
+            .orElseThrow(() -> new AssertionError("Expected JDKModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
 
-        assertThat(moduleDescriptor.requires().count()).isEqualTo(24L);
+        assertThat(moduleDescriptor.requiresClauses().count()).isEqualTo(24L);
     }
 
     @Test
@@ -151,7 +153,7 @@ public class MavenRepositoryTests {
 
         this.moduleCatalog.add("com.fasterxml.jackson.databind", artifact);
 
-        final Exceptional<ModuleDescriptor> moduleDescriptor =
+        final Exceptional<JDKModuleDescriptor> moduleDescriptor =
             this.repository.getModuleDescriptor(artifact, this.moduleCatalog, this.versioning);
 
         assertThat(moduleDescriptor.isPresent()).isTrue();
@@ -187,10 +189,10 @@ public class MavenRepositoryTests {
         assertThat(moduleReference.version().orElseThrow(() -> new AssertionError("Expected version on ModuleReference [" + moduleReference.name() + "] but it was empty")).get()).isEqualTo("2.3.2.Final");
 
         // ensure we can resolve the ModuleDescriptor
-        final ModuleDescriptor moduleDescriptor = this.repository
+        final JDKModuleDescriptor moduleDescriptor = this.repository
             .getModuleDescriptor(artifact, this.moduleCatalog, this.versioning)
-            .orElseThrow(() -> new AssertionError("Expected ModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
+            .orElseThrow(() -> new AssertionError("Expected JDKModuleDescriptor for artifact [" + artifact + "] but none was resolved"));
 
-        assertThat(moduleDescriptor.requires().count()).isEqualTo(7L);
+        assertThat(moduleDescriptor.requiresClauses().count()).isEqualTo(7L);
     }
 }

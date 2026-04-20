@@ -32,7 +32,7 @@ import static org.mockito.Mockito.mock;
 
 /**
  * Verifies that {@link PomBasedModuleVersioning}'s visitor wires the walker output into a
- * parsed {@link ModuleDescriptor.Version} correctly. The walker's own behavior (derivation,
+ * wired module versioning correctly. The walker's own behavior (derivation,
  * BFS, scope filtering) is tested in {@link PomWorkspaceWalkerTests}.
  */
 class PomBasedModuleVersioningTests {

@@ -29,6 +29,11 @@ import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
+import build.codemodel.foundation.naming.ModuleName;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.spawn.application.Application;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
@@ -44,7 +49,6 @@ import build.spin.Task;
 import build.spin.common.util.Invocables;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
@@ -62,7 +66,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Stack;
@@ -111,6 +114,9 @@ public class CustomizationPlugin
     @Inject
     private ModuleVersioning versioning;
 
+    @Inject
+    private CodeModel codeModel;
+
     /**
      * The custom created {@link Invocable}s.
      */
@@ -127,10 +133,10 @@ public class CustomizationPlugin
      * Constructs a {@link PathSetBuilder} containing the resolved dependencies required for the compilation and
      * use of the Java-based customized {@link Task}s.
      *
-     * @param stream the {@link Stream} of initial {@link ModuleDescriptor.Requires} declarations
+     * @param stream the {@link Stream} of initial {@link RequiresModuleDescriptor} declarations
      * @return the {@link PathSetBuilder}
      */
-    public PathSetBuilder getDependencies(final Stream<ModuleDescriptor.Requires> stream) {
+    public PathSetBuilder getDependencies(final Stream<RequiresModuleDescriptor> stream) {
 
         final PathSetBuilder builder = PathSetBuilder.create();
 
@@ -138,13 +144,13 @@ public class CustomizationPlugin
         final HashSet<String> includedModules = new HashSet<>();
 
         // establish a stack of modules to resolve and include in the ClassPath
-        final Stack<ModuleDescriptor.Requires> stack = new Stack<>();
+        final Stack<RequiresModuleDescriptor> stack = new Stack<>();
         Streams.reverse(stream).forEach(stack::push);
 
         while (!stack.isEmpty()) {
 
             // obtain the next required module to resolve
-            final ModuleDescriptor.Requires requires = stack.pop();
+            final RequiresModuleDescriptor requires = stack.pop();
 
             // attempt to find the required module within the root project
             final Optional<Project> dependency = this.project.workspace()
@@ -155,17 +161,17 @@ public class CustomizationPlugin
                                 // include the required modules of the required module for processing when it is
                                 // "transitive" and we've not already included them
 
-                                // obtain the ModuleDescriptor for the project
-                                final ModuleDescriptor moduleDescriptor = java.getModuleDescriptor();
+                                // obtain the JDKModuleDescriptor for the project
+                                final JDKModuleDescriptor moduleDescriptor = java.getModuleDescriptor();
 
                                 // TODO: if the module descriptor is this descriptor, we've got a cycle
 
                                 // include the project iff is the required module
-                                if (requires.name().equals(moduleDescriptor.name())) {
+                                if (requires.requiresModuleName().toString().equals(moduleDescriptor.moduleName().toString())) {
 
-                                    if (requires.isTransitive()) {
+                                    if (requires.traits(RequiresModifier.class).anyMatch(m -> m == RequiresModifier.TRANSITIVE)) {
 
-                                        if (!includedModules.contains(requires.name())) {
+                                        if (!includedModules.contains(requires.requiresModuleName().toString())) {
 
                                             // place the required module back in the queue
                                             // (as the transitive requires must occur before the required module)
@@ -173,12 +179,12 @@ public class CustomizationPlugin
 
                                             // include all of the required modules of the required module
                                             // (if not already processed)
-                                            Streams.reverse(moduleDescriptor.requires())
-                                                .filter(r -> !includedModules.contains(r.name()))
+                                            Streams.reverse(moduleDescriptor.requiresClauses())
+                                                .filter(r -> !includedModules.contains(r.requiresModuleName().toString()))
                                                 .forEach(stack::push);
 
                                             // we've now included the transitive dependencies
-                                            includedModules.add(requires.name());
+                                            includedModules.add(requires.requiresModuleName().toString());
 
                                             return false;
                                         }
@@ -203,17 +209,21 @@ public class CustomizationPlugin
 
                 builder.add(dependencyPath.resolve(this.buildDirectoryName.get() + "/main/" + this.target.get()));
             }
-            else if (!includedModules.contains(requires.name())) {
+            else if (!includedModules.contains(requires.requiresModuleName().toString())) {
 
                 // determine the Version of the Module to be used
-                final Version moduleVersion = requires.version()
-                    .orElseGet(() -> this.versioning.getVersion(requires.name())
+                final Version moduleVersion = JDKModuleDescriptor.requiresVersion(requires)
+                    .orElseGet(() -> this.versioning.getVersion(requires.requiresModuleName().toString())
                         .orElseThrow(() -> new IllegalArgumentException(
-                            "The version of module [" + requires.name()
+                            "The version of module [" + requires.requiresModuleName().toString()
                                 + " is not defined in Versioning (version.properties)")));
 
                 // use the Catalog to locate the Artifact
-                final Optional<Artifact> optional = this.catalog.getArtifact(requires.reference());
+                final build.spin.module.modulesystem.ModuleReference requiresRef =
+                    build.spin.module.modulesystem.ModuleReference.of(
+                        requires.requiresModuleName().toString(),
+                        JDKModuleDescriptor.requiresVersion(requires));
+                final Optional<Artifact> optional = this.catalog.getArtifact(requiresRef);
 
                 if (optional.isPresent()) {
                     final Artifact artifact = optional.get();
@@ -230,24 +240,26 @@ public class CustomizationPlugin
                             builder.add(p);
 
                             // attempt to resolve the ModuleDescriptor for the external dependency
-                            final Exceptional<ModuleDescriptor> optionalDescriptor =
+                            final Exceptional<JDKModuleDescriptor> optionalDescriptor =
                                 this.resolver.getModuleDescriptor(artifact, this.catalog, this.versioning);
 
                             // include the transitive dependencies of the external dependency
                             // TODO: if the ModuleDescriptor requires this module, we have a cycle!
                             optionalDescriptor.ifPresent(descriptor ->
-                                Streams.reverse(descriptor.requires())
-                                    .filter(ModuleDescriptor.Requires::isTransitive)
-                                    .filter(r -> !includedModules.contains(r.name()))
-                                    .peek(r -> this.recorder
-                                        .info("Including transitive dependency [%s] for [%s]", r.name(), artifact))
-                                    .forEach(stack::push));
+                                Streams.reverse(descriptor.requiresClauses())
+                                    .filter(r -> r.traits(RequiresModifier.class)
+                                        .anyMatch(m -> m == RequiresModifier.TRANSITIVE))
+                                    .filter(r -> !includedModules.contains(r.requiresModuleName().toString()))
+                                    .peek(r -> this.recorder.info("Including transitive dependency [%s] for [%s]",
+                                        r.requiresModuleName().toString(), artifact))
+                                    .forEach(r -> stack.push(
+                                        RequiresModuleDescriptor.of(this.codeModel, r.requiresModuleName()))));
                         }).orElseThrow(() -> new IllegalStateException("Failed to resolve artifact [" + artifact + "]"));
                 }
                 else {
                     this.recorder.warn(
                         "Failed to locate [%s] in Module Catalog.  It won't be included in the classpath",
-                        requires.name());
+                        requires.requiresModuleName().toString());
                 }
             }
         }
@@ -317,33 +329,37 @@ public class CustomizationPlugin
                     throw new RuntimeException("Failed to create 'source' configuration to compile customizations", e);
                 }
 
-                // establish the ModuleDescriptor for the custom build
-                final ModuleDescriptor moduleDescriptor;
+                // establish the JDKModuleDescriptor for the custom build
+                final JDKModuleDescriptor moduleDescriptor;
                 final Path moduleInfoPath = sourceCodePath.resolve("module-info.java");
 
                 if (Files.exists(moduleInfoPath)) {
 
                     try (BufferedReader reader = Files.newBufferedReader(moduleInfoPath)) {
-                        // the ModuleDescriptor contains the prerequisites
-                        moduleDescriptor = ModuleDescriptor.parse(reader).build();
+                        // the JDKModuleDescriptor contains the prerequisites
+                        moduleDescriptor = JDKModuleDescriptor.parse(this.codeModel, reader);
                     }
                     catch (final IOException e) {
                         throw new RuntimeException("Failed to read [" + moduleInfoPath + "]", e);
                     }
                 }
                 else {
-                    // establish a default ModuleDescriptor
-                    moduleDescriptor = ModuleDescriptor.Builder.create("build")
-                        .noLocation()
-                        .requires("build.spin.engine", EnumSet.of(ModuleDescriptor.Requires.Modifier.TRANSITIVE),
-                            null)
-                        .build();
+                    // establish a default JDKModuleDescriptor
+                    final ModuleName buildName =
+                        this.codeModel.getNameProvider().getModuleName("build").orElseThrow();
+                    moduleDescriptor = this.codeModel.createModuleDescriptor(buildName, JDKModuleDescriptor::of);
+                    final ModuleName engineName =
+                        this.codeModel.getNameProvider().getModuleName("build.spin.engine").orElseThrow();
+                    final RequiresModuleDescriptor engineReq =
+                        RequiresModuleDescriptor.of(this.codeModel, engineName);
+                    engineReq.addTrait(RequiresModifier.TRANSITIVE);
+                    moduleDescriptor.addTrait(engineReq);
                 }
 
-                // resolve the ClassPath from the ModuleDescriptor Requires
-                //  (we don't need the entire ModuleDescriptor)
-                final PathSetBuilder pathSetBuilder = getDependencies(moduleDescriptor.requires()
-                    .filter(requires -> !requires.name().equals("build.spin.engine")));
+                // resolve the ClassPath from the JDKModuleDescriptor Requires
+                //  (we don't need the entire JDKModuleDescriptor)
+                final PathSetBuilder pathSetBuilder = getDependencies(moduleDescriptor.requiresClauses()
+                    .filter(requires -> !requires.requiresModuleName().toString().equals("build.spin.engine")));
 
                 // include the current ClassPath (so we can inherit Spin)
                 // (in the future, when this is a pre-packaged application, we'll only be able to use real dependencies)

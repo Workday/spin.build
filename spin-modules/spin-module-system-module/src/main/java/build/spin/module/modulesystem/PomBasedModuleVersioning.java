@@ -105,11 +105,6 @@ public class PomBasedModuleVersioning
         return this.versioning.getVersion(moduleName);
     }
 
-    @Override
-    public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
-        return this.versioning.getVersion(descriptor);
-    }
-
     /**
      * The {@link Resource.MetaClass} for {@link PomBasedModuleVersioning}.
      */
@@ -146,9 +141,5 @@ public class PomBasedModuleVersioning
             return Optional.ofNullable(this.versions.get(moduleName));
         }
 
-        @Override
-        public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
-            return descriptor == null ? Optional.empty() : getVersion(descriptor.name());
-        }
     }
 }

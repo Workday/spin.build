@@ -28,6 +28,7 @@ module build.spin.module.junit {
     requires build.base.option;
     requires build.base.telemetry;
     requires build.codemodel.injection;
+    requires build.codemodel.jdk;
     requires build.spawn.application;
     requires build.spawn.jdk;
     requires build.spawn.platform.local;

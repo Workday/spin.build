@@ -20,9 +20,6 @@
 module build.spin.module.console {
     requires transitive build.spin.engine;
 
-    // graphql-java, undertow, and kickstart are implementation details — not part of the exported API
-    requires com.graphqljava;
-
     requires build.base.foundation;
     requires build.base.telemetry;
     requires build.codemodel.injection;

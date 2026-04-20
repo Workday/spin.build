@@ -20,11 +20,12 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.Project;
 import build.spin.Resource;
 
 /**
- * A {@link Resource} that provides additional {@link ModuleDescriptor} requires for test compilation,
+ * A {@link Resource} that provides additional {@link JDKModuleDescriptor} requires for test compilation,
  * for use when the project does not define a {@code src/test/java/module-info.java}.
  *
  * @author reed.vonredwitz
@@ -34,11 +35,11 @@ public interface TestModuleDescriptor
     extends Resource {
 
     /**
-     * Returns the {@link ModuleDescriptor} containing the requires to be included for test compilation
+     * Returns the {@link JDKModuleDescriptor} containing the requires to be included for test compilation
      * for the specified {@link Project}.
      *
      * @param project the {@link Project} for which to determine test requires
-     * @return the {@link ModuleDescriptor}
+     * @return the {@link JDKModuleDescriptor}
      */
-    ModuleDescriptor get(Project project);
+    JDKModuleDescriptor get(Project project);
 }

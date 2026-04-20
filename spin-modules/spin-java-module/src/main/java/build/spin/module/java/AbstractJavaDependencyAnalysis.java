@@ -9,9 +9,9 @@ package build.spin.module.java;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -30,6 +30,8 @@ import build.base.option.JDKVersion;
 import build.base.table.Table;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.spawn.application.Application;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
@@ -47,7 +49,6 @@ import build.spin.module.clean.CleanPlugin;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
@@ -63,6 +64,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Stack;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -92,7 +94,7 @@ public abstract class AbstractJavaDependencyAnalysis
     private Workspace workspace;
 
     @Inject
-    private ModuleDescriptor moduleDescriptor;
+    private JDKModuleDescriptor moduleDescriptor;
 
     @Inject
     private ModuleCatalog catalog;
@@ -109,8 +111,8 @@ public abstract class AbstractJavaDependencyAnalysis
 
     @Override
     public Stream<Reference> dependencies() {
-        return this.moduleDescriptor.requires()
-            .map(ModuleDescriptor.Requires::name)
+        return this.moduleDescriptor.requiresClauses()
+            .map(r -> r.requiresModuleName().toString())
             .flatMap(name -> this.workspace.stream()
                 .map(project -> {
                     // capture the JavaCompilerPlugin in the Project with the same or lower JDKVersion used by
@@ -132,7 +134,7 @@ public abstract class AbstractJavaDependencyAnalysis
                     // NOTE: using "endsWith" here is super important.
                     // (it allows project names to match module names for automatic modules)
                     return capture
-                        .filter(plugin -> name.endsWith(plugin.getModuleDescriptor().name())
+                        .filter(plugin -> name.endsWith(plugin.getModuleDescriptor().moduleName().toString())
                             || project.name().equals(name))
                         .map(plugin ->
                             // locate the PackageModule tasks
@@ -174,13 +176,16 @@ public abstract class AbstractJavaDependencyAnalysis
         // obtain the non-Java Platform artifacts transitively, inside and outside the Workspace
         // (so we can put them on a classpath/modulepath for analysis)
         final var pending = new Stack<ModuleReference>();
-        final var processed = new LinkedHashSet<ModuleReference>();
-        final var ignored = new LinkedHashSet<ModuleReference>();
+        // Deduplicate by name only: a module queued without a version (from source module-info files)
+        // must not be re-processed just because the resolved reference carries a specific version.
+        final var processed = new LinkedHashSet<String>();
+        final var ignored = new LinkedHashSet<String>();
 
         final var platformModules = new LinkedHashSet<ModuleReference>();
         final var artifactDescriptors = new LinkedHashMap<Artifact, ArtifactDescriptor>();
-        final var moduleDescriptors = new LinkedHashMap<ModuleReference, ModuleDescriptor>();
+        final var moduleDescriptors = new LinkedHashMap<ModuleReference, JDKModuleDescriptor>();
         final var requiredModules = new LinkedHashSet<String>();
+        final var unnamedArtifactDescriptors = new LinkedHashMap<Artifact, ArtifactDescriptor>();
 
         // establish a Predicate to filter Artifacts to include for analysis
         // TODO: this must be replaced with the versioning "include/exclude" module resource support
@@ -194,12 +199,13 @@ public abstract class AbstractJavaDependencyAnalysis
             .forEach(descriptor -> artifactDescriptors.put(descriptor.artifact(), descriptor));
 
         // start with the ModuleDescriptor for this project
-        pending.push(this.moduleDescriptor.reference());
+        pending.push(ModuleReference.of(this.moduleDescriptor.moduleName().toString(),
+            this.moduleDescriptor.version()));
 
         while (!pending.isEmpty()) {
             final var module = pending.pop();
 
-            if (!processed.contains(module) && !ignored.contains(module)) {
+            if (!processed.contains(module.name()) && !ignored.contains(module.name())) {
 
                 // ensure the ModuleReference has a Version with which we can resolve (when required)
                 final ModuleReference reference = module.version().isPresent()
@@ -237,34 +243,49 @@ public abstract class AbstractJavaDependencyAnalysis
 
                     // attempt to determine the ModuleDescriptor for the ArtifactDescriptor
                     // (first within the Workspace and if that fails, try to resolve it)
+                    final var resolvedDescriptor = this.artifactResolver
+                        .getModuleDescriptor(artifact, this.catalog, this.versioning);
+
                     this.workspace.stream()
                         .filter(project -> project
                             .getPlugin(JavaCompilerPlugin.class)
-                            .filter(plugin -> plugin.getModuleDescriptor().reference().equals(reference))
+                            .filter(plugin -> plugin.getModuleDescriptor().moduleName().toString().equals(reference.name()))
                             .isPresent())
                         .map(project -> project.getPlugin(JavaCompilerPlugin.class)
                             .map(JavaPlugin::getModuleDescriptor)
                             .orElseThrow(() -> new IllegalStateException("Expected JavaCompilerPlugin to have a ModuleDescriptor for module [" + reference + "] in project [" + project.name() + "]")))
                         .findFirst()
-                        .or(() -> this.artifactResolver
-                            .getModuleDescriptor(artifact, this.catalog, this.versioning)
-                            .optional())
+                        .or(() -> resolvedDescriptor.optional())
                         .map(moduleDescriptor -> {
                             moduleDescriptors.put(reference, moduleDescriptor);
-                            processed.add(reference);
+                            processed.add(reference.name());
 
                             // TODO: correct the module reference if it's name is different!
                             // (eg: asm-7.2 has a different jar name but the same module name as asm-9.4!)
 
                             // push the non-Java Platform required modules onto the stack for processing
-                            moduleDescriptor.requires()
-                                .peek(requires -> {
-                                    if (JavaPlatform.isJavaPlatformModule(requires.name())) {
-                                        platformModules.add(ModuleReference.of(requires.name(), jdkVersion));
+                            moduleDescriptor.requiresClauses()
+                                .filter(r -> r.traits(RequiresModifier.class).noneMatch(m -> m == RequiresModifier.STATIC))
+                                .peek(r -> {
+                                    if (JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString())) {
+                                        platformModules.add(ModuleReference.of(r.requiresModuleName().toString(), jdkVersion));
                                     }
                                 })
-                                .filter(requires -> !JavaPlatform.isJavaPlatformModule(requires.name()))
-                                .map(ModuleDescriptor.Requires::reference)
+                                .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                                .map(r -> {
+                                    final String name = r.requiresModuleName().toString();
+                                    // Prefer the version from the requires clause (bytecode only).
+                                    // Fall back to whatever version we already know for this module
+                                    // name — workspace modules come from source module-info files
+                                    // which carry no version, but their ArtifactDescriptor (loaded
+                                    // at the start of jdeps) has the correct version.
+                                    final Optional<Version> version = JDKModuleDescriptor.requiresVersion(r)
+                                        .or(() -> artifactDescriptors.values().stream()
+                                            .filter(d -> d.reference().name().equals(name))
+                                            .findFirst()
+                                            .flatMap(d -> d.reference().version()));
+                                    return ModuleReference.of(name, version);
+                                })
                                 // GraalVM modules are not available in standard JDKs; exclude the entire namespace
                                 .filter(r -> !r.name().startsWith("org.graalvm."))
                                 .peek(r -> {
@@ -275,22 +296,29 @@ public abstract class AbstractJavaDependencyAnalysis
                                     // instead of module-path (the graphql-java-kickstart bug).
                                     requiredModules.add(r.name());
                                 })
-                                .filter(r -> !processed.contains(r))
-                                .peek(r -> this.recorder.info("[jdeps] Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.name(), r))
+                                .filter(r -> !processed.contains(r.name()))
+                                .peek(r -> this.recorder.info("[jdeps] Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.moduleName().toString(), r))
                                 .forEach(pending::push);
 
                             return reference;
                         })
                         .orElseGet(() -> {
-                            // failed to obtain the ModuleDescriptor (so skipping it)
-                            this.recorder.info("[jdeps] Ignoring module [%s] — no ModuleDescriptor available", reference);
-                            ignored.add(reference);
+                            if (resolvedDescriptor.isException()) {
+                                final String reason = resolvedDescriptor.exception()
+                                    .map(e -> ": " + e.getClass().getSimpleName() + ": " + e.getMessage())
+                                    .orElse("");
+                                this.recorder.info("[jdeps] Ignoring module [%s] — no ModuleDescriptor available%s", reference, reason);
+                            } else {
+                                // no module-info.class and no Automatic-Module-Name: genuinely unnamed jar
+                                unnamedArtifactDescriptors.put(artifact, artifactDescriptor);
+                            }
+                            ignored.add(reference.name());
                             return reference;
                         });
                 }
                 else {
                     // we're ignoring the module, so mark that it is processed!
-                    ignored.add(reference);
+                    ignored.add(reference.name());
                 }
             }
         }
@@ -356,11 +384,14 @@ public abstract class AbstractJavaDependencyAnalysis
         // (the explicit and required modules will be placed on the module path!)
         final var classPathBuilder = PathSetBuilder.create();
         artifactDescriptorsByModuleName.values().stream()
-            .filter(descriptor -> !ignored.contains(descriptor.reference()))
-            .filter(descriptor -> !moduleDescriptors.get(descriptor.reference()).location().isPresent()
-                && !requiredModules.contains(descriptor.reference().name())
-                // workspace-local jars with module-info.class go to the module-path, not here
-                && !descriptor.path().map(ModuleGraphClassifier::isNamedModule).orElse(false))
+            .filter(descriptor -> !ignored.contains(descriptor.reference().name()))
+            .filter(descriptor -> {
+                final var md = moduleDescriptors.get(descriptor.reference());
+                return md != null && md.isAutomatic()
+                    && !requiredModules.contains(descriptor.reference().name())
+                    // workspace-local jars with module-info.class go to the module-path, not here
+                    && !descriptor.path().map(ModuleGraphClassifier::isNamedModule).orElse(false);
+            })
             .forEach(descriptor -> descriptor.path().ifPresent(classPathBuilder::add));
 
         // -----
@@ -378,10 +409,18 @@ public abstract class AbstractJavaDependencyAnalysis
         // a package with another jar must stay on classpath (JPMS forbids split packages).
         final var modulePathCandidates = new ArrayList<ArtifactDescriptor>();
         artifactDescriptorsByModuleName.values().stream()
-            .filter(descriptor -> !ignored.contains(descriptor.reference()))
-            .filter(descriptor -> moduleDescriptors.get(descriptor.reference()).location().isPresent()
-                || requiredModules.contains(descriptor.reference().name())
-                || descriptor.path().map(ModuleGraphClassifier::isNamedModule).orElse(false))
+            .filter(descriptor -> {
+                final String name = descriptor.reference().name();
+                if (ignored.contains(name)) {
+                    // include ignored modules that are explicitly required — jdeps
+                    // treats them as automatic modules by filename
+                    return requiredModules.contains(name);
+                }
+                final var md = moduleDescriptors.get(descriptor.reference());
+                return md != null && (!md.isAutomatic()
+                    || requiredModules.contains(name)
+                    || descriptor.path().map(ModuleGraphClassifier::isNamedModule).orElse(false));
+            })
             .forEach(modulePathCandidates::add);
 
         final List<Path> candidatePaths = modulePathCandidates.stream()
@@ -395,7 +434,7 @@ public abstract class AbstractJavaDependencyAnalysis
         // required side on the module-path.
         final var resolution = ModuleGraphClassifier.resolveConflicts(
             candidatePaths,
-            java.util.Set.of(this.moduleDescriptor.name()),
+            java.util.Set.of(this.moduleDescriptor.moduleName().toString()),
             log);
 
         // copy non-conflicting candidates to module-path; handle conflicts appropriately
@@ -436,9 +475,9 @@ public abstract class AbstractJavaDependencyAnalysis
         final var stdoutObserver = StandardOutputSubscriber.of(recordingObserver);
 
         // the path to this artifact to analyze
-        final var artifactPath = artifactDescriptorsByModuleName.get(this.moduleDescriptor.name())
+        final var artifactPath = artifactDescriptorsByModuleName.get(this.moduleDescriptor.moduleName().toString())
             .path()
-            .orElseThrow(() -> new IllegalStateException("No artifact path for module [" + this.moduleDescriptor.name() + "]"));
+            .orElseThrow(() -> new IllegalStateException("No artifact path for module [" + this.moduleDescriptor.moduleName().toString() + "]"));
 
         // build jdeps arguments — omit --class-path when empty (jdeps rejects empty values)
         final var jdepsArgs = new java.util.ArrayList<Option>();
@@ -469,25 +508,23 @@ public abstract class AbstractJavaDependencyAnalysis
             }
 
             // build maps of java platform, module and non-module dependencies
-            final LinkedHashSet<ModuleDescriptor> modules = new LinkedHashSet<>();
-            final LinkedHashSet<ModuleDescriptor> nonModules = new LinkedHashSet<>();
-            final LinkedHashMap<ModuleDescriptor, ArtifactDescriptor> artifacts = new LinkedHashMap<>();
+            final LinkedHashSet<JDKModuleDescriptor> modules = new LinkedHashSet<>();
+            final LinkedHashMap<JDKModuleDescriptor, ArtifactDescriptor> artifacts = new LinkedHashMap<>();
             final LinkedHashSet<String> unknownModules = new LinkedHashSet<>();
 
             // a Consumer of Artifacts together with their ModuleDescriptors
             // (to collect and categorize the ModuleDescriptors)
             final Consumer<Map.Entry<Artifact, ArtifactDescriptor>> consumeArtifact = entry -> {
                 final ArtifactDescriptor artifactDescriptor = entry.getValue();
-                final ModuleDescriptor descriptor = moduleDescriptors.get(artifactDescriptor.reference());
+                final JDKModuleDescriptor descriptor = moduleDescriptors.get(artifactDescriptor.reference());
 
                 if (descriptor != null) {
-                    artifacts.put(descriptor, artifactDescriptor);
-
-                    if (descriptor.location().isPresent()) {
+                    if (descriptor.isAutomatic() && descriptor.isSynthetic()) {
+                        // synthesized from catalog+POM: jar has no module-info.class and no Automatic-Module-Name
+                        unnamedArtifactDescriptors.put(entry.getKey(), artifactDescriptor);
+                    } else {
+                        artifacts.put(descriptor, artifactDescriptor);
                         modules.add(descriptor);
-                    }
-                    else {
-                        nonModules.add(descriptor);
                     }
                 }
             };
@@ -523,19 +560,19 @@ public abstract class AbstractJavaDependencyAnalysis
                 final Table modulesTable = Table.create();
                 modulesTable.addRow("Module Name", "Version", "Type");
                 modules.stream().forEach(descriptor ->
-                    modulesTable.addRow(descriptor.name(),
-                        descriptor.version().map(Version::get).orElse("(unknown version)"),
+                    modulesTable.addRow(descriptor.moduleName().toString(),
+                        descriptor.version().map(Version::toString).orElse("(unknown version)"),
                         descriptor.isAutomatic() ? "automatic module" : "fully-blown module"));
                 this.recorder.diagnostic("Explicit Modules\n%s", modulesTable);
             }
 
-            if (!nonModules.isEmpty()) {
-                final Table nonModulesTable = Table.create();
-                nonModulesTable.addRow("Module Name (generated)", "Version");
-                nonModules.stream().forEach(descriptor -> nonModulesTable.addRow(
-                    descriptor.name(),
-                    descriptor.version().map(Version::get).orElse("(unknown version)")));
-                this.recorder.diagnostic("Unnamed Modules\n%s", nonModulesTable);
+            if (!unnamedArtifactDescriptors.isEmpty()) {
+                final Table unnamedTable = Table.create();
+                unnamedTable.addRow("Module Name (generated)", "Version");
+                unnamedArtifactDescriptors.values().forEach(descriptor -> unnamedTable.addRow(
+                    descriptor.reference().name(),
+                    descriptor.reference().version().map(Version::toString).orElse("(unknown version)")));
+                this.recorder.diagnostic("Unnamed Modules\n%s", unnamedTable);
             }
 
             if (!unknownModules.isEmpty()) {
@@ -549,7 +586,7 @@ public abstract class AbstractJavaDependencyAnalysis
                 public Dependency dependency() {
                     return new Dependency() {
                         @Override
-                        public ModuleDescriptor moduleDescriptor() {
+                        public JDKModuleDescriptor moduleDescriptor() {
                             return moduleDescriptor;
                         }
 
@@ -570,7 +607,7 @@ public abstract class AbstractJavaDependencyAnalysis
                     return artifactDescriptorsByModuleName.values().stream()
                         .map(descriptor -> new Dependency() {
                             @Override
-                            public ModuleDescriptor moduleDescriptor() {
+                            public JDKModuleDescriptor moduleDescriptor() {
                                 return moduleDescriptors.get(descriptor.reference());
                             }
 

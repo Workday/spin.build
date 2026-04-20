@@ -39,13 +39,6 @@ import build.spin.annotation.From;
 import build.spin.annotation.System;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.modulesystem.Artifact;
-import build.spin.module.modulesystem.MissingModuleVersionException;
-import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
-import build.spin.module.modulesystem.ModuleVersioning;
-import build.spin.module.modulesystem.UnresolvableArtifactException;
-import build.spin.module.modulesystem.UnresolvableModuleDescriptorException;
-import build.spin.module.modulesystem.UnresolvableModuleException;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 
@@ -88,55 +81,23 @@ public class CheckstylePlugin
         private Artifact.Resolver resolver;
 
         @Inject
-        private ModuleCatalog catalog;
-
-        @Inject
-        private ModuleVersioning versioning;
-
-        @Inject
         @System
         private JDKVersion javaVersion;
 
         public void check(final @From(JavaCompilerPlugin.DetectSourceFiles.class) Stream<PathSet> sourceCode) {
 
-            // establish a ModuleDescriptor.Resolver to resolve ModuleDescriptors for Checkstyle dependencies
-            final ModuleDescriptor.Resolver resolver = ModuleDescriptor.Resolver
-                .create(this.resolver, this.catalog, this.versioning);
-
-            // determine the artifacts to launch Checkstyle
-            final LinkedHashSet<Artifact> artifacts = new LinkedHashSet<>();
+            // determine the paths to launch Checkstyle (resolve transitively for each top-level artifact)
+            final LinkedHashSet<Path> checkstyleArtifactPaths = new LinkedHashSet<>();
             Stream.of(
-                    // include the Maven coordinates for the top-level artifacts we require
                     "com.puppycrawl.tools:checkstyle:8.8",
                     "com.workday:checkstyle-checks:4.0.13")
-
-                // create an Artifact representation
                 .map(Artifact::parse)
+                .flatMap(artifact -> this.resolver.resolveTransitive(artifact)
+                    .map(List::stream)
+                    .orElse(Stream.empty()))
+                .forEach(checkstyleArtifactPaths::add);
 
-                // include the Artifacts themselves to resolve
-                .peek(artifacts::add)
-
-                // resolve the ModuleDescriptor for the Artifact
-                // (and include them in the catalog when found)
-                .map(artifact -> this.resolver.getModuleDescriptor(artifact, this.catalog, this.versioning)
-                    .peek(moduleDescriptor -> this.catalog.add(moduleDescriptor.name(), artifact))
-                    .orElseThrow(() -> new UnresolvableModuleDescriptorException(artifact)))
-
-                // obtain the dependencies for the ModuleDescriptor
-                .flatMap(descriptor -> descriptor.dependencies(resolver).stream())
-
-                // obtain the Artifacts for each of the ModuleDescriptors
-                .map(descriptor -> descriptor.version()
-                    .map(__ -> descriptor.reference())
-                    .map(reference -> this.catalog.getArtifact(reference)
-                        .orElseThrow(() -> new UnresolvableModuleException(reference)))
-                    .orElseThrow(() -> new MissingModuleVersionException(descriptor.reference())))
-                .forEach(artifacts::add);
-
-            // resolve the Paths to the Artifacts
-            final Stream<Path> checkstyleArtifacts = artifacts.stream()
-                .map(artifact -> this.resolver.resolve(artifact)
-                    .orElseThrow(() -> new UnresolvableArtifactException(artifact)));
+            final Stream<Path> checkstyleArtifacts = checkstyleArtifactPaths.stream();
 
             // the path containing the checkstyle configuration
             final Path workspacePath = this.project.workspace().path();

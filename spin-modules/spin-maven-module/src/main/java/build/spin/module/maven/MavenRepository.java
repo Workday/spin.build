@@ -22,15 +22,20 @@ package build.spin.module.maven;
 
 import build.base.configuration.Configuration;
 import build.base.foundation.Exceptional;
-import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
+import build.codemodel.foundation.naming.ModuleName;
 import build.codemodel.injection.PostInject;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.codemodel.jdk.descriptor.ModuleModifier;
+import build.codemodel.jdk.descriptor.RequiresModifier;
+import build.codemodel.jdk.descriptor.RequiresVersionTrait;
+import build.codemodel.jdk.descriptor.VersionTrait;
 import build.spin.Service;
-import build.spin.module.java.JavaPlatform;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import jakarta.inject.Inject;
@@ -39,7 +44,6 @@ import org.eclipse.aether.graph.Dependency;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -72,22 +76,18 @@ public class MavenRepository
      */
     private final ConcurrentHashMap<Artifact, Exceptional<ModuleReference>> moduleReferences;
 
-    /**
-     * The {@link ModuleDescriptor}s extracted by {@link Artifact}.  These have been extracted and are in their
-     * unmodified state from underlying {@link Artifact}s.
-     */
-    private final ConcurrentHashMap<Artifact, Exceptional<ModuleDescriptor>> extractedDescriptors;
+    @Inject
+    private CodeModel codeModel;
 
     /**
-     * The {@link ModuleDescriptor}s resolved by {@link Artifact}.   These are extracted and unmodified
-     * from underlying {@link Artifact}s.
+     * The {@link JDKModuleDescriptor}s extracted by {@link Artifact}, unmodified from the underlying JAR.
      */
-    private final ConcurrentHashMap<Artifact, Exceptional<ModuleDescriptor>> resolvedDescriptors;
+    private final ConcurrentHashMap<Artifact, Exceptional<JDKModuleDescriptor>> extractedDescriptors;
 
     /**
-     * The previously resolved {@link ModuleDescriptor}s by {@link Artifact} and {@link JDKVersion}.
+     * The {@link JDKModuleDescriptor}s resolved by {@link Artifact}, enhanced with pom.xml data where needed.
      */
-    private final ConcurrentHashMap<Artifact, Exceptional<ModuleDescriptor>> moduleDescriptors;
+    private final ConcurrentHashMap<Artifact, Exceptional<JDKModuleDescriptor>> resolvedDescriptors;
 
     /**
      * Constructs the {@link MavenRepository}.
@@ -100,7 +100,6 @@ public class MavenRepository
         this.moduleReferences = new ConcurrentHashMap<>();
         this.extractedDescriptors = new ConcurrentHashMap<>();
         this.resolvedDescriptors = new ConcurrentHashMap<>();
-        this.moduleDescriptors = new ConcurrentHashMap<>();
     }
 
     /**
@@ -128,7 +127,6 @@ public class MavenRepository
     public Exceptional<ModuleReference> getModuleReference(final Artifact artifact,
                                                            final ModuleCatalog catalog) {
 
-        // attempt to use the previously resolved the ModuleReference for the Artifact
         final Exceptional<ModuleReference> existingReference = this.moduleReferences.get(artifact);
 
         if (existingReference != null
@@ -136,69 +134,57 @@ public class MavenRepository
             return existingReference;
         }
 
-        // attempt to obtain a previously extracted ModuleDescriptor for the Artifact
-        Exceptional<ModuleDescriptor> extractedDescriptor = this.extractedDescriptors.get(artifact);
+        Exceptional<JDKModuleDescriptor> extractedDescriptor = this.extractedDescriptors.get(artifact);
 
         if (extractedDescriptor == null) {
             extractedDescriptor = Exceptional.empty();
         }
 
-        // obtain the ModuleReference from the extracted ModuleDescriptor
-        Exceptional<ModuleReference> reference = extractedDescriptor.map(ModuleDescriptor::reference);
+        // JDKModuleDescriptor.extract reads the version from module-info.class, which most third-party
+        // JARs don't set (javac requires --module-version explicitly). Fall back to the Maven artifact
+        // version so the ModuleReference is always versioned and can be matched against the catalog.
+        Exceptional<ModuleReference> reference = extractedDescriptor.map(descriptor ->
+            ModuleReference.of(descriptor.moduleName().toString(),
+                descriptor.version().or(() -> Optional.of(artifact.version()))));
 
         if (reference.isEmpty()) {
-            // attempt to resolve the path to the Artifact itself and use that to extract a ModuleDescriptor
-            // (and thus ModuleReference)
             final Exceptional<Path> path = resolve(artifact);
 
-            extractedDescriptor = path.flatMap(p -> ModuleDescriptor.extract(artifact, p));
+            // Use extractFresh (not extract) to avoid registering artifact descriptors in the shared
+            // CodeModel — workspace projects use parse() for their canonical registration, and a prior
+            // extract() call for the same module name would cause parse() to fail with a duplicate trait.
+            extractedDescriptor = path.flatMap(p ->
+                Exceptional.call(() -> JDKModuleDescriptor.extractFresh(this.codeModel, p))
+                    .flatMap(Exceptional::ofOptional));
 
-            // retain the extracted ModuleDescriptor
-            final Exceptional<ModuleDescriptor> existingDescriptor = this.extractedDescriptors
-                .putIfAbsent(artifact, extractedDescriptor);
+            final Exceptional<JDKModuleDescriptor> existingDescriptor =
+                this.extractedDescriptors.putIfAbsent(artifact, extractedDescriptor);
 
-            // obtain the ModuleReference from the extracted ModuleDescriptor
             if (existingDescriptor != null) {
                 extractedDescriptor = existingDescriptor;
             }
 
-            reference = extractedDescriptor.map(ModuleDescriptor::reference);
+            reference = extractedDescriptor.map(descriptor ->
+                ModuleReference.of(descriptor.moduleName().toString(),
+                    descriptor.version().or(() -> Optional.of(artifact.version()))));
         }
 
-        // attempt to obtain the ModuleReference using the ModuleCatalog
         final Optional<ModuleReference> catalogedReference = catalog.getModuleReference(artifact);
 
         if (catalogedReference.isPresent()) {
             if (reference.isPresent()) {
-                if (!catalogedReference.get().equals(reference.orElseThrow(() -> new IllegalStateException("reference absent despite isPresent() check for artifact: " + artifact)))) {
-                    // TODO: warn that the ModuleCatalog-based information is inconsistent with the extracted information
-                    // (ignore the ModuleCatalog)
-                }
-
-                // retain the resolved ModuleReference
-                // (iff the reference provides a version)
-                if (reference.orElseThrow(() -> new IllegalStateException("reference absent despite isPresent() check for artifact: " + artifact)).version().isPresent()) {
+                if (reference.orElseThrow().version().isPresent()) {
                     this.moduleReferences.putIfAbsent(artifact, reference);
                 }
             } else {
-                // TODO: information... using the ModuleCatalog-based information
-                //  (the extracted ModuleDescriptor is not available)
                 reference = Exceptional.ofOptional(catalogedReference);
             }
         } else if (reference.isPresent()) {
-            // TODO: warn that the ModuleCatalog doesn't contain an entry for the Artifact
-
-            // retain the resolved ModuleReference
-            // (iff the reference provides a version)
-            if (reference.orElseThrow(() -> new IllegalStateException("reference absent despite isPresent() check for artifact: " + artifact)).version().isPresent()) {
-                // update the ModuleCatalog
+            if (reference.orElseThrow().version().isPresent()) {
                 reference.ifPresent(r -> catalog.add(r.name(), artifact));
-
-                // retain the resolved ModuleReference
                 this.moduleReferences.putIfAbsent(artifact, reference);
             }
         } else {
-            // warn that the Artifact couldn't be resolvable, and it doesn't exist in the ModuleCatalog
             this.recorder.warn("Module Name for [%s] is not resolvable by the Artifact.Resolver or Module Catalog",
                 artifact.toString());
         }
@@ -207,222 +193,133 @@ public class MavenRepository
     }
 
     @Override
-    public Exceptional<ModuleDescriptor> getModuleDescriptor(final Artifact artifact,
-                                                             final ModuleCatalog catalog,
-                                                             final ModuleVersioning versioning) {
+    public Exceptional<JDKModuleDescriptor> getModuleDescriptor(final Artifact artifact,
+                                                                 final ModuleCatalog catalog,
+                                                                 final ModuleVersioning versioning) {
 
-        // attempt to use the previously resolved ModuleDescriptor for the Artifact
         final var existing = this.resolvedDescriptors.get(artifact);
-
         if (existing != null) {
             return existing;
         }
 
-        // attempt to locate a previously extracted ModuleDescriptor for the Artifact
         var extracted = this.extractedDescriptors.get(artifact);
-
         if (extracted == null) {
-            // attempt to resolve and extract the ModuleDescriptor
             final Exceptional<Path> path = resolve(artifact);
-
-            extracted = path.flatMap(p -> ModuleDescriptor.extract(artifact, p));
+            extracted = path.flatMap(p ->
+                Exceptional.call(() -> JDKModuleDescriptor.extractFresh(this.codeModel, p))
+                    .flatMap(Exceptional::ofOptional));
         }
 
-        // retain the extracted ModuleDescriptor
         final var extractable = extracted;
+        extracted = this.extractedDescriptors.compute(artifact,
+            (__, current) -> current == null || current.isException() ? extractable : current);
 
-        extracted = this.extractedDescriptors
-            .compute(artifact, (__, current) -> current == null || current.isException()
-                ? extractable
-                : current);
-
-        // terminate when extracting the ModuleDescriptor had failed
-        // (there's nothing we can do to recover)
         if (extracted.isException()) {
-            // retain the failure to resolve the ModuleDescriptor
             final var resolved = this.resolvedDescriptors.putIfAbsent(artifact, extracted);
-
             return resolved == null ? extracted : resolved;
         }
 
-        // when the descriptor is present, it's not automatic, it's not synthetic, it has a version, and it has
-        // complete "requires" version information, we know it's been successfully resolved as a fully-blown-module
+        // fully resolved: named, versioned, and all requires carry version info
         if (extracted.map(descriptor -> !descriptor.isAutomatic()
                 && !descriptor.isSynthetic()
                 && descriptor.version().isPresent()
-                && descriptor.requires()
-                .map(ModuleDescriptor.Requires::version)
-                .allMatch(Optional::isPresent))
+                && descriptor.requiresClauses()
+                    .map(JDKModuleDescriptor::requiresVersion)
+                    .allMatch(Optional::isPresent))
             .orElse(false)) {
-
-            // store the extracted ModuleDescriptor as it's completely resolved
             final var resolved = extracted;
-
             return this.resolvedDescriptors.compute(artifact, (__, current) -> current == null ? resolved : current);
-        } else {
-            // here it means the extracted descriptor is for an automatic module, or it's information is incomplete
-            // (due to the java compiler not being able to detect it, from a non-modular dependency), which means we
-            // need to resolve and reverse-engineer the "requires" information using the pom.xml to "enhance" it
-            // (to thus create an "enhanced" descriptor)
-            final ModuleDescriptor.Builder builder = extracted
-                .map(descriptor -> {
-                    // copy everything but the non-Java-platform "requires" definitions into a new builder
-                    final ModuleDescriptor.Builder bldr = ModuleDescriptor.Builder
-                        .create(descriptor.name())
-                        .setLocation(descriptor.location())
-                        .setEnhanced(true);
-
-                    bldr.setOpen(descriptor.isOpen());
-                    bldr.setAutomatic(descriptor.isAutomatic());
-                    bldr.setMandated(descriptor.is(ModuleDescriptor.Modifier.MANDATED));
-                    bldr.setSynthetic(descriptor.isSynthetic());
-
-                    // include the Java Platform dependencies
-                    descriptor.requires()
-                        .filter(requires -> JavaPlatform.isJavaPlatformModule(requires.name()))
-                        .forEach(requires -> {
-                            final var modifiers = EnumSet.noneOf(ModuleDescriptor.Requires.Modifier.class);
-                            requires.modifiers().forEach(modifiers::add);
-
-                            bldr.requires(
-                                requires.name(),
-                                modifiers,
-                                requires.version().orElse(null));
-                        });
-
-                    // choose the correct version
-                    final Optional<Version> overridden = versioning
-                        .getVersion(descriptor.name());
-
-                    if (!(descriptor.version().equals(overridden))
-                        && overridden.isPresent()) {
-                        bldr.setVersion(overridden.get());
-
-                        overridden.ifPresent(version ->
-                            this.recorder.warn("Overriding %s version %s with %s",
-                                descriptor.name(),
-                                descriptor.version()
-                                    .map(Version::toString)
-                                    .orElse("(unspecified)"),
-                                overridden.get()));
-                    } else {
-                        descriptor.version()
-                            .map(bldr::setVersion);
-                    }
-
-                    descriptor.provides()
-                        .forEach(provides -> bldr.provides(provides.service(), provides.providers()));
-
-                    descriptor.exports()
-                        .forEach(exports -> bldr.exports(exports.source(),
-                            exports.modifier().orElse(null),
-                            exports.targets()));
-
-                    descriptor.uses().forEach(bldr::uses);
-
-                    return bldr;
-                }).orElseGet(() -> {
-                    // create a ModuleDescriptor.Builder for the unknown module (deriving the module name if required)
-                    // (we still may be able to build a ModuleDescriptor using the pom.xml)
-                    final var moduleName = catalog.getModuleName(artifact)
-                        .orElseGet(() -> {
-                            final var derivedName = catalog.getDerivedModuleName(artifact);
-
-                            this.recorder.warn(
-                                "[%s] is not found in the Module Catalog.  Defaulting to the derived module name [%s])",
-                                artifact.toString(), derivedName);
-
-                            return derivedName;
-                        });
-
-                    return ModuleDescriptor.Builder.create(moduleName)
-                        .setEnhanced(true)
-                        .noLocation();
-                });
-
-            builder.setVersion(artifact.version());
-
-            // attempt to resolve the pom.xml for the Artifact
-            // (we can use this to reverse-engineer the ModuleDescriptor)
-
-            final var resolved = this.maven.resolveArtifactDescriptor(artifact.toString())
-                .flatMap(result -> {
-
-                    // TODO: check if the result had any exceptions!
-
-                    // we only want non-test, non-optional compile, runtime and provided dependencies
-                    final List<Dependency> dependencies = result.getDependencies()
-                        .stream()
-                        .filter(dependency -> (dependency.getScope().equals("compile")
-                            || dependency.getScope().equals("runtime")
-                            || dependency.getScope().equals("provided"))
-                            && !dependency.isOptional())
-                        .toList();
-
-                    if (dependencies.isEmpty()) {
-                        // there's no dependencies, so we may continue with the ModuleDescriptor Builder
-                        return Exceptional.of(builder);
-                    } else {
-                        // include the "compile", "provided" and "runtime" dependencies
-                        dependencies.stream()
-                            .filter(dependency -> dependency.getScope().equals("compile")
-                                || dependency.getScope().equals("runtime")
-                                || dependency.getScope().equals("provided"))
-                            .forEach(dependency -> {
-                                final boolean isStatic = dependency.getScope().equals("provided")
-                                    || dependency.isOptional();
-
-                                final Artifact requiredArtifact = Artifact.create(
-                                    dependency.getArtifact().getGroupId(),
-                                    dependency.getArtifact().getArtifactId(),
-                                    dependency.getArtifact().getVersion(),
-                                    dependency.getArtifact().getExtension(),
-                                    dependency.getArtifact().getClassifier());
-
-                                // include the required ModuleReference
-                                final var reference = getModuleReference(requiredArtifact, catalog)
-                                    .orElseGet(() -> {
-                                        // TODO: warn that we could resolve the required dependency so we're defaulting to a derived module name
-                                        return catalog.getDerivedModuleReference(requiredArtifact);
-                                    });
-
-                                // include the required ModuleReference
-                                final EnumSet<ModuleDescriptor.Requires.Modifier> modifiers = isStatic
-                                    ? EnumSet.of(ModuleDescriptor.Requires.Modifier.STATIC)
-                                    : EnumSet.of(ModuleDescriptor.Requires.Modifier.TRANSITIVE);
-
-                                final Version parsed = reference.version().get();
-                                final Optional<Version> overridden = versioning
-                                    .getVersion(reference.name());
-
-                                if (!parsed.equals(overridden.orElse(null))) {
-                                    overridden.ifPresent(version ->
-                                        this.recorder.warn("Overriding %s version %s with %s",
-                                            reference.name(),
-                                            parsed,
-                                            version));
-                                }
-
-                                // use the overridden version (when available)
-                                final Version version = overridden.orElse(parsed);
-
-                                builder.requires(reference.name(), modifiers, version);
-
-                                // update the Catalog with mapping (if it's not already known)
-                                if (catalog.getModuleName(requiredArtifact).isEmpty()) {
-                                    catalog.add(reference.name(), requiredArtifact);
-                                }
-                            });
-
-                        return Exceptional.of(builder);
-                    }
-                })
-                .map(ModuleDescriptor.Builder::build);
-
-            this.resolvedDescriptors.putIfAbsent(artifact, resolved);
-
-            return resolved;
         }
+
+        // enhancement path: enrich the extracted descriptor in-place with pom.xml data.
+        // For jars with no module-info.class and no Automatic-Module-Name, synthesise a
+        // descriptor from the catalog so POM-based requires can be discovered.
+        final JDKModuleDescriptor enhanced = extracted.map(descriptor -> descriptor)
+            .orElseGet(() -> {
+                final String moduleName = catalog.getModuleName(artifact)
+                    .orElseGet(() -> {
+                        final var derivedName = catalog.getDerivedModuleName(artifact);
+                        this.recorder.warn(
+                            "[%s] is not found in the Module Catalog.  Defaulting to the derived module name [%s])",
+                            artifact.toString(), derivedName);
+                        return derivedName;
+                    });
+                final ModuleName mn = this.codeModel.getNameProvider().getModuleName(moduleName).orElseThrow();
+                final var descriptor = JDKModuleDescriptor.of(this.codeModel, mn);
+                descriptor.addTrait(ModuleModifier.AUTOMATIC);
+                descriptor.addTrait(ModuleModifier.SYNTHETIC);
+                return descriptor;
+            });
+
+        enhanced.getTrait(VersionTrait.class).ifPresent(enhanced::removeTrait);
+        enhanced.addTrait(VersionTrait.of(artifact.version()));
+
+        final var resolved = this.maven.resolveArtifactDescriptor(artifact.toString())
+            .flatMap(result -> {
+                final List<Dependency> dependencies = result.getDependencies().stream()
+                    .filter(d -> (d.getScope().equals("compile")
+                        || d.getScope().equals("runtime")
+                        || d.getScope().equals("provided"))
+                        && !d.isOptional())
+                    .toList();
+
+                dependencies.stream()
+                    .filter(d -> d.getScope().equals("compile")
+                        || d.getScope().equals("runtime")
+                        || d.getScope().equals("provided"))
+                    .forEach(d -> {
+                        final boolean isStatic = d.getScope().equals("provided") || d.isOptional();
+
+                        final Artifact requiredArtifact = Artifact.create(
+                            d.getArtifact().getGroupId(),
+                            d.getArtifact().getArtifactId(),
+                            d.getArtifact().getVersion(),
+                            d.getArtifact().getExtension(),
+                            d.getArtifact().getClassifier());
+
+                        final var reference = getModuleReference(requiredArtifact, catalog)
+                            .filter(r -> r.version().isPresent())
+                            .orElseGet(() -> catalog.getDerivedModuleReference(requiredArtifact));
+
+                        final Version parsed = reference.version().get();
+                        final Optional<Version> overridden = versioning.getVersion(reference.name());
+                        if (!parsed.equals(overridden.orElse(null))) {
+                            overridden.ifPresent(v -> this.recorder.warn(
+                                "Overriding %s version %s with %s", reference.name(), parsed, v));
+                        }
+                        final Version version = overridden.orElse(parsed);
+
+                        final String reqModuleName = reference.name();
+                        final var bytecodeReq = enhanced.requiresClauses()
+                            .filter(r -> r.requiresModuleName().toString().equals(reqModuleName))
+                            .findFirst();
+
+                        if (bytecodeReq.isPresent()) {
+                            // bytecode already declared this require with the correct modifier;
+                            // only fill in the version if bytecode didn't carry one
+                            if (JDKModuleDescriptor.requiresVersion(bytecodeReq.get()).isEmpty()) {
+                                bytecodeReq.get().addTrait(RequiresVersionTrait.of(version));
+                            }
+                        } else {
+                            // not in bytecode (automatic module or missing module-info); derive from POM scope
+                            final ModuleName reqName =
+                                this.codeModel.getNameProvider().getModuleName(reqModuleName).orElseThrow();
+                            final RequiresModuleDescriptor req = RequiresModuleDescriptor.of(this.codeModel, reqName);
+                            req.addTrait(isStatic ? RequiresModifier.STATIC : RequiresModifier.TRANSITIVE);
+                            req.addTrait(RequiresVersionTrait.of(version));
+                            enhanced.addTrait(req);
+                        }
+
+                        if (catalog.getModuleName(requiredArtifact).isEmpty()) {
+                            catalog.add(reference.name(), requiredArtifact);
+                        }
+                    });
+
+                return Exceptional.of(enhanced);
+            });
+
+        this.resolvedDescriptors.putIfAbsent(artifact, resolved);
+        return resolved;
     }
 
     /**

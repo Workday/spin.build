@@ -92,6 +92,16 @@
         </dependency>
 
         <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>jdk-codemodel</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>codemodel-foundation</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>build.spawn</groupId>
             <artifactId>spawn-application</artifactId>
         </dependency>

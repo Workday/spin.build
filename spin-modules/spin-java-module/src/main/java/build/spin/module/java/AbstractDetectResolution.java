@@ -22,12 +22,13 @@ package build.spin.module.java;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleDescriptor;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
@@ -54,7 +55,7 @@ import java.util.stream.Stream;
  * <p>The algorithm has three steps:
  * <ol>
  *   <li>Walk the workspace-sibling transitive closure starting from the injected
- *       {@link ModuleDescriptor#requires()}.</li>
+ *       the injected {@link JDKModuleDescriptor}'s {@code requiresClauses()}.</li>
  *   <li>Resolve each external require transitively via Aether ({@link Artifact.Resolver#resolveTransitive}),
  *       so artifact-graph cycles are handled by the resolver rather than a hand-rolled BFS.</li>
  *   <li>Classify all candidates via {@link ModuleGraphClassifier#classify} with the three-tier
@@ -62,7 +63,7 @@ import java.util.stream.Stream;
  * </ol>
  *
  * <p>Concrete subclasses are empty inner classes of the enclosing plugin, which is what
- * causes the DI framework to bind {@link ModuleDescriptor} to the correct plugin-scoped
+ * causes the DI framework to bind {@link JDKModuleDescriptor} to the correct plugin-scoped
  * descriptor (main vs test).
  */
 public abstract class AbstractDetectResolution
@@ -72,7 +73,7 @@ public abstract class AbstractDetectResolution
     private Project project;
 
     @Inject
-    private ModuleDescriptor moduleDescriptor;
+    private JDKModuleDescriptor moduleDescriptor;
 
     @Inject
     private ModuleCatalog catalog;
@@ -126,21 +127,21 @@ public abstract class AbstractDetectResolution
 
         // Step 1 — Walk the workspace-sibling transitive closure.
         final List<Path> siblingCandidates = new ArrayList<>();
-        final LinkedHashMap<String, ModuleDescriptor.Requires> externalRequires = new LinkedHashMap<>();
+        final LinkedHashMap<String, RequiresModuleDescriptor> externalRequires = new LinkedHashMap<>();
         final Set<String> visited = new HashSet<>();
 
         // seed the frontier from additional paths first (e.g. main classes for test scope)
         additionalSiblingCandidates().forEach(siblingCandidates::add);
 
         // seed the frontier from the direct requires of the injected module descriptor
-        final List<ModuleDescriptor.Requires> frontier = new ArrayList<>();
-        this.moduleDescriptor.requires()
-            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.name()))
+        final List<RequiresModuleDescriptor> frontier = new ArrayList<>();
+        this.moduleDescriptor.requiresClauses()
+            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
             .forEach(frontier::add);
 
         while (!frontier.isEmpty()) {
-            final ModuleDescriptor.Requires requires = frontier.remove(0);
-            final String name = requires.name();
+            final RequiresModuleDescriptor requires = frontier.remove(0);
+            final String name = requires.requiresModuleName().toString();
 
             if (JavaPlatform.isJavaPlatformModule(name) || !visited.add(name)) {
                 continue;
@@ -152,7 +153,7 @@ public abstract class AbstractDetectResolution
                 .filter(prj -> prj.plugins(JavaCompilerPlugin.class)
                     .findFirst()
                     .map(JavaCompilerPlugin::getModuleDescriptor)
-                    .map(d -> name.equals(d.name()))
+                    .map(d -> name.equals(d.moduleName().toString()))
                     .orElse(false))
                 .findFirst();
 
@@ -164,9 +165,9 @@ public abstract class AbstractDetectResolution
                 // enqueue the sibling's own direct requires onto the frontier
                 sibling.get().plugins(JavaCompilerPlugin.class)
                     .findFirst()
-                    .ifPresent(plugin -> plugin.getModuleDescriptor().requires()
-                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.name()))
-                        .filter(r -> !visited.contains(r.name()))
+                    .ifPresent(plugin -> plugin.getModuleDescriptor().requiresClauses()
+                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                        .filter(r -> !visited.contains(r.requiresModuleName().toString()))
                         .forEach(frontier::add));
             }
             else {
@@ -178,9 +179,9 @@ public abstract class AbstractDetectResolution
         // Step 2 — Resolve external requires via Aether (handles artifact-graph cycles internally).
         final List<Path> externalCandidates = new ArrayList<>();
 
-        for (final ModuleDescriptor.Requires r : externalRequires.values()) {
-            final Optional<Version> moduleVersion = this.versioning.getVersion(r.name());
-            final Optional<Version> requiresVersion = r.version();
+        for (final RequiresModuleDescriptor r : externalRequires.values()) {
+            final Optional<Version> moduleVersion = this.versioning.getVersion(r.requiresModuleName().toString());
+            final Optional<Version> requiresVersion = JDKModuleDescriptor.requiresVersion(r);
 
             final Version requiredVersion;
             if (moduleVersion.isPresent()) {
@@ -192,16 +193,16 @@ public abstract class AbstractDetectResolution
             else {
                 this.recorder.warn(
                     "Cannot determine version for external require [%s] in [%s] — skipping",
-                    r.name(), this.project.name());
+                    r.requiresModuleName().toString(), this.project.name());
                 continue;
             }
 
-            final ModuleReference moduleReference = ModuleReference.of(r.name(), requiredVersion);
+            final ModuleReference moduleReference = ModuleReference.of(r.requiresModuleName().toString(), requiredVersion);
             final Optional<Artifact> artifact = this.catalog.getArtifact(moduleReference);
 
             if (artifact.isEmpty()) {
                 this.recorder.warn(
-                    "Module [%s] not found in ModuleCatalog — skipping", r.name());
+                    "Module [%s] not found in ModuleCatalog — skipping", r.requiresModuleName().toString());
                 continue;
             }
 
@@ -234,8 +235,8 @@ public abstract class AbstractDetectResolution
         candidates.addAll(siblingCandidates);
         candidates.addAll(externalCandidates);
 
-        final Set<String> directRequireNames = this.moduleDescriptor.requires()
-            .map(ModuleDescriptor.Requires::name)
+        final Set<String> directRequireNames = this.moduleDescriptor.requiresClauses()
+            .map(r -> r.requiresModuleName().toString())
             .filter(n -> !JavaPlatform.isJavaPlatformModule(n))
             .collect(Collectors.toCollection(LinkedHashSet::new));
 

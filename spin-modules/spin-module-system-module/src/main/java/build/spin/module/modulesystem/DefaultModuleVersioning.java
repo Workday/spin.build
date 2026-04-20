@@ -44,11 +44,6 @@ public class DefaultModuleVersioning
         return Optional.empty();
     }
 
-    @Override
-    public Optional<Version> getVersion(final ModuleDescriptor descriptor) {
-        return Optional.empty();
-    }
-
     /**
      * The {@link Resource.MetaClass} for {@link DefaultModuleVersioning}.
      */

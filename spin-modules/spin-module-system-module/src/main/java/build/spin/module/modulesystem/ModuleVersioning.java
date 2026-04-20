@@ -40,11 +40,5 @@ public interface ModuleVersioning {
      */
     Optional<Version> getVersion(String moduleName);
 
-    /**
-     * Attempts to obtain the {@link Version} for the specified {@link ModuleDescriptor}.
-     *
-     * @param descriptor the {@link ModuleDescriptor}
-     * @return {@link Optional} {@link Version}
-     */
-    Optional<Version> getVersion(ModuleDescriptor descriptor);
+    Version DEFAULT_VERSION = Version.parse("1.0.0-SNAPSHOT");
 }
