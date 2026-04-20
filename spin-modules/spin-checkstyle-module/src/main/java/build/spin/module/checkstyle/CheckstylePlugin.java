@@ -34,6 +34,7 @@ import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.After;
+import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
 import build.spin.module.java.JavaCompilerPlugin;
@@ -69,6 +70,7 @@ public class CheckstylePlugin
      * A {@link Task} to perform <a href="https://checkstyle.org/">Checkstyle</a> analysis on a {@link Project}.
      */
     @Named("checkstyle")
+    @Description("Run Checkstyle static analysis")
     @After(JavaCompilerPlugin.Compile.class)
     public static class Checkstyle
         implements Task {

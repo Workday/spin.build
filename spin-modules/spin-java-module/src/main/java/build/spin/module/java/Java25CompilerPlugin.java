@@ -29,6 +29,7 @@ import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.After;
 import build.spin.annotation.Category;
+import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
 import build.spin.module.clean.CleanPlugin;
@@ -137,6 +138,7 @@ public class Java25CompilerPlugin
      * A {@link Task} to compile the source code in the {@link Project}.
      */
     @Named("compile")
+    @Description("Compile Java sources")
     public static class Compile
         extends AbstractCompile
         implements JavaCompilerPlugin.Compile {
@@ -172,6 +174,7 @@ public class Java25CompilerPlugin
      * A {@link Task} to generate Java Documentation from the source code in the {@link Project}.
      */
     @Named("javadoc")
+    @Description("Generate Javadoc")
     @Category("document")
     @Category("build")
     @After(Compile.class)
@@ -208,6 +211,7 @@ public class Java25CompilerPlugin
      * A {@link Task} to perform Java Dependencies analysis on compiled and packaged code in the {@link Project}.
      */
     @Named("jdeps")
+    @Description("Analyse module dependencies with jdeps")
     public static class JavaDependencyAnalysis
         extends AbstractJavaDependencyAnalysis {
 
@@ -224,6 +228,7 @@ public class Java25CompilerPlugin
      * A {@link Task} to perform Java Linking on a {@link Project}.
      */
     @Named("jlink")
+    @Description("Build a jlink runtime image")
     public static class JavaLinker
         extends AbstractJavaLinker {
 

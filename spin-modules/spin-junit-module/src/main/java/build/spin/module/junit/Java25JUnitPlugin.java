@@ -28,6 +28,7 @@ import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Reference;
 import build.spin.annotation.Before;
+import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
 import build.spin.module.clean.CleanPlugin;
@@ -137,6 +138,7 @@ public class Java25JUnitPlugin
      * A {@link build.spin.Task} to compile the source code in the {@link Project}.
      */
     @Named("test-compile")
+    @Description("Compile test sources")
     public static class Compile
         extends AbstractCompile
         implements JUnitPlugin.Compile {
@@ -186,6 +188,7 @@ public class Java25JUnitPlugin
      * A {@link build.spin.Task} to execute compiled tests in the {@link Project}.
      */
     @Named("test")
+    @Description("Run JUnit tests")
     public static class Test
         extends AbstractTest {
 

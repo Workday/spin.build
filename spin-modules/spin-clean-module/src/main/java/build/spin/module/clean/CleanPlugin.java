@@ -23,6 +23,7 @@ package build.spin.module.clean;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
+import build.spin.annotation.Description;
 import build.spin.option.BuildDirectoryName;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
@@ -85,6 +86,7 @@ public class CleanPlugin
      * A {@link Task} to remove a previously created build {@link Path} for a {@link Project}.
      */
     @Named("clean")
+    @Description("Remove and recreate the build directory")
     public static class RemoveBuildPath
         implements Task<Path> {
 
