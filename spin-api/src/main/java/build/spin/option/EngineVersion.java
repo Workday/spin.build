@@ -62,9 +62,18 @@ public class EngineVersion
      * @param version the version
      * @return an {@link EngineVersion}
      */
-    @CommandLine.Prefix("--engine-version")
-    @CommandLine.Description("Engine Version")
     public static EngineVersion of(final String version) {
         return new EngineVersion(version);
+    }
+
+    /**
+     * Returns the auto-detected {@link EngineVersion}. Used as the {@code --version} flag handler.
+     *
+     * @return the auto-detected {@link EngineVersion}
+     */
+    @CommandLine.Prefix("--version")
+    @CommandLine.Description("Print the spin version and exit")
+    public static EngineVersion version() {
+        return autodetect();
     }
 }

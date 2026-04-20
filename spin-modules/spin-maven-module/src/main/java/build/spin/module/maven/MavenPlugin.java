@@ -33,6 +33,7 @@ import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.After;
 import build.spin.annotation.Category;
+import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractJavaPlugin;
@@ -223,6 +224,7 @@ public class MavenPlugin
      * Creates a Java Archive (jar) containing the compiled byte code and resources for the {@link Project}.
      */
     @Named("package.module")
+    @Description("Package JAR, sources, and Javadoc")
     @Category("package")
     @Category("build")
     public static class PackageModule

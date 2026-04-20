@@ -40,6 +40,11 @@
             <version>${revision}</version>
         </dependency>
 
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+        </dependency>
+
         <!-- ServiceLoader-discovered plugin modules -->
         <dependency>
             <groupId>build.spin.module</groupId>
