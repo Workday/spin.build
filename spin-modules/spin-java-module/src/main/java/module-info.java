@@ -18,6 +18,7 @@
  * #L%
  */
 
+@build.base.template.ProcessTemplates
 module build.spin.module.java {
     requires transitive build.spin.engine;
     requires transitive build.spin.module.clean;
@@ -26,6 +27,7 @@ module build.spin.module.java {
 
     requires build.base.expression;
     requires build.base.flow;
+    requires build.base.template;
     requires build.base.foundation;
     requires build.base.io;
     requires build.base.option;
@@ -39,8 +41,8 @@ module build.spin.module.java {
     requires build.spawn.platform.local.jdk;
     requires build.spin;
     requires build.spin.common;
-    requires freemarker;
     requires jakarta.inject;
+    requires static build.base.template.processor;
 
     uses build.spawn.platform.local.jdk.JDKDetector;
 

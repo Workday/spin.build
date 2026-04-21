@@ -69,7 +69,6 @@
         <base.version>0.23.1</base.version>
         <codemodel.version>0.21.1</codemodel.version>
         <checkstyle.version>13.3.0</checkstyle.version>
-        <freemarker.version>2.3.34</freemarker.version>
         <assertj.version>3.27.7</assertj.version>
         <jackson.version>2.21.2</jackson.version>
         <jakarta.el.api.version>6.0.1</jakarta.el.api.version>
@@ -341,9 +340,15 @@
 
 
             <dependency>
-                <groupId>org.freemarker</groupId>
-                <artifactId>freemarker</artifactId>
-                <version>${freemarker.version}</version>
+                <groupId>build.base</groupId>
+                <artifactId>base-template</artifactId>
+                <version>${base.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>build.base</groupId>
+                <artifactId>base-template-processor</artifactId>
+                <version>${base.version}</version>
             </dependency>
 
             <!-- Maven Dependencies -->

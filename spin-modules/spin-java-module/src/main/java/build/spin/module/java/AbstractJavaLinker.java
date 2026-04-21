@@ -22,6 +22,7 @@ package build.spin.module.java;
 
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.template.TextOut;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Application;
 import build.spawn.application.Console;
@@ -35,15 +36,12 @@ import build.spin.annotation.System;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
-import freemarker.template.Configuration;
-import freemarker.template.TemplateExceptionHandler;
 import jakarta.inject.Inject;
 
 import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -53,8 +51,7 @@ import java.util.stream.Collectors;
  * <a href="https://docs.oracle.com/en/java/javase/25/docs/specs/man/jlink.html">jlink</a> tool
  * on the compiled and packaged {@link Artifact} for a {@link Project}.
  * <p>
- * The {@code script.ftl} file contains a <a href="https://freemarker.apache.org">Apache Freemarker</a>-based script
- * that will be used to create a unix-based script to execute the linked application.
+ * A {@code ScriptTemplate} (generated from {@code ScriptTemplate.jt}) generates a unix-based script to execute the linked application.
  *
  * @author brian.oliver
  * @since Jan-2023
@@ -194,41 +191,14 @@ public abstract class AbstractJavaLinker
             // create the script to execute the application
             final var scriptPath = packagePath.resolve("bin");
 
-            final var cfg = new Configuration(Configuration.VERSION_2_3_31);
-
-            cfg.setDefaultEncoding("UTF-8");
-            cfg.setClassForTemplateLoading(Java25CompilerPlugin.class, "/");
-            cfg.setTemplateExceptionHandler(TemplateExceptionHandler.RETHROW_HANDLER);
-            cfg.setLogTemplateExceptions(true);
-            cfg.setWrapUncheckedExceptions(true);
-            cfg.setFallbackOnNullLoopVariable(false);
-
-            // establish the data model object for the template
-            final var model = new HashMap<String, Object>();
-
             // The script template references $MP (modules/) and $LIB (classpath/). Only the
             // classpath entries are listed explicitly; the module-path is a single directory.
             final var classPath = classPathTargets.stream()
                 .map(path -> "$LIB/" + path.getFileName())
                 .collect(Collectors.joining(":"));
 
-            model.put("classpath", classPath);
-            model.put("rootModule", rootModule);
-            model.put("name", packageName);
-
-            // include the version number (if present)
-            this.descriptor.version()
-                .ifPresent(version -> model.put("version", version.toString()));
-
-            // TODO: (one day... include all of the jlink configuration parameters from the configuration file)
-
-            // acquire the Template
-            final var template = cfg.getTemplate("script.ftl");
-
-            // establish the output writer for the processed template
             try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
-                // process the Template (into the bin folder)
-                template.process(model, writer);
+                new ScriptTemplate(classPath, rootModule, packageName).render(new TextOut(writer));
             }
 
             // make the script executable

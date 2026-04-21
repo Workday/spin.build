@@ -31,6 +31,7 @@ import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
 import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Name;
@@ -138,7 +139,29 @@ public abstract class AbstractCompile
     private String buildProcessorModulePath() {
         final List<Path> paths = new ArrayList<>();
         final Set<String> visited = new HashSet<>();
+
+        // workspace sibling projects providing javax.annotation.processing.Processor
         annotationProcessorProjects().forEach(prj -> collectProcessorDeps(prj, paths, visited));
+
+        // requires static → external annotation processors resolved from catalog
+        this.moduleDescriptor.requiresClauses()
+            .filter(r -> r.traits(RequiresModifier.class).anyMatch(m -> m == RequiresModifier.STATIC))
+            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+            .forEach(r -> {
+                final String name = r.requiresModuleName().toString();
+                if (visited.add(name)) {
+                    this.versioning.getVersion(name)
+                        .or(() -> JDKModuleDescriptor.requiresVersion(r))
+                        .flatMap(v -> this.catalog.getArtifact(ModuleReference.of(name, v)))
+                        .ifPresent(artifact -> this.resolver.resolveTransitive(artifact)
+                            .ifPresent(resolved -> resolved.forEach(p -> {
+                                if (visited.add(p.toString())) {
+                                    paths.add(p);
+                                }
+                            })));
+                }
+            });
+
         return paths.stream().map(Path::toString).collect(Collectors.joining(File.pathSeparator));
     }
 
@@ -160,6 +183,7 @@ public abstract class AbstractCompile
                                            final Set<String> visited) {
         final LinkedList<RequiresModuleDescriptor> frontier = descriptor.requiresClauses()
             .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+            .filter(r -> r.traits(RequiresModifier.class).noneMatch(m -> m == RequiresModifier.STATIC))
             .collect(Collectors.toCollection(LinkedList::new));
 
         while (!frontier.isEmpty()) {

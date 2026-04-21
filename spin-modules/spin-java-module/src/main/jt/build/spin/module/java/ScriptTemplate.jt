@@ -1,0 +1,12 @@
+package build.spin.module.java;
+
+template TextOut ScriptTemplate(String classpath, String rootModule, String name) {
+#!/bin/sh
+
+SCRIPTPATH=$(dirname `readlink -f "$0"`)
+
+MP=`readlink -f "$SCRIPTPATH/../modules"`
+LIB=`readlink -f "$SCRIPTPATH/../classpath"`
+
+$SCRIPTPATH/java -Djava.util.logging.manager=org.jboss.logmanager.LogManager --module-path $MP#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/build.spin.application.Spin $@
+@end
