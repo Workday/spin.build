@@ -126,12 +126,15 @@
             <artifactId>jakarta.inject-api</artifactId>
         </dependency>
 
-        <!-- TODO: FreeMaker support should be provided by a FreeMaker Extension (ie: Resource) -->
-        <!-- we're putting this in here just for now to get jlink working -->
-        <!-- we'll refactor/tidy this up after jlink is completely working -->
         <dependency>
-            <groupId>org.freemarker</groupId>
-            <artifactId>freemarker</artifactId>
+            <groupId>build.base</groupId>
+            <artifactId>base-template</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-template-processor</artifactId>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
@@ -146,4 +149,37 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <generatedSourcesDirectory>${project.build.directory}/generated-sources/jt</generatedSourcesDirectory>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>build.base</groupId>
+                            <artifactId>base-template-processor</artifactId>
+                            <version>${base.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>analyze-dependencies</id>
+                        <configuration>
+                            <ignoredUnusedDeclaredDependencies combine.children="append">
+                                <ignoredUnusedDeclaredDependency>build.base:base-template-processor</ignoredUnusedDeclaredDependency>
+                            </ignoredUnusedDeclaredDependencies>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
