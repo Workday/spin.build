@@ -38,12 +38,14 @@ import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import jakarta.inject.Inject;
 
+import java.io.IOException;
 import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 /**
@@ -91,6 +93,13 @@ public abstract class AbstractJavaLinker
                       final DependencyAnalysis analysis)
         throws Exception {
 
+        // jlink only makes sense for executable applications. Skip silently for library modules.
+        final Optional<String> mainClass = detectMainClass(this.project.path(), this.recorder);
+        if (mainClass.isEmpty()) {
+            this.recorder.diagnostic("Skipping jlink for [%s]: no main class found", this.project.path());
+            return buildPath;
+        }
+
         // establish the name of the package and script
         final var packageName = this.project.name();
         final var scriptName = packageName + ".sh";
@@ -99,24 +108,45 @@ public abstract class AbstractJavaLinker
         final var packagePath = buildPath.resolve(packageName);
 
         // ------
-        // create a list of the Java Platform modules to link
-        // (the rest are going on the ClassPath for now!)
-        final var bootModuleNames = ModuleLayer.boot().modules().stream()
-            .map(Module::getName)
-            .collect(Collectors.toSet());
-
-        final var moduleNames = analysis.platformModules()
-            .map(ModuleReference::name)
-            .filter(bootModuleNames::contains)  // only include modules that actually exist in this JDK
-            .collect(Collectors.joining(","));
-
-        // ------
-        // create a configuration to run jlink
+        // resolve the JDK to use for linking
         final var jdk = this.platform.getVersion(this.systemJavaVersion.major())
             .or(this.platform::getLatest)
             .orElseThrow(() -> new RuntimeException("No JDK found for Java " + this.systemJavaVersion.major() + " and no latest JDK available on platform"));
         final var javaHome = jdk.home().path();
         final var jlinkPath = javaHome.resolve("bin/jlink");
+
+        // Derive the set of module names available in the target JDK by reading the
+        // jmods/ directory.  We only need the names for --add-modules filtering; we do
+        // NOT use ModuleFinder.of(.jmod files) because the JDK rejects .jmod reads at
+        // execution time ("JMOD format not supported at execution time") — .jmod is a
+        // link-time-only format.  Filename stripping is sufficient and reliable: the
+        // file is always named <module-name>.jmod.
+        final var jmodsDir = javaHome.resolve("jmods");
+        final Set<String> jdkModuleNames;
+        if (Files.isDirectory(jmodsDir)) {
+            try (var jmodPaths = Files.list(jmodsDir)) {
+                jdkModuleNames = jmodPaths
+                    .filter(p -> p.toString().endsWith(".jmod"))
+                    .map(p -> {
+                        final var n = p.getFileName().toString();
+                        return n.substring(0, n.length() - ".jmod".length());
+                    })
+                    .collect(Collectors.toSet());
+            }
+        } else {
+            jdkModuleNames = ModuleFinder.ofSystem().findAll().stream()
+                .map(mr -> mr.descriptor().name())
+                .collect(Collectors.toSet());
+        }
+
+        // ------
+        // create a list of the Java Platform modules to link
+        // (the rest are going on the ClassPath for now!)
+
+        final var moduleNames = analysis.platformModules()
+            .map(ModuleReference::name)
+            .filter(jdkModuleNames::contains)  // only include modules that actually exist in this JDK
+            .collect(Collectors.joining(","));
 
         try (var jlink = this.machine.launch(Application.class,
             Executable.of(jlinkPath.toString()),
@@ -161,20 +191,25 @@ public abstract class AbstractJavaLinker
 
             final var rootModule = this.descriptor.moduleName().toString();
 
-            // Classify against an empty parent configuration. We cannot use
-            // ModuleLayer.boot().configuration() as the parent (as build.spin.application.Launcher
-            // does) because spin itself is running on the module path — its boot layer already
-            // contains build.spin.module.* modules, and asking Configuration.resolve to add those
-            // same names from the finder produces "reads more than one module named X" errors.
-            // Launcher gets away with boot() because its own boot layer has no spin modules; the
-            // linker runs inside spin so the collision is inevitable.
-            final var classification = ModuleGraphClassifier.classifyAndResolve(
-                candidatePaths,
-                Set.of(rootModule),
-                rootModule,
-                java.lang.module.Configuration.empty(),
-                ModuleFinder.ofSystem(),
-                msg -> this.recorder.info("[classify] %s", msg));
+            // Prefer classifyAndResolve so unreachable jars are pruned from modules/.
+            // When spin runs from its own jlink image ModuleFinder.ofSystem() only covers
+            // spin's modules, so resolving an app that requires JDK modules outside that
+            // image (e.g. java.net.http) will fail — fall back to classify-only in that case.
+            ModuleGraphClassifier.Classification classification;
+            try {
+                classification = ModuleGraphClassifier.classifyAndResolve(
+                    candidatePaths,
+                    Set.of(rootModule),
+                    rootModule,
+                    java.lang.module.Configuration.empty(),
+                    ModuleFinder.ofSystem(),
+                    msg -> this.recorder.info("[classify] %s", msg));
+            } catch (final IllegalStateException e) {
+                classification = ModuleGraphClassifier.classify(
+                    candidatePaths,
+                    Set.of(rootModule),
+                    msg -> this.recorder.info("[classify] %s", msg));
+            }
             final Set<Path> modulePathJars = new LinkedHashSet<>(classification.modulePath());
 
             final List<Path> classPathTargets = new ArrayList<>();
@@ -198,7 +233,7 @@ public abstract class AbstractJavaLinker
                 .collect(Collectors.joining(":"));
 
             try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
-                new ScriptTemplate(classPath, rootModule, packageName).render(new TextOut(writer));
+                new ScriptTemplate(classPath, rootModule, mainClass.get(), packageName).render(new TextOut(writer));
             }
 
             // make the script executable
@@ -206,6 +241,46 @@ public abstract class AbstractJavaLinker
         }
 
         return jlinkPath;
+    }
+
+    private static Optional<String> detectMainClass(final Path projectPath,
+                                                     final TelemetryRecorder recorder) {
+        final Path srcDir = projectPath.resolve("src/main/java");
+        if (!Files.isDirectory(srcDir)) {
+            return Optional.empty();
+        }
+        try (var walk = Files.walk(srcDir)) {
+            return walk
+                .filter(p -> p.toString().endsWith(".java"))
+                .filter(p -> !p.getFileName().toString().equals("module-info.java"))
+                .filter(AbstractJavaLinker::hasMainMethod)
+                .map(p -> toClassName(p, srcDir))
+                .peek(name -> recorder.diagnostic("[jlink] auto-detected main class: %s", name))
+                .findFirst();
+        } catch (final IOException e) {
+            return Optional.empty();
+        }
+    }
+
+    private static boolean hasMainMethod(final Path javaFile) {
+        try {
+            return Files.readString(javaFile).contains("void main(");
+        } catch (final IOException e) {
+            return false;
+        }
+    }
+
+    private static String toClassName(final Path javaFile, final Path srcDir) {
+        final Path rel = srcDir.relativize(javaFile);
+        final StringBuilder name = new StringBuilder();
+        for (int i = 0; i < rel.getNameCount(); i++) {
+            if (i > 0) {
+                name.append('.');
+            }
+            final String part = rel.getName(i).toString();
+            name.append(i == rel.getNameCount() - 1 ? part.replaceAll("\\.java$", "") : part);
+        }
+        return name.toString();
     }
 
 }
