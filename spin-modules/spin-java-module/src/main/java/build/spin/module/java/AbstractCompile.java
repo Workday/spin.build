@@ -29,9 +29,7 @@ import build.base.telemetry.Activity;
 import build.base.telemetry.Meter;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
-import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
-import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Name;
@@ -50,7 +48,6 @@ import build.spin.annotation.System;
 import build.spin.common.reactive.ConditionalConsumingObserver;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
@@ -62,13 +59,7 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -121,107 +112,11 @@ public abstract class AbstractCompile
     @Inject
     private TargetDirectoryName targetDirectoryName;
 
-    private static final String ANNOTATION_PROCESSOR_SERVICE = "javax.annotation.processing.Processor";
-
-    private Stream<Project> annotationProcessorProjects() {
-        if (this.moduleDescriptor.annotationClauses().findAny().isEmpty()) {
-            return Stream.empty();
-        }
-        return this.project.workspace().stream()
-            .filter(prj -> prj.plugins(JavaCompilerPlugin.class)
-                .findFirst()
-                .map(JavaCompilerPlugin::getModuleDescriptor)
-                .map(d -> d.providesClauses().anyMatch(
-                    p -> ANNOTATION_PROCESSOR_SERVICE.equals(p.serviceType().toString())))
-                .orElse(false));
-    }
-
     private String buildProcessorModulePath() {
-        final List<Path> paths = new ArrayList<>();
-        final Set<String> visited = new HashSet<>();
-
-        // workspace sibling projects providing javax.annotation.processing.Processor
-        annotationProcessorProjects().forEach(prj -> collectProcessorDeps(prj, paths, visited));
-
-        // requires static → external annotation processors resolved from catalog
-        this.moduleDescriptor.requiresClauses()
-            .filter(r -> r.traits(RequiresModifier.class).anyMatch(m -> m == RequiresModifier.STATIC))
-            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
-            .forEach(r -> {
-                final String name = r.requiresModuleName().toString();
-                if (visited.add(name)) {
-                    this.versioning.getVersion(name)
-                        .or(() -> JDKModuleDescriptor.requiresVersion(r))
-                        .flatMap(v -> this.catalog.getArtifact(ModuleReference.of(name, v)))
-                        .ifPresent(artifact -> this.resolver.resolveTransitive(artifact)
-                            .ifPresent(resolved -> resolved.forEach(p -> {
-                                if (visited.add(p.toString())) {
-                                    paths.add(p);
-                                }
-                            })));
-                }
-            });
-
-        return paths.stream().map(Path::toString).collect(Collectors.joining(File.pathSeparator));
-    }
-
-    private void collectProcessorDeps(final Project prj,
-                                      final List<Path> paths,
-                                      final Set<String> visited) {
-        prj.plugins(JavaCompilerPlugin.class).findFirst().ifPresent(plugin -> {
-            final JDKModuleDescriptor desc = plugin.getModuleDescriptor();
-            if (!visited.add(desc.moduleName().toString())) {
-                return;
-            }
-            paths.add(outputPath(prj));
-            collectTransitiveRequires(desc, paths, visited);
-        });
-    }
-
-    private void collectTransitiveRequires(final JDKModuleDescriptor descriptor,
-                                           final List<Path> paths,
-                                           final Set<String> visited) {
-        final LinkedList<RequiresModuleDescriptor> frontier = descriptor.requiresClauses()
-            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
-            .filter(r -> r.traits(RequiresModifier.class).noneMatch(m -> m == RequiresModifier.STATIC))
-            .collect(Collectors.toCollection(LinkedList::new));
-
-        while (!frontier.isEmpty()) {
-            final RequiresModuleDescriptor req = frontier.remove();
-            final String name = req.requiresModuleName().toString();
-            if (!visited.add(name)) {
-                continue;
-            }
-
-            final Optional<Project> sibling = findSiblingByModuleName(name);
-            if (sibling.isPresent()) {
-                paths.add(outputPath(sibling.get()));
-                sibling.get().plugins(JavaCompilerPlugin.class).findFirst()
-                    .ifPresent(p -> p.getModuleDescriptor().requiresClauses()
-                        .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
-                        .filter(r -> !visited.contains(r.requiresModuleName().toString()))
-                        .forEach(frontier::add));
-            } else {
-                this.versioning.getVersion(name).or(() -> JDKModuleDescriptor.requiresVersion(req))
-                    .flatMap(v -> this.catalog.getArtifact(ModuleReference.of(name, v)))
-                    .ifPresent(artifact -> this.resolver.resolveTransitive(artifact)
-                        .ifPresent(paths::addAll));
-            }
-        }
-    }
-
-    private Optional<Project> findSiblingByModuleName(final String moduleName) {
-        return this.project.workspace().stream()
-            .filter(p -> p.plugins(JavaCompilerPlugin.class).findFirst()
-                .map(JavaCompilerPlugin::getModuleDescriptor)
-                .map(d -> moduleName.equals(d.moduleName().toString()))
-                .orElse(false))
-            .findFirst();
-    }
-
-    private Path outputPath(final Project prj) {
-        return prj.path().resolve(
-            this.buildDirectoryName.get() + "/main/" + this.targetDirectoryName.get());
+        return AnnotationProcessorPaths.build(
+            this.moduleDescriptor, this.project,
+            this.catalog, this.versioning, this.resolver,
+            this.buildDirectoryName, this.targetDirectoryName);
     }
 
     @Override
@@ -270,7 +165,8 @@ public abstract class AbstractCompile
                 .filter(Objects::nonNull));
 
         // also depend on any workspace annotation processor modules so they are compiled before us
-        final Stream<Reference> processorDeps = annotationProcessorProjects()
+        final Stream<Reference> processorDeps = AnnotationProcessorPaths
+            .annotationProcessorProjects(this.moduleDescriptor, this.project)
             .flatMap(prj -> prj.plugins(JavaCompilerPlugin.class)
                 .findFirst()
                 .map(plugin -> prj.invocables()
@@ -400,6 +296,15 @@ public abstract class AbstractCompile
             if (!processorModulePath.isEmpty()) {
                 writer.println("--processor-module-path "
                     + Strings.doubleQuoteIfContainsWhiteSpace(processorModulePath));
+
+                // direct generated source files to a predictable directory so javadoc can find them
+                final Path generatedSources = buildPath.resolve("main/generated-sources");
+                try {
+                    Files.createDirectories(generatedSources);
+                } catch (final IOException e) {
+                    throw new RuntimeException("Failed to create generated-sources directory [" + generatedSources + "]", e);
+                }
+                writer.println("-s " + Strings.doubleQuoteIfContainsWhiteSpace(generatedSources.toString()));
             }
 
             // lastly include the source code to compile
