@@ -197,10 +197,22 @@ public abstract class AbstractJavaDoc
                 // output links to each of the "external" projects
                 // TODO: https://javadoc.io/doc/<groupId>/<artifactId>/<version>
 
-                // lastly include the source code to compile
+                // lastly include the source code to document, plus any sources generated
+                // by annotation processors during the preceding compile step
                 sourceCode.stream()
                     .peek(path -> this.recorder.diagnostic("Preparing [%s] for documentation", path))
                     .forEach(writer::println);
+
+                final Path generatedSources = buildPath.resolve("main/generated-sources");
+                if (Files.isDirectory(generatedSources)) {
+                    try (var walk = Files.walk(generatedSources)) {
+                        walk.filter(p -> p.toString().endsWith(".java"))
+                            .peek(path -> this.recorder.diagnostic("Preparing [%s] for documentation", path))
+                            .forEach(writer::println);
+                    } catch (final IOException e) {
+                        this.recorder.warn(e, "Failed to walk generated-sources [%s]", generatedSources);
+                    }
+                }
             }
 
             // establish the "javadoc" executable based on the Java Development Kit
