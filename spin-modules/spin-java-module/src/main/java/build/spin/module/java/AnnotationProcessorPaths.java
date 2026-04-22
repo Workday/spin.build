@@ -101,6 +101,9 @@ final class AnnotationProcessorPaths {
 
     static Stream<Project> annotationProcessorProjects(final JDKModuleDescriptor moduleDescriptor,
                                                         final Project project) {
+        if (moduleDescriptor.annotationClauses().findAny().isEmpty()) {
+            return Stream.empty();
+        }
         return project.workspace().stream()
             .filter(prj -> prj.plugins(JavaCompilerPlugin.class)
                 .findFirst()
