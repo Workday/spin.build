@@ -24,6 +24,9 @@ import build.base.configuration.Configuration;
 import build.base.foundation.Capture;
 import build.base.foundation.Introspection;
 import build.base.foundation.UniformResource;
+import build.base.graph.Graph;
+import build.base.graph.GraphCycles;
+import build.base.graph.GraphOrdering;
 import build.base.telemetry.Activity;
 import build.base.telemetry.Meter;
 import build.base.telemetry.TelemetryRecorder;
@@ -58,10 +61,9 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Queue;
 import java.util.Stack;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -96,6 +98,18 @@ public final class DefaultProgram
      * The {@link DefaultInstruction} {@link Instruction}s by {@link Reference}.
      */
     private final LinkedHashMap<Reference, DefaultInstruction<?>> instructions;
+
+    /**
+     * The topological execution order derived from the task dependency graph.
+     * Empty when a cycle was detected; see {@link #detectedCycle}.
+     */
+    private final List<Reference> executionOrder;
+
+    /**
+     * A cycle detected in the task dependency graph, if any.
+     * Non-empty means {@link #execute} must throw immediately.
+     */
+    private final List<Reference> detectedCycle;
 
     /**
      * The {@link Context} for the {@link Program}.
@@ -288,14 +302,18 @@ public final class DefaultProgram
 
         creatingInstructions.complete();
 
-        // add the dependencies as dependents
-        this.instructions.values()
-            .forEach(instruction -> instruction.dependencies()
-                .map(this.instructions::get)
-                .filter(Objects::nonNull)  // the dependency may not exist in the project, so we skip it (that's ok)
-                .forEach(dependent -> dependent.addDependent(instruction.getReference())));
+        // build the dependency graph: edge A → B means "A depends on B"
+        final Graph.Builder<Reference> graphBuilder = Graph.directed();
+        this.instructions.keySet().forEach(graphBuilder::addVertex);
+        this.instructions.values().forEach(instruction ->
+            instruction.dependencies()
+                .filter(this.instructions::containsKey)
+                .forEach(dep -> graphBuilder.addEdge(instruction.getReference(), dep)));
+        final Graph<Reference> dependencyGraph = graphBuilder.build();
 
-        // TODO: validate instructions (ensure no cyclic dependencies)
+        final var cycle = GraphCycles.findCycle(dependencyGraph);
+        this.detectedCycle = cycle.orElse(List.of());
+        this.executionOrder = cycle.isPresent() ? List.of() : GraphOrdering.topologicalSort(dependencyGraph);
 
         inference.complete();
 
@@ -357,170 +375,85 @@ public final class DefaultProgram
     public synchronized AssetCache execute(final AssetCache cache)
         throws ProgramExecutionException {
 
+        if (!this.detectedCycle.isEmpty()) {
+            throw new ProgramExecutionException(this, this.detectedCycle.get(0),
+                "Cyclic task dependency detected: " + this.detectedCycle);
+        }
+
         final Meter execution = this.recorder.commence(this.instructions.size(), "Executing Program Tasks");
 
-        // establish the ExecutionCache to cache results for this Program
         final AssetCache localCache = DefaultAssetCache.create();
-
-        // establish the ExecutionCache to use for resolving values
         final AssetCache executionCache = NearAssetCache.of(localCache, cache);
 
-        // establish the remaining Executables to execute
-        final HashSet<Reference> remaining = new HashSet<>(this.instructions.keySet());
+        for (final Reference reference : this.executionOrder) {
+            final DefaultInstruction<?> instruction = this.instructions.get(reference);
 
-        // establish the execution queue of Executables to execute
-        final Queue<DefaultInstruction<?>> queue = new LinkedList<>();
-
-        // queue the initial Executables to execute (those with no dependencies)
-        this.instructions.values().stream()
-            .filter(instruction -> !instruction.hasDependencies())
-            .forEach(queue::add);
-
-        while (!queue.isEmpty()) {
-
-            // obtain the next Executable to execute from the queue
-            final DefaultInstruction<?> instruction = queue.poll();
-
-            // obtain the Reference and Project for the Task from the Instruction (we'll need these a lot)
-            final Reference reference = instruction.getReference();
-            final Project project = instruction.getProject();
+            if (executionCache.contains(reference)) {
+                continue;
+            }
 
             final Invocable<?> invocable = instruction.getInvocable();
             final Task<?> task = instruction.getTask();
+            final Activity activity = this.recorder.commence("Executing %s", invocable);
 
-            // execute the Task iff we haven't done so already
-            if (executionCache.contains(reference)) {
-                // remove the Task from the remaining Tasks
-                remaining.remove(reference);
+            final Context executionContext = this.framework.newContext();
+            executionContext.addResolver(new FromResolver(this.recorder, instruction, executionCache));
+            executionContext.addResolver(instruction.getContext().resolver());
 
-                // queue the dependents that are ready for execution
-                instruction.dependents()
-                    .filter(remaining::contains)
-                    .map(this.instructions::get)
-                    .filter(dependent -> dependent.dependencies().noneMatch(remaining::contains))
-                    .forEach(queue::add);
-            } else {
-                // attempt to execute the Task
-                final Activity activity = this.recorder.commence("Executing %s", invocable);
+            try {
+                instruction.codependencies()
+                    .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PreProcess.class))
+                    .forEach(codependency -> {
+                        final Task<?> preprocessor = codependency.createTask(executionContext);
+                        preprocessor.execute(codependency, executionContext, this.framework);
+                    });
 
-                // establish a Context for the execution of the Task
-                final Context executionContext = this.framework.newContext();
+                final Object initialResult = task.execute(invocable, executionContext, this.framework);
 
-                // include a Resolver for @From injection points
-                executionContext.addResolver(new FromResolver(this.recorder, instruction, executionCache));
+                // create a Capture for the Result to allow injection and re-definition by PostProcessors
+                final Capture<Object> capture = Capture.ofNullable(initialResult);
 
-                // include the Context used to create the Instruction
-                executionContext.addResolver(instruction.getContext().resolver());
+                // allow PostProcessors to inject the current task's result before it's committed to the cache:
+                //   @From(CurrentTask.class) Capture<T> — mutable; PostProcessor can change the result
+                //   @From(CurrentTask.class) T          — read-only view of the initial result
+                executionContext.addResolver(dependency ->
+                    FromResolver.taskClass(dependency)
+                        .filter(c -> c.isAssignableFrom(task.getClass()))
+                        .flatMap(__ -> TypeUsages.getThreadContextClass(dependency.typeUsage()))
+                        .flatMap(requiredClass -> {
+                            if (Capture.class.equals(requiredClass)) {
+                                return TypeUsages.getFirstTypeParameterClass(dependency.typeUsage())
+                                    .flatMap(t -> invocable.getTaskResultClass().filter(t::isAssignableFrom))
+                                    .map(__ -> ValueBinding.of(dependency, (Object) capture));
+                            }
+                            if (initialResult != null && requiredClass.isInstance(initialResult)) {
+                                return Optional.of(ValueBinding.of(dependency, initialResult));
+                            }
+                            return Optional.empty();
+                        }));
 
-                try {
-                    // execute the pre-processing co-dependencies
-                    instruction.codependencies()
-                        .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PreProcess.class))
-                        .forEach(codependency -> {
-                            final Task<?> preprocessor = codependency.createTask(executionContext);
-                            preprocessor.execute(codependency, executionContext, this.framework);
-                        });
+                instruction.codependencies()
+                    .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PostProcess.class))
+                    .forEach(codependency -> {
+                        final Task<?> postprocessor = codependency.createTask(executionContext);
+                        postprocessor.execute(codependency, executionContext, this.framework);
+                    });
 
-                    // execute the Task
-                    final Object initialResult = task.execute(invocable, executionContext, this.framework);
+                final Object taskResult = capture.isPresent() ? capture.get() : null;
+                activity.complete(taskResult);
+                execution.progress();
 
-                    // create a Capture for the Result to allow injection and re-definition by PostProcessors
-                    final Capture<Object> capture = Capture.ofNullable(initialResult);
-                    //
-                    //                    // establish a Resolver for the Captured result
-                    //                    executionContext.addResolver(injectionPoint -> {
-                    //                        if (injectionPoint instanceof AnnotatedDependency<?> annotatedDependency) {
-                    //                            if (annotatedDependency.getRequiredClass().equals(Capture.class)) {
-                    //
-                    //                                // ensure the InjectionPoint is annotated with @From for this Task
-                    //                                final From from = annotatedDependency.annotatedElement()
-                    //                                    .getDeclaredAnnotation(From.class);
-                    //
-                    //                                if (from == null || !from.value().isAssignableFrom(task.getClass())) {
-                    //                                    return Optional.empty();
-                    //                                }
-                    //
-                    //                                return instruction.getInvocable().getTaskResultClass()
-                    //                                    .map(taskResultClass -> {
-                    //                                        final Optional<Type> type = annotatedDependency.getParameterizedTypes().findFirst();
-                    //                                        return type.filter(Class.class::isInstance)
-                    //                                            .map(t -> (Class<?>) t)
-                    //                                            .filter(c -> c.isAssignableFrom(taskResultClass))
-                    //                                            .map(__ -> capture)
-                    //                                            .orElseThrow(() -> new UnsatisfiedDependencyException(annotatedDependency));
-                    //                                    });
-                    //                            }
-                    //                        }
-                    //
-                    //                        return Optional.empty();
-                    //                    });
-                    //
-                    //                    // establish a Resolver for the immutable initial result
-                    //                    executionContext.addResolver(injectionPoint -> {
-                    //                        if (injectionPoint instanceof AnnotatedDependency<?> annotatedDependency) {
-                    //                            // ensure the InjectionPoint is annotated with @From for this Task
-                    //                            final From from = annotatedDependency.annotatedElement()
-                    //                                .getDeclaredAnnotation(From.class);
-                    //
-                    //                            if (from == null || !from.value().isAssignableFrom(task.getClass())) {
-                    //                                return Optional.empty();
-                    //                            }
-                    //
-                    //                            return instruction.getInvocable().getTaskResultClass()
-                    //                                .filter(taskClassResult -> taskClassResult.isInstance(initialResult))
-                    //                                .map(__ -> Optional.of(initialResult))
-                    //                                .orElseThrow(() -> new UnsatisfiedDependencyException(annotatedDependency));
-                    //                        }
-                    //
-                    //                        return Optional.empty();
-                    //                    });
-                    //
-                    // execute the post-processing co-dependencies
-                    instruction.codependencies()
-                        .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PostProcess.class))
-                        .forEach(codependency -> {
-                            final Task<?> postprocessor = codependency.createTask(executionContext);
-                            postprocessor.execute(codependency, executionContext, this.framework);
-                        });
-
-                    // obtain the final result from the Capture as it may have been changed during PostProcessing
-                    final Object taskResult = capture.isPresent() ? capture.get() : null;
-
-                    // task executed
-                    activity.complete(taskResult);
-
-                    // progress has been made executing the program
-                    execution.progress();
-
-                    // store the result, thus allowing it to be resolved and injected into post-processors
-                    // (and next Tasks where required)
-                    executionCache.putIfAbsent(taskResult == null
-                        ? VoidAsset.create(invocable)
-                        : DefaultAsset.create((Invocable<Object>) invocable, taskResult));
-
-                    // re-queue the Task after post-requisite execution to allow scheduling of the next Tasks
-                    queue.add(instruction);
-                } catch (final Exception e) {
-
-                    // the activity failed!
-                    activity.completeExceptionally(e);
-
-                    throw new ProgramExecutionException(
-                        this, reference, "Failed to execute Task [" + invocable.getTaskName() + "]", e);
-                }
+                executionCache.putIfAbsent(taskResult == null
+                    ? VoidAsset.create(invocable)
+                    : DefaultAsset.create((Invocable<Object>) invocable, taskResult));
+            } catch (final Exception e) {
+                activity.completeExceptionally(e);
+                throw new ProgramExecutionException(
+                    this, reference, "Failed to execute Task [" + invocable.getTaskName() + "]", e);
             }
         }
 
         execution.complete();
-
-        // detect tasks that could not be executed due to cyclic or otherwise unsatisfiable dependencies
-        if (!remaining.isEmpty()) {
-            final Reference stuck = remaining.iterator().next();
-            throw new ProgramExecutionException(this, stuck,
-                "Program execution stalled: " + remaining.size()
-                    + " task(s) could not execute due to cyclic or unsatisfied dependencies: " + remaining);
-        }
-
         return localCache;
     }
 }

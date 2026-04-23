@@ -129,6 +129,12 @@
             </dependency>
 
             <dependency>
+                <groupId>build.base</groupId>
+                <artifactId>base-graph</artifactId>
+                <version>${base.version}</version>
+            </dependency>
+
+            <dependency>
                 <groupId>build.spawn</groupId>
                 <artifactId>spawn-application</artifactId>
                 <version>${spawn.version}</version>

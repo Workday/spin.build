@@ -29,6 +29,11 @@
 
         <dependency>
             <groupId>build.base</groupId>
+            <artifactId>base-graph</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
             <artifactId>base-io</artifactId>
         </dependency>
 
