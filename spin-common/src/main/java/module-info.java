@@ -23,6 +23,7 @@ module build.spin.common {
 
     requires build.base.configuration;
     requires build.base.flow;
+    requires build.base.graph;
     requires build.base.foundation;
     requires build.base.io;
     requires build.base.telemetry;

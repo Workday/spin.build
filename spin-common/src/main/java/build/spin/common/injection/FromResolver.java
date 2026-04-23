@@ -84,6 +84,21 @@ public class FromResolver
         this.cache = Objects.requireNonNull(assetCache, "The AssetCache must not be null");
     }
 
+    /**
+     * Extracts the {@link Task} class declared by a {@link From} annotation on the dependency's type usage,
+     * or returns empty if no such annotation is present.
+     */
+    @SuppressWarnings("unchecked")
+    public static Optional<Class<? extends Task<?>>> taskClass(final Dependency dependency) {
+        return dependency.typeUsage()
+            .traits(AnnotationTypeUsage.class)
+            .filter(a -> a.typeName().canonicalName().equals(From.class.getCanonicalName()))
+            .findFirst()
+            .flatMap(a -> a.values().findFirst())
+            .flatMap(v -> v.as(Class.class))
+            .map(c -> (Class<? extends Task<?>>) c);
+    }
+
     private static Class<?> requiredClass(final Dependency dependency) {
         return TypeUsages.getThreadContextClass(dependency.typeUsage()).orElse(null);
     }
@@ -110,23 +125,7 @@ public class FromResolver
 
     @Override
     public Optional<? extends Binding<Object>> resolve(final Dependency dependency) {
-        // check for @From annotation on the type usage
-        final var fromAnnotation = dependency.typeUsage()
-            .traits(AnnotationTypeUsage.class)
-            .filter(a -> a.typeName().canonicalName().equals(From.class.getCanonicalName()))
-            .findFirst()
-            .orElse(null);
-
-        if (fromAnnotation == null) {
-            return Optional.empty();
-        }
-
-        // obtain the type of Task that provides the required injectable value
-        @SuppressWarnings("unchecked") final var fromClass = (Class<? extends Task<?>>) fromAnnotation.values()
-            .findFirst()
-            .flatMap(v -> v.as(Class.class))
-            .orElse(null);
-
+        final var fromClass = taskClass(dependency).orElse(null);
         if (fromClass == null) {
             return Optional.empty();
         }
