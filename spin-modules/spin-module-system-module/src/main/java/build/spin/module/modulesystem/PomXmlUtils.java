@@ -95,6 +95,17 @@ class PomXmlUtils {
     }
 
     /**
+     * Returns {@code true} when the given path is a spin-native workspace, identified by the
+     * presence of a {@code .spinignore} file at the workspace root. {@code PomBased*} resources
+     * that have no spin-native counterpart yet (e.g. {@code TestArguments}, future
+     * {@code CompilerArguments}) should yield in spin-native workspaces — spin treats its own
+     * config as the source of truth and does not fall back to the pom.
+     */
+    static boolean isSpinNativeWorkspace(final Path path) {
+        return Files.exists(path.resolve(".spinignore"));
+    }
+
+    /**
      * Creates a new {@link DocumentBuilderFactory} hardened against XML External Entity (XXE) attacks.
      * Disables DOCTYPE declarations and all external entity/parameter resolution.
      *
