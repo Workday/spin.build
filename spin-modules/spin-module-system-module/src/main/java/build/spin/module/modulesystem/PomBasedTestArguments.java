@@ -20,17 +20,11 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
-import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.injection.PostInject;
 import build.spin.Project;
 import build.spin.Resource;
-import build.spin.Workspace;
+import build.spin.module.modulesystem.pom.ConfigNode;
 import build.spin.module.modulesystem.pom.GA;
-import build.spin.module.modulesystem.pom.Plugin;
-import build.spin.module.modulesystem.pom.PomReader;
-import jakarta.inject.Inject;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
@@ -43,29 +37,19 @@ import java.util.stream.Stream;
  * @since Apr-2026
  */
 public class PomBasedTestArguments
-    implements TestArguments, Resource {
+    extends AbstractPomBasedArguments
+    implements TestArguments {
 
-    private static final String POM_FILENAME = "pom.xml";
     private static final GA SUREFIRE = new GA("org.apache.maven.plugins", "maven-surefire-plugin");
 
-    @Inject
-    private TelemetryRecorder recorder;
-
-    private PomReader pomReader;
-
-    @PostInject
-    private void onInjected() {
-        final Path localRepository = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        this.pomReader = new PomReader(localRepository, this.recorder);
+    @Override
+    protected GA pluginGA() {
+        return SUREFIRE;
     }
 
     @Override
-    public Stream<String> get(final Project project) {
-        return this.pomReader.read(project.path().resolve(POM_FILENAME))
-            .flatMap(pom -> pom.plugin(SUREFIRE))
-            .map(Plugin::configuration)
-            .flatMap(c -> c.textChild("argLine"))
-            .stream()
+    protected Stream<String> toArgs(final ConfigNode configuration) {
+        return configuration.textChild("argLine").stream()
             .flatMap(raw -> Stream.of(raw.trim().split("\\s+")))
             .filter(s -> !s.isEmpty());
     }
@@ -78,15 +62,12 @@ public class PomBasedTestArguments
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return PomXmlUtils.isMavenWorkspaceRoot(path)
-                && !PomXmlUtils.isSpinNativeWorkspace(path);
+            return PomXmlUtils.isPomBasedWorkspace(path);
         }
 
         @Override
         public boolean isDetectedIn(final Project project) {
-            return project instanceof Workspace
-                && Files.exists(project.path().resolve(POM_FILENAME))
-                && !PomXmlUtils.isSpinNativeWorkspace(project.path());
+            return PomXmlUtils.isPomBasedProject(project);
         }
     }
 }

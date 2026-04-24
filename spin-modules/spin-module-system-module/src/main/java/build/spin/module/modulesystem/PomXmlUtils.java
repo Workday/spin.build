@@ -106,6 +106,25 @@ class PomXmlUtils {
     }
 
     /**
+     * The canonical {@code Resource.MetaClass.isWorkspace} predicate for pom-based resources that
+     * have no spin-native counterpart: Maven workspace root AND not claimed as spin-native.
+     */
+    static boolean isPomBasedWorkspace(final Path path) {
+        return isMavenWorkspaceRoot(path) && !isSpinNativeWorkspace(path);
+    }
+
+    /**
+     * The canonical {@code Resource.MetaClass.isDetectedIn} predicate for pom-based resources that
+     * have no spin-native counterpart: the project is a Workspace, has a {@code pom.xml}, and is
+     * not claimed as spin-native.
+     */
+    static boolean isPomBasedProject(final build.spin.Project project) {
+        return project instanceof build.spin.Workspace
+            && Files.exists(project.path().resolve("pom.xml"))
+            && !isSpinNativeWorkspace(project.path());
+    }
+
+    /**
      * Creates a new {@link DocumentBuilderFactory} hardened against XML External Entity (XXE) attacks.
      * Disables DOCTYPE declarations and all external entity/parameter resolution.
      *
