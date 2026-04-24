@@ -152,11 +152,19 @@ public final class PomReader {
             effectivePluginMgmt.put(merged.ga(), merged);
         }
 
-        // effective plugins: own with config deep-merged from matching effective pluginMgmt
-        final List<Plugin> effectivePlugins = new ArrayList<>(raw.plugins.size());
+        // effective plugins: parent ⊕ own (own wins per GA, configurations deep-merged), then
+        // each plugin further deep-merged with its matching effective pluginManagement entry.
+        // Parent inheritance honors Maven semantics: a parent's <build><plugins>... entries are
+        // active in child poms unless overridden.
+        final Map<GA, Plugin> pluginsByGa = new LinkedHashMap<>();
+        parent.ifPresent(p -> p.plugins().forEach(pp -> pluginsByGa.put(pp.ga(), pp)));
         for (final RawPlugin rp : raw.plugins) {
             final Plugin own = toPlugin(rp, effectiveProps);
-            effectivePlugins.add(mergePluginInto(effectivePluginMgmt.get(own.ga()), own));
+            pluginsByGa.put(own.ga(), mergePluginInto(pluginsByGa.get(own.ga()), own));
+        }
+        final List<Plugin> effectivePlugins = new ArrayList<>(pluginsByGa.size());
+        for (final Plugin p : pluginsByGa.values()) {
+            effectivePlugins.add(mergePluginInto(effectivePluginMgmt.get(p.ga()), p));
         }
 
         final Pom pom = new DefaultPom(

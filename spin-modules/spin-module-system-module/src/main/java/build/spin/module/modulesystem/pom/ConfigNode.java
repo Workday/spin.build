@@ -81,6 +81,28 @@ public sealed interface ConfigNode
     }
 
     /**
+     * If a direct child with {@code childName} exists and has text, emits the stream
+     * {@code [flagName, <text>]}. Otherwise emits an empty stream. Convenience for translating
+     * {@code <release>25</release>} → {@code --release 25}-style CLI flag pairs.
+     */
+    default Stream<String> flagIfPresent(final String childName, final String flagName) {
+        return textChild(childName).stream().flatMap(v -> Stream.of(flagName, v));
+    }
+
+    /**
+     * If a direct child with {@code childName} exists and its text is (case-insensitively)
+     * {@code "true"}, emits the single-token stream {@code [flagName]}. Otherwise emits empty.
+     * Convenience for translating {@code <enablePreview>true</enablePreview>} →
+     * {@code --enable-preview}-style boolean CLI flags.
+     */
+    default Stream<String> booleanFlag(final String childName, final String flagName) {
+        return textChild(childName)
+            .filter("true"::equalsIgnoreCase)
+            .stream()
+            .map(__ -> flagName);
+    }
+
+    /**
      * Returns a sentinel empty configuration node — no name, no attributes, no text, no children.
      * Used by {@link Plugin#configuration()} when a plugin declares no {@code <configuration>} block.
      */

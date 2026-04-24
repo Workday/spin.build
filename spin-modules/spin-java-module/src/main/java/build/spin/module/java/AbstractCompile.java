@@ -47,6 +47,7 @@ import build.spin.Workspace;
 import build.spin.annotation.System;
 import build.spin.common.reactive.ConditionalConsumingObserver;
 import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.CompilerArguments;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.BuildDirectoryName;
@@ -306,6 +307,12 @@ public abstract class AbstractCompile
                 }
                 writer.println("-s " + Strings.doubleQuoteIfContainsWhiteSpace(generatedSources.toString()));
             }
+
+            // include any project-declared javac args (e.g. --release N, --enable-preview,
+            // <compilerArgs> from maven-compiler-plugin). Resource is workspace-scoped and
+            // resolves the per-project effective pom.
+            this.project.findResource(CompilerArguments.class).ifPresent(args ->
+                args.get(this.project).forEach(writer::println));
 
             // lastly include the source code to compile
             sourceCode.stream()

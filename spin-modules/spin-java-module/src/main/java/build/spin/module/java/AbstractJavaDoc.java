@@ -41,6 +41,7 @@ import build.spin.Task;
 import build.spin.annotation.System;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.configuration.Source;
+import build.spin.module.modulesystem.JavadocArguments;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.Verbose;
 import jakarta.inject.Inject;
@@ -196,6 +197,12 @@ public abstract class AbstractJavaDoc
 
                 // output links to each of the "external" projects
                 // TODO: https://javadoc.io/doc/<groupId>/<artifactId>/<version>
+
+                // include any project-declared javadoc args (e.g. --release N, --enable-preview,
+                // <additionalOptions> from maven-javadoc-plugin). Resource is workspace-scoped
+                // and resolves the per-project effective pom.
+                this.project.findResource(JavadocArguments.class).ifPresent(args ->
+                    args.get(this.project).forEach(writer::println));
 
                 // lastly include the source code to document, plus any sources generated
                 // by annotation processors during the preceding compile step
