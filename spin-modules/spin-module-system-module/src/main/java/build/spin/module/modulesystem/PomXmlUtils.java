@@ -82,7 +82,13 @@ class PomXmlUtils {
     private static boolean hasDirectParentElement(final Path pomPath) {
         try {
             final Document doc = newDocumentBuilderFactory().newDocumentBuilder().parse(pomPath.toFile());
-            return directChildText(doc.getDocumentElement(), "parent") != null;
+            final NodeList children = doc.getDocumentElement().getChildNodes();
+            for (int i = 0; i < children.getLength(); i++) {
+                if (children.item(i) instanceof Element e && e.getTagName().equals("parent")) {
+                    return true;
+                }
+            }
+            return false;
         } catch (final Exception e) {
             return false;
         }
