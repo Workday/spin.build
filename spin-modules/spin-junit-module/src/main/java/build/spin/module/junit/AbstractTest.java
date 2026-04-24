@@ -29,6 +29,7 @@ import build.spin.annotation.System;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.java.JavaPlugin;
 import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.module.modulesystem.TestArguments;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
@@ -38,6 +39,7 @@ import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.regex.Matcher;
 import java.util.stream.Stream;
 
 /**
@@ -145,6 +147,11 @@ public abstract class AbstractTest
         args.add(javaHome);
         args.add(Name.of("JUnit Platform"));
 
+        this.project.findResource(TestArguments.class).ifPresent(testArgs ->
+            testArgs.get(this.project)
+                .map(token -> resolveArtifactCoord(token, modulePath, classPath))
+                .forEach(token -> args.add(JDKOption.of(token))));
+
         if (hasTestModuleInfo) {
             // case A — test sources have their own module-info.java: the test module is a
             // named module; JUnit selects tests by module name.
@@ -249,6 +256,85 @@ public abstract class AbstractTest
         }
 
         return PathSetBuilder.create().build();
+    }
+
+    /**
+     * Pattern matching {@code ${groupId:artifactId:type[:classifier]}} as emitted by the
+     * {@code maven-dependency-plugin:properties} goal.
+     */
+    private static final java.util.regex.Pattern COORD_REF =
+        java.util.regex.Pattern.compile("\\$\\{([^:}]+):([^:}]+):([^:}]+)(?::([^:}]+))?}");
+
+    /**
+     * Substitutes any {@code ${groupId:artifactId:type[:classifier]}} occurrences in the given
+     * token with the absolute path of a matching jar found on the supplied module/class paths.
+     * <p>
+     * Matching is by parent-path segments {@code <localRepo>/<groupId-as-path>/<artifactId>/<version>}
+     * and filename {@code <artifactId>-<version>[-<classifier>].<type>}. If no match is found, the
+     * literal coord reference is left in place so the JVM surfaces a clear error.
+     */
+    private static String resolveArtifactCoord(final String token,
+                                               final ModulePath modulePath,
+                                               final ClassPath classPath) {
+        if (token.indexOf('$') < 0) {
+            return token;
+        }
+        final Matcher matcher = COORD_REF.matcher(token);
+        if (!matcher.find()) {
+            return token;
+        }
+        final StringBuilder out = new StringBuilder();
+        matcher.reset();
+        while (matcher.find()) {
+            final String groupId = matcher.group(1);
+            final String artifactId = matcher.group(2);
+            final String type = matcher.group(3);
+            final String classifier = matcher.group(4);
+            final Path resolved = findJar(groupId, artifactId, type, classifier, modulePath, classPath);
+            matcher.appendReplacement(out, Matcher.quoteReplacement(
+                resolved != null ? resolved.toString() : matcher.group(0)));
+        }
+        matcher.appendTail(out);
+        return out.toString();
+    }
+
+    private static Path findJar(final String groupId,
+                                final String artifactId,
+                                final String type,
+                                final String classifier,
+                                final ModulePath modulePath,
+                                final ClassPath classPath) {
+        final String groupPath = groupId.replace('.', '/');
+        return Stream.concat(modulePath.stream(), classPath.stream())
+            .filter(path -> matchesCoord(path, groupPath, artifactId, type, classifier))
+            .map(Path::toAbsolutePath)
+            .findFirst()
+            .orElse(null);
+    }
+
+    private static boolean matchesCoord(final Path path,
+                                        final String groupPath,
+                                        final String artifactId,
+                                        final String type,
+                                        final String classifier) {
+        final String filename = path.getFileName().toString();
+        if (!filename.startsWith(artifactId + "-") || !filename.endsWith("." + type)) {
+            return false;
+        }
+        // expected parent layout: <...>/<groupPath>/<artifactId>/<version>/<filename>
+        final Path parent = path.getParent();
+        if (parent == null || parent.getParent() == null) {
+            return false;
+        }
+        final String pathStr = parent.toString().replace(File.separatorChar, '/');
+        if (!pathStr.endsWith("/" + groupPath + "/" + artifactId + "/" + parent.getFileName().toString())) {
+            return false;
+        }
+        final String version = parent.getFileName().toString();
+        final String expected = classifier == null
+            ? artifactId + "-" + version + "." + type
+            : artifactId + "-" + version + "-" + classifier + "." + type;
+        return filename.equals(expected);
     }
 
 }
