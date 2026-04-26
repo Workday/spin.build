@@ -267,6 +267,7 @@ class PomWorkspaceWalkerTests {
               <groupId>com.example</groupId>
               <artifactId>aggregator</artifactId>
               <version>1.0.0</version>
+              <packaging>pom</packaging>
             </project>
             """);
 
