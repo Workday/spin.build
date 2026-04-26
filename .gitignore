@@ -10,3 +10,4 @@ target/
 *.iml
 
 .test-all-logs/
+.fixture-logs/
