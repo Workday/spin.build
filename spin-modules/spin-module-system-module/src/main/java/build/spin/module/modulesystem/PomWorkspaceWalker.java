@@ -149,7 +149,12 @@ final class PomWorkspaceWalker {
         try {
             final Document doc = builder.parse(pomPath.toFile());
 
-            if (!pomPath.equals(rootPomPath)) {
+            // Skip self-registration only for root aggregator poms (packaging=pom).
+            // Single-module root poms (packaging=jar or absent) must be registered so
+            // their own version is in the map.
+            final boolean isRootAggregator = pomPath.equals(rootPomPath)
+                && "pom".equals(PomXmlUtils.directChildText(doc.getDocumentElement(), "packaging"));
+            if (!isRootAggregator) {
                 visitSelf(doc, pomPath, properties, recorder, visitor);
             }
 
@@ -259,6 +264,9 @@ final class PomWorkspaceWalker {
         names.add(PomXmlUtils.derivedModuleName(artifactId));
         final String lastSegment = PomXmlUtils.lastHyphenSegment(artifactId);
         if (!lastSegment.isEmpty()) {
+            // bare segment matches projects whose directory name is just the last artifact segment
+            // (e.g. "processor" directory for artifact "ap-simple-processor")
+            names.add(lastSegment);
             names.add(groupId + "." + lastSegment);
         }
         PomXmlUtils.groupPrefixedModuleName(groupId, artifactId).ifPresent(names::add);
