@@ -68,6 +68,8 @@ jobs:
             -Dproperty=revision \
             -DnewVersion=${{ steps.versions.outputs.release-version }} \
             -DgenerateBackupPoms=false
+          sed -i 's/^build\.spin = .*/build.spin = ${{ steps.versions.outputs.release-version }}/' version.properties
+          sed -i 's/^build\.spin\.\* = .*/build.spin.* = ${{ steps.versions.outputs.release-version }}/' version.properties
 
       - name: Build and Deploy Release
         run: ./mvnw clean deploy
@@ -79,7 +81,7 @@ jobs:
 
       - name: Commit and Tag Release
         run: |
-          git add pom.xml
+          git add pom.xml version.properties
           git commit -m "Release ${{ steps.versions.outputs.release-version }}"
           git tag -a v${{ steps.versions.outputs.release-version }} -m "Release ${{ steps.versions.outputs.release-version }}"
 
@@ -89,10 +91,12 @@ jobs:
             -Dproperty=revision \
             -DnewVersion=${{ steps.versions.outputs.next-version }} \
             -DgenerateBackupPoms=false
+          sed -i 's/^build\.spin = .*/build.spin = ${{ steps.versions.outputs.next-version }}/' version.properties
+          sed -i 's/^build\.spin\.\* = .*/build.spin.* = ${{ steps.versions.outputs.next-version }}/' version.properties
 
       - name: Commit Next Development Version
         run: |
-          git add pom.xml
+          git add pom.xml version.properties
           git commit -m "Prepare for next development iteration ${{ steps.versions.outputs.next-version }}"
 
       - name: Push Release Branch and Tag
@@ -101,6 +105,14 @@ jobs:
         run: |
           git remote set-url origin https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}
           git push --follow-tags origin release-${{ steps.versions.outputs.release-version }}
+
+      - name: Trigger jlink Release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          gh workflow run release-jlink.yml \
+            --repo ${{ github.repository }} \
+            --ref v${{ steps.versions.outputs.release-version }}
 
       - name: Open and Merge PR to main
         env:
