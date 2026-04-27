@@ -37,7 +37,7 @@ jobs:
       - name: Determine Versions
         id: versions
         run: |
-          CURRENT_VERSION=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+          CURRENT_VERSION=$(grep -m1 '<revision>' pom.xml | sed 's/.*<revision>\(.*\)<\/revision>.*/\1/' | tr -d '[:space:]')
 
           RELEASE_VERSION="${{ inputs.release-version }}"
           if [ -z "$RELEASE_VERSION" ]; then
