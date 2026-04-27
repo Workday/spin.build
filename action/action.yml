@@ -1,0 +1,41 @@
+name: Set up spin
+description: Downloads and installs the spin build tool from a tagged GitHub Release.
+
+inputs:
+  version:
+    description: 'spin release version to install (e.g. v0.1.0)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve platform tarball
+      id: platform
+      shell: bash
+      run: |
+        case "${{ runner.os }}/${{ runner.arch }}" in
+          Linux/X64)   echo "artifact=spin-linux-amd64"  >> "$GITHUB_OUTPUT" ;;
+          Linux/ARM64) echo "artifact=spin-linux-arm64"  >> "$GITHUB_OUTPUT" ;;
+          macOS/X64)   echo "artifact=spin-macos-amd64"  >> "$GITHUB_OUTPUT" ;;
+          macOS/ARM64) echo "artifact=spin-macos-arm64"  >> "$GITHUB_OUTPUT" ;;
+          *) echo "Unsupported platform: ${{ runner.os }}/${{ runner.arch }}" >&2; exit 1 ;;
+        esac
+
+    - name: Download and install spin
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        ARTIFACT="${{ steps.platform.outputs.artifact }}"
+        TARBALL="${ARTIFACT}.tar.gz"
+        DEST="$RUNNER_TEMP/spin"
+
+        gh release download "${{ inputs.version }}" \
+          --repo "${{ github.action_repository }}" \
+          --pattern "$TARBALL" \
+          --dir "$RUNNER_TEMP"
+
+        mkdir -p "$DEST"
+        tar -xzf "$RUNNER_TEMP/$TARBALL" -C "$DEST" --strip-components=1
+        ln -sf "$DEST/bin/spin.sh" "$DEST/bin/spin"
+        echo "$DEST/bin" >> "$GITHUB_PATH"
