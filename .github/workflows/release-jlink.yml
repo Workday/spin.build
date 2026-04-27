@@ -1,0 +1,77 @@
+name: Release jlink Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: spin-linux-amd64
+          - os: macos-latest
+            artifact: spin-macos-arm64
+          - os: macos-13
+            artifact: spin-macos-amd64
+          - os: ubuntu-24.04-arm
+            artifact: spin-linux-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'zulu'
+          cache: 'maven'
+
+      - name: Build jlink image
+        run: ./mvnw package -DskipTests
+
+      - name: Package tarball
+        shell: bash
+        run: |
+          ZIP=$(find spin/target -maxdepth 1 -name "spin-*-bin.zip" | head -1)
+          TMP=$(mktemp -d)
+          unzip -q "$ZIP" -d "$TMP"
+          EXTRACTED=$(find "$TMP" -maxdepth 1 -mindepth 1 -type d | head -1)
+          tar -czf "${{ matrix.artifact }}.tar.gz" -C "$(dirname "$EXTRACTED")" "$(basename "$EXTRACTED")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist/
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
