@@ -24,8 +24,6 @@ import build.base.commandline.CommandLine;
 import build.base.configuration.AbstractValueOption;
 import build.base.configuration.Default;
 
-import java.util.Optional;
-
 /**
  * The Spin Engine Version.
  *
@@ -49,9 +47,11 @@ public class EngineVersion
      *
      * @return the {@link EngineVersion}
      */
+    // Package.getImplementationVersion() is always null for named JPMS modules; the module
+    // descriptor version (set via javac --module-version at compile time) is the correct mechanism.
     @Default
     public static EngineVersion autodetect() {
-        return Optional.ofNullable(EngineVersion.class.getPackage().getImplementationVersion())
+        return EngineVersion.class.getModule().getDescriptor().rawVersion()
             .map(EngineVersion::of)
             .orElse(of("unknown"));
     }
