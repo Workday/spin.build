@@ -270,6 +270,7 @@ public abstract class AbstractCompile
                 .anyMatch(p -> "module-info.java".equals(p.getFileName().toString()));
 
             if (hasModuleInfo) {
+                writer.println("--module-version " + version);
                 if (!modulePath.isEmpty()) {
                     this.recorder.diagnostic("Module Path (%d entries)", modulePath.size());
                     writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(
