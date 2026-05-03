@@ -26,10 +26,10 @@ module build.spin.module.configuration {
     requires build.base.telemetry;
     requires build.codemodel.foundation;
     requires build.codemodel.injection;
+    requires build.base.json;
     requires build.codemodel.jdk;
     requires build.spin;
     requires build.spin.common;
-    requires com.fasterxml.jackson.databind;
     requires jakarta.inject;
 
     exports build.spin.module.configuration;

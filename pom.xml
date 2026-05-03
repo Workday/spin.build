@@ -65,8 +65,8 @@
         <maven.version>4.0.0-rc-5</maven.version>
 
         <!-- Module Dependency Versions -->
-        <base.version>0.23.1</base.version>
-        <codemodel.version>0.21.1</codemodel.version>
+        <base.version>0.24.0</base.version>
+        <codemodel.version>0.21.2</codemodel.version>
         <checkstyle.version>13.3.0</checkstyle.version>
         <assertj.version>3.27.7</assertj.version>
         <jackson.version>2.21.2</jackson.version>
@@ -76,8 +76,8 @@
         <maven.resolver.version>2.0.16</maven.resolver.version>
         <mockito.version>5.23.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
-        <serve.version>0.2.2</serve.version>
-        <spawn.version>0.1.4</spawn.version>
+        <serve.version>0.4.0</serve.version>
+        <spawn.version>0.1.5</spawn.version>
 
         <!-- Plugin Dependency Versions -->
         <maven-assembly-plugin.version>3.8.0</maven-assembly-plugin.version>
@@ -185,6 +185,12 @@
             <dependency>
                 <groupId>build.base</groupId>
                 <artifactId>base-io</artifactId>
+                <version>${base.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>build.base</groupId>
+                <artifactId>base-json</artifactId>
                 <version>${base.version}</version>
             </dependency>
 
