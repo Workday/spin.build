@@ -4,13 +4,13 @@ import build.base.flow.SubscriberRegistry;
 import build.base.foundation.UniformResource;
 import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
+import build.base.json.JsonValue;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.codemodel.injection.Context;
 import build.codemodel.injection.InjectionFramework;
 import build.codemodel.injection.UnsatisfiedDependencyException;
-import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -270,37 +270,37 @@ class ConfigurationResolverTests {
     }
 
     /**
-     * Ensure {@link JsonNode} can be resolved from a {@code .json} file.
+     * Ensure {@link JsonValue} can be resolved from a {@code .json} file.
      */
     @Test
-    void shouldResolveJsonNodeFromJsonFile() {
+    void shouldResolveJsonValueFromJsonFile() {
 
         class Example {
 
             @Inject
             @Configuration
-            JsonNode node;
+            JsonValue node;
         }
 
         final Example example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.node).isNotNull();
-        assertThat(example.node.get("message").textValue()).isEqualTo("hello world");
+        assertThat(example.node.asObject().get("message").asString().value()).isEqualTo("hello world");
     }
 
     /**
-     * Ensure {@link Properties} can't be resolved from a missing {@code .properties} file.
+     * Ensure {@link JsonValue} can't be resolved from a malformed {@code .json} file.
      */
     @Test
-    void shouldNotResolveJsonNodeFromIllegalJsonFile() {
+    void shouldNotResolveJsonValueFromIllegalJsonFile() {
 
         class Example {
 
             @Inject
             @Configuration
             @Source("illegal")
-            JsonNode node;
+            JsonValue node;
         }
 
         Assertions.assertThrows(UnsatisfiedDependencyException.class, () -> createContext().inject(new Example()));

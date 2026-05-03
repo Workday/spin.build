@@ -22,6 +22,9 @@ package build.spin.module.configuration;
 
 import build.base.foundation.stream.Streamable;
 import build.base.io.PathSet;
+import build.base.json.Json;
+import build.base.json.JsonParseException;
+import build.base.json.JsonValue;
 import build.base.telemetry.Activity;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.foundation.usage.AnnotationTypeUsage;
@@ -30,8 +33,6 @@ import build.codemodel.injection.Dependency;
 import build.codemodel.injection.Resolver;
 import build.codemodel.injection.ValueBinding;
 import build.codemodel.jdk.TypeUsages;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -51,8 +52,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * A {@link Resolver} of {@link Configuration}s values, to be deserialized from external {@link Path}s using
- * <a href="https://github.com/FasterXML/jackson">Jackson</a>.
+ * A {@link Resolver} of {@link Configuration}s values, to be deserialized from external {@link Path}s.
  *
  * @author brian.oliver
  * @since Mar-2021
@@ -103,21 +103,18 @@ public class ConfigurationResolver
         this.baseFileNameFactory = Objects.requireNonNull(baseFileNameFactory,
             "The File Name Factory must not be null");
 
-        // establish the supported types of ObjectMapper-based resolvers
+        // establish the supported file type resolvers
         this.resolvers = new LinkedHashMap<>();
 
         // include .json support
         this.resolvers.put(".json", (path, requiredClass) -> {
-            final ObjectMapper objectMapper = new ObjectMapper();
-
+            if (!requiredClass.equals(JsonValue.class)) {
+                return null;
+            }
             try (Activity activity = this.recorder.commence("Reading Configuration File [%s]", path)) {
                 try (BufferedReader reader = Files.newBufferedReader(path)) {
-                    if (requiredClass.equals(JsonNode.class)) {
-                        return objectMapper.readTree(reader);
-                    } else {
-                        return objectMapper.readValue(reader, requiredClass);
-                    }
-                } catch (final IOException e) {
+                    return Json.parse(reader);
+                } catch (final IOException | JsonParseException e) {
                     activity.completeExceptionally(e);
                     return null;
                 }
@@ -138,7 +135,6 @@ public class ConfigurationResolver
                     }
                 }
             } else {
-                // TODO: introduce support for reading properties using Jackson
                 return null;
             }
         });
