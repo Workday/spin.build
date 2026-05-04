@@ -255,7 +255,7 @@
                          `org.junit.platform.commons.util.Preconditions`, named-module
                          strong encapsulation denies access. Opening `util` to the unnamed
                          module is the standard JPMS escape hatch for this scenario. -->
-                    <argLine>--add-exports=org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED --add-exports=org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED @${project.build.directory}/spin-classify-test.args</argLine>
+                    <argLine>${surefire.jvm.args} --add-exports=org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED --add-exports=org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED @${project.build.directory}/spin-classify-test.args</argLine>
                 </configuration>
             </plugin>
             <plugin>

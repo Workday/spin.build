@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
 import build.codemodel.foundation.CodeModel;
@@ -88,6 +89,10 @@ public abstract class AbstractJavaPlugin
     protected Path getSourceRootPath() {
         return this.project.path().resolve("src/main/");
     }
+
+    @Override
+    @Provides
+    public abstract JDKVersion getJavaVersion();
 
     @Override
     @Provides

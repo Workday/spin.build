@@ -179,9 +179,11 @@ public class ReportingPlugin
                     + "  </script>\n"
                     + "</body>");
 
-                final BufferedWriter writer = Files.newBufferedWriter(reportPath);
-                writer.write(builder.toString());
-                writer.close();
+                try (BufferedWriter writer = Files.newBufferedWriter(reportPath)) {
+                    writer.write(builder.toString());
+                } catch (final java.nio.file.NoSuchFileException ignored) {
+                    // build directory was concurrently removed (e.g. by a parallel clean task); skip report
+                }
             }
 
             return reportPath;

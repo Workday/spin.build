@@ -26,7 +26,6 @@ import build.base.foundation.Introspection;
 import build.base.foundation.UniformResource;
 import build.base.graph.Graph;
 import build.base.graph.GraphCycles;
-import build.base.graph.GraphOrdering;
 import build.base.telemetry.Activity;
 import build.base.telemetry.Meter;
 import build.base.telemetry.TelemetryRecorder;
@@ -64,7 +63,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Stack;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -100,10 +103,9 @@ public final class DefaultProgram
     private final LinkedHashMap<Reference, DefaultInstruction<?>> instructions;
 
     /**
-     * The topological execution order derived from the task dependency graph.
-     * Empty when a cycle was detected; see {@link #detectedCycle}.
+     * The task dependency graph: edge A → B means "A depends on B".
      */
-    private final List<Reference> executionOrder;
+    private final Graph<Reference> dependencyGraph;
 
     /**
      * A cycle detected in the task dependency graph, if any.
@@ -311,9 +313,8 @@ public final class DefaultProgram
                 .forEach(dep -> graphBuilder.addEdge(instruction.getReference(), dep)));
         final Graph<Reference> dependencyGraph = graphBuilder.build();
 
-        final var cycle = GraphCycles.findCycle(dependencyGraph);
-        this.detectedCycle = cycle.orElse(List.of());
-        this.executionOrder = cycle.isPresent() ? List.of() : GraphOrdering.topologicalSort(dependencyGraph);
+        this.dependencyGraph = dependencyGraph;
+        this.detectedCycle = GraphCycles.findCycle(dependencyGraph).orElse(List.of());
 
         inference.complete();
 
@@ -371,9 +372,7 @@ public final class DefaultProgram
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public synchronized AssetCache execute(final AssetCache cache)
-        throws ProgramExecutionException {
+    public AssetCache execute(final AssetCache cache) throws ProgramExecutionException {
 
         if (!this.detectedCycle.isEmpty()) {
             throw new ProgramExecutionException(this, this.detectedCycle.get(0),
@@ -385,13 +384,47 @@ public final class DefaultProgram
         final AssetCache localCache = DefaultAssetCache.create();
         final AssetCache executionCache = NearAssetCache.of(localCache, cache);
 
-        for (final Reference reference : this.executionOrder) {
+        // pending[ref] = number of direct dependencies not yet completed
+        final var pending = new ConcurrentHashMap<Reference, AtomicInteger>();
+        this.instructions.keySet().forEach(ref ->
+            pending.put(ref, new AtomicInteger(this.dependencyGraph.successors(ref).size())));
+
+        final Queue<ProgramExecutionException> failures = new ConcurrentLinkedQueue<>();
+
+        try (var scope = StructuredTaskScope.open()) {
+            // seed with tasks that have no dependencies
+            this.instructions.keySet().stream()
+                .filter(ref -> pending.get(ref).get() == 0)
+                .forEach(ref -> scope.fork(() -> runTask(ref, pending, executionCache, execution, failures)));
+
+            scope.join();
+        } catch (final StructuredTaskScope.FailedException e) {
+            // runTask no longer propagates failures to the scope; this branch guards against
+            // unexpected internal errors only
+            throw new ProgramExecutionException(this, this.instructions.keySet().iterator().next(),
+                "Unexpected failure during task execution", e.getCause());
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Program execution interrupted", e);
+        }
+
+        if (!failures.isEmpty()) {
+            throw failures.peek();
+        }
+
+        execution.complete();
+        return localCache;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Void runTask(final Reference reference,
+                         final ConcurrentHashMap<Reference, AtomicInteger> pending,
+                         final AssetCache executionCache,
+                         final Meter execution,
+                         final Queue<ProgramExecutionException> failures) {
+
+        if (!executionCache.contains(reference)) {
             final DefaultInstruction<?> instruction = this.instructions.get(reference);
-
-            if (executionCache.contains(reference)) {
-                continue;
-            }
-
             final Invocable<?> invocable = instruction.getInvocable();
             final Task<?> task = instruction.getTask();
             final Activity activity = this.recorder.commence("Executing %s", invocable);
@@ -448,12 +481,31 @@ public final class DefaultProgram
                     : DefaultAsset.create((Invocable<Object>) invocable, taskResult));
             } catch (final Exception e) {
                 activity.completeExceptionally(e);
-                throw new ProgramExecutionException(
-                    this, reference, "Failed to execute Task [" + invocable.getTaskName() + "]", e);
+                failures.add(new ProgramExecutionException(
+                    this, reference, "Failed to execute Task [" + invocable.getTaskName() + "]", e));
+                return null; // dependents are not fired when a task fails
             }
         }
 
-        execution.complete();
-        return localCache;
+        // fire any dependents whose last dependency just completed;
+        // each task owns a fresh nested scope — fork() requires the calling thread to be the scope owner
+        final var readyDependents = this.dependencyGraph.predecessors(reference).stream()
+            .filter(this.instructions::containsKey)
+            .filter(dependent -> pending.get(dependent).decrementAndGet() == 0)
+            .toList();
+
+        if (!readyDependents.isEmpty()) {
+            try (var nestedScope = StructuredTaskScope.open()) {
+                readyDependents.forEach(dep ->
+                    nestedScope.fork(() -> runTask(dep, pending, executionCache, execution, failures)));
+                nestedScope.join();
+            } catch (final StructuredTaskScope.FailedException ignored) {
+                // runTask records failures without throwing; this branch is unreachable in normal operation
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        return null;
     }
 }

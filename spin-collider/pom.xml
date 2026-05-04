@@ -83,7 +83,7 @@
                 <version>${maven-surefire-plugin.version}</version>
                 <configuration>
                     <useModulePath>false</useModulePath>
-                    <argLine>--add-exports=org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED --add-exports=org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED @${project.build.directory}/spin-classify-test.args</argLine>
+                    <argLine>${surefire.jvm.args} --add-exports=org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED --add-exports=org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED @${project.build.directory}/spin-classify-test.args</argLine>
                 </configuration>
             </plugin>
             <plugin>

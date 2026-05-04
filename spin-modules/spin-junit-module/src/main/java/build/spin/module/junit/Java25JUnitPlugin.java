@@ -27,7 +27,6 @@ import build.spawn.jdk.option.ModulePath;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Reference;
-import build.spin.annotation.Before;
 import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
@@ -37,7 +36,6 @@ import build.spin.module.java.AbstractDetectClassPath;
 import build.spin.module.java.AbstractDetectModulePath;
 import build.spin.module.java.AbstractDetectSourceFiles;
 import build.spin.module.java.AbstractDetectSourcePaths;
-import build.spin.module.java.AbstractResourcePlugin;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.option.TargetDirectoryName;
@@ -207,38 +205,6 @@ public class Java25JUnitPlugin
                             final @From(CleanPlugin.CreateBuildPath.class) Path buildPath) {
 
             return super.test(modulePath, classPath, buildPath);
-        }
-    }
-
-    /**
-     * A {@link build.spin.Task} to detect the {@link Path}s of test resources.
-     */
-    @Named("detect.test.resource.paths")
-    public static class DetectTestResourcePaths
-        extends AbstractResourcePlugin.DetectResourcePaths {
-
-        @Override
-        protected String sourcePath() {
-            return "src/test/resources";
-        }
-    }
-
-    /**
-     * A {@link build.spin.Task} to copy test resources into the build before test compilation.
-     */
-    @Named("copy.test.resources")
-    @Before(Compile.class)
-    public static class CopyTestResources
-        extends AbstractResourcePlugin.CopyResources {
-
-        @Override
-        protected String destinationPrefix() {
-            return "test/";
-        }
-
-        public PathSet copy(final @From(DetectTestResourcePaths.class) PathSet paths,
-                            final @From(CleanPlugin.CreateBuildPath.class) Path buildPath) {
-            return super.doCopy(paths, buildPath);
         }
     }
 
