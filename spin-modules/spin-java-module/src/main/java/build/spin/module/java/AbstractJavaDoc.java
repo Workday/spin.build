@@ -20,7 +20,6 @@ package build.spin.module.java;
  * #L%
  */
 
-import build.base.configuration.Default;
 import build.base.foundation.Strings;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
@@ -86,10 +85,6 @@ public abstract class AbstractJavaDoc
     private ModuleVersioning versioning;
 
     @Inject
-    @Default
-    private JDKVersion defaultJavaVersion;
-
-    @Inject
     private JDKVersion javaVersion;
 
     @Inject
@@ -122,159 +117,153 @@ public abstract class AbstractJavaDoc
         // the path in which to place the javadoc
         final Path targetPath = buildPath.resolve("main/javadoc");
 
-        // only generate Java Documentation when the Project default JDKVersion
-        // is the same as the JDKVersion for the Java Plugin that defines this JavaDoc Task
-        // (we can't generate for lower or higher versions as the javadoc tool is not reliable when
-        //  attempting to generate javadoc across different tools)
-        if (this.defaultJavaVersion.major() == this.javaVersion.major()) {
-            // determine the version of the Module being documented (or use a default version)
-            final Version version = this.versioning
-                .getVersion(this.moduleDescriptor.moduleName().toString())
-                .orElse(ModuleVersioning.DEFAULT_VERSION);
+        // determine the version of the Module being documented (or use a default version)
+        final Version version = this.versioning
+            .getVersion(this.moduleDescriptor.moduleName().toString())
+            .orElse(ModuleVersioning.DEFAULT_VERSION);
 
-            final Activity documentation = this.recorder
-                .commence("Generating Documentation %d file(s) for [%s]", sourceCode.size(), this.project.path());
+        final Activity documentation = this.recorder
+            .commence("Generating Documentation %d file(s) for [%s]", sourceCode.size(), this.project.path());
 
-            // create the target path for the compiled classes
-            try {
-                Files.createDirectories(targetPath);
+        // create the target path for the compiled classes
+        try {
+            Files.createDirectories(targetPath);
+        }
+        catch (final IOException e) {
+            documentation.completeExceptionally(e);
+            throw new RuntimeException("Failed to create documentation target [" + targetPath + "]", e);
+        }
+
+        // create an "argument" file for "javadoc"
+        // include the version number in the arguments file name
+        // (so we can tell the arguments being used to compile with this plugin)
+        final Path arguments = buildPath.resolve("arguments-javadoc-" + this.javaVersion.major());
+        try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(arguments))) {
+            // include the "javadoc" options
+
+            // include the output path for documentation
+            writer.println("-d " + Strings.doubleQuoteIfContainsWhiteSpace(targetPath.toString()));
+
+            // include -verbose (for debugging)
+            if (this.verbose == Verbose.ENABLED) {
+                writer.println("-verbose");
             }
-            catch (final IOException e) {
-                documentation.completeExceptionally(e);
-                throw new RuntimeException("Failed to create documentation target [" + targetPath + "]", e);
+            else {
+                writer.println("-quiet");
             }
 
-            // create an "argument" file for "javadoc"
-            // include the version number in the arguments file name
-            // (so we can tell the arguments being used to compile with this plugin)
-            final Path arguments = buildPath.resolve("arguments-javadoc-" + this.javaVersion.major());
-            try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(arguments))) {
-                // include the "javadoc" options
+            // pin the release; --release and --enable-preview are Java 9+ only
+            if (this.javaVersion.isModular()) {
+                writer.println("--release " + this.javaVersion.major());
+                writer.println("--enable-preview");
+            } else {
+                writer.println("-source " + this.javaVersion.major());
+            }
 
-                // include the output path for documentation
-                writer.println("-d " + Strings.doubleQuoteIfContainsWhiteSpace(targetPath.toString()));
-
-                // include -verbose (for debugging)
-                if (this.verbose == Verbose.ENABLED) {
-                    writer.println("-verbose");
-                }
-                else {
-                    writer.println("-quiet");
-                }
-
-                // pin the release; --release and --enable-preview are Java 9+ only
-                if (this.javaVersion.isModular()) {
-                    writer.println("--release " + this.javaVersion.major());
-                    writer.println("--enable-preview");
-                } else {
-                    writer.println("-source " + this.javaVersion.major());
-                }
-
-                // include the module-path and classpath from the detection tasks
-                // --module-path is Java 9+; for Java 8 fold everything into -classpath
-                if (this.javaVersion.isModular()) {
-                    if (!modulePath.isEmpty()) {
-                        final String mp = modulePath.stream()
-                            .map(Path::toString)
-                            .collect(Collectors.joining(File.pathSeparator));
-                        writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
-                    }
-                    if (!classPath.isEmpty()) {
-                        final String cp = classPath.stream()
-                            .map(Path::toString)
-                            .collect(Collectors.joining(File.pathSeparator));
-                        writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
-                    }
-                } else {
-                    final String cp = Stream.concat(modulePath.stream(), classPath.stream())
+            // include the module-path and classpath from the detection tasks
+            // --module-path is Java 9+; for Java 8 fold everything into -classpath
+            if (this.javaVersion.isModular()) {
+                if (!modulePath.isEmpty()) {
+                    final String mp = modulePath.stream()
                         .map(Path::toString)
                         .collect(Collectors.joining(File.pathSeparator));
-                    if (!cp.isEmpty()) {
-                        writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
-                    }
+                    writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
                 }
+                if (!classPath.isEmpty()) {
+                    final String cp = classPath.stream()
+                        .map(Path::toString)
+                        .collect(Collectors.joining(File.pathSeparator));
+                    writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                }
+            } else {
+                final String cp = Stream.concat(modulePath.stream(), classPath.stream())
+                    .map(Path::toString)
+                    .collect(Collectors.joining(File.pathSeparator));
+                if (!cp.isEmpty()) {
+                    writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                }
+            }
 
-                // include the -link(s) to external documentation
-                // TODO: we should get this from an external "catalog"
+            // include the -link(s) to external documentation
+            // TODO: we should get this from an external "catalog"
 
-                // output the version of Java we're using (only if the URL is reachable)
-                // connect() only establishes TCP; we must read from the stream to confirm
-                // HTTP-level reachability before passing the URL to javadoc
-                javaPlatformURL.ifPresent(url -> {
-                    try {
-                        final var connection = url.openConnection();
-                        connection.setConnectTimeout(3000);
-                        connection.setReadTimeout(3000);
-                        try (var stream = connection.getInputStream()) {
-                            stream.read();
-                        }
-                        writer.println("-link " + url);
+            // output the version of Java we're using (only if the URL is reachable)
+            // connect() only establishes TCP; we must read from the stream to confirm
+            // HTTP-level reachability before passing the URL to javadoc
+            javaPlatformURL.ifPresent(url -> {
+                try {
+                    final var connection = url.openConnection();
+                    connection.setConnectTimeout(3000);
+                    connection.setReadTimeout(3000);
+                    try (var stream = connection.getInputStream()) {
+                        stream.read();
                     }
-                    catch (final java.io.IOException e) {
-                        this.recorder.diagnostic("Skipping external documentation link for [%s]: %s", url, e.getMessage());
+                    writer.println("-link " + url);
+                }
+                catch (final java.io.IOException e) {
+                    this.recorder.diagnostic("Skipping external documentation link for [%s]: %s", url, e.getMessage());
+                }
+            });
+
+            // output links to each of the "external" projects
+            // TODO: https://javadoc.io/doc/<groupId>/<artifactId>/<version>
+
+            // include any project-declared javadoc args (e.g. --release N, --enable-preview,
+            // <additionalOptions> from maven-javadoc-plugin). Resource is workspace-scoped
+            // and resolves the per-project effective pom.
+            this.project.findResource(JavadocArguments.class).ifPresent(args ->
+                args.get(this.project).forEach(writer::println));
+
+            // lastly include the source code to document, plus any sources generated
+            // by annotation processors during the preceding compile step
+            sourceCode.stream()
+                .peek(path -> this.recorder.diagnostic("Preparing [%s] for documentation", path))
+                .forEach(writer::println);
+
+            final Path generatedSources = buildPath.resolve("main/generated-sources");
+            if (Files.isDirectory(generatedSources)) {
+                try (var walk = Files.walk(generatedSources)) {
+                    walk.filter(p -> p.toString().endsWith(".java"))
+                        .peek(path -> this.recorder.diagnostic("Preparing [%s] for documentation", path))
+                        .forEach(writer::println);
+                } catch (final IOException e) {
+                    this.recorder.warn(e, "Failed to walk generated-sources [%s]", generatedSources);
+                }
+            }
+        }
+
+        // establish the "javadoc" executable based on the Java Development Kit
+        final JDKHome javaHome = this.javaDevelopmentKit.home();
+        final String executable = javaHome.path().resolve("bin/javadoc").toString();
+
+        // launch "javadoc"
+        try (Application javadoc = this.machine.launch(executable,
+            javaHome,
+            Name.of("javadoc " + this.javaDevelopmentKit.version().toString()),
+            Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())),
+            Console.ofSystem())) {
+
+            // wait for "javadoc" to exit
+            javadoc.onExit().get();
+
+            // output the exit value for the completion
+            javadoc.exitValue()
+                .ifPresent(value -> {
+                    if (value == 0) {
+                        documentation.complete();
+                    }
+                    else {
+                        final RuntimeException runtimeException =
+                            new RuntimeException("Documentation Generation Failed (exit code :" + value + ")");
+
+                        documentation.completeExceptionally(runtimeException);
+
+                        throw runtimeException;
                     }
                 });
 
-                // output links to each of the "external" projects
-                // TODO: https://javadoc.io/doc/<groupId>/<artifactId>/<version>
-
-                // include any project-declared javadoc args (e.g. --release N, --enable-preview,
-                // <additionalOptions> from maven-javadoc-plugin). Resource is workspace-scoped
-                // and resolves the per-project effective pom.
-                this.project.findResource(JavadocArguments.class).ifPresent(args ->
-                    args.get(this.project).forEach(writer::println));
-
-                // lastly include the source code to document, plus any sources generated
-                // by annotation processors during the preceding compile step
-                sourceCode.stream()
-                    .peek(path -> this.recorder.diagnostic("Preparing [%s] for documentation", path))
-                    .forEach(writer::println);
-
-                final Path generatedSources = buildPath.resolve("main/generated-sources");
-                if (Files.isDirectory(generatedSources)) {
-                    try (var walk = Files.walk(generatedSources)) {
-                        walk.filter(p -> p.toString().endsWith(".java"))
-                            .peek(path -> this.recorder.diagnostic("Preparing [%s] for documentation", path))
-                            .forEach(writer::println);
-                    } catch (final IOException e) {
-                        this.recorder.warn(e, "Failed to walk generated-sources [%s]", generatedSources);
-                    }
-                }
-            }
-
-            // establish the "javadoc" executable based on the Java Development Kit
-            final JDKHome javaHome = this.javaDevelopmentKit.home();
-            final String executable = javaHome.path().resolve("bin/javadoc").toString();
-
-            // launch "javadoc"
-            try (Application javadoc = this.machine.launch(executable,
-                javaHome,
-                Name.of("javadoc " + this.javaDevelopmentKit.version().toString()),
-                Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())),
-                Console.ofSystem())) {
-
-                // wait for "javadoc" to exit
-                javadoc.onExit().get();
-
-                // output the exit value for the completion
-                javadoc.exitValue()
-                    .ifPresent(value -> {
-                        if (value == 0) {
-                            documentation.complete();
-                        }
-                        else {
-                            final RuntimeException runtimeException =
-                                new RuntimeException("Documentation Generation Failed (exit code :" + value + ")");
-
-                            documentation.completeExceptionally(runtimeException);
-
-                            throw runtimeException;
-                        }
-                    });
-
-                if (!javadoc.exitValue().isPresent()) {
-                    documentation.complete();
-                }
+            if (!javadoc.exitValue().isPresent()) {
+                documentation.complete();
             }
         }
 
