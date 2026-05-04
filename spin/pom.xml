@@ -201,6 +201,7 @@
                                      modular launch: it classifies jars via ModuleFinder + Configuration.resolve,
                                      demotes split-package conflicts (e.g. Maven Resolver 1.x), and re-execs
                                      the JVM with the correct -module-path + -cp + -m build.spin.application/Spin. -->
+                                <argument>--enable-preview</argument>
                                 <argument>-classpath</argument>
                                 <classpath/>
                                 <argument>build.spin.application.Launcher</argument>

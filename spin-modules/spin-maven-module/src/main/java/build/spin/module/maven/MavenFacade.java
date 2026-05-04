@@ -196,7 +196,7 @@ class MavenFacade {
      * @param coordinates the group:artifact:classifier:type:version coordinates
      * @return an {@link Exceptional} {@link ArtifactResult}
      */
-    public Exceptional<ArtifactResult> resolveArtifact(final String coordinates) {
+    public synchronized Exceptional<ArtifactResult> resolveArtifact(final String coordinates) {
         try {
             final Artifact artifact = new DefaultArtifact(coordinates);
 
@@ -215,7 +215,10 @@ class MavenFacade {
         }
         catch (final ArtifactResolutionException e) {
             this.recorder.error(e, "Failed to resolve %s", coordinates);
-
+            return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
+        }
+        catch (final RuntimeException e) {
+            this.recorder.error(e, "Unexpected error resolving %s", coordinates);
             return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
         }
     }
@@ -228,7 +231,7 @@ class MavenFacade {
      * @param coordinates the group:artifact:classifier:type:version coordinates
      * @return an {@link Exceptional} list of resolved {@link Path}s (root + all transitive deps)
      */
-    public Exceptional<List<Path>> resolveTransitiveDependencies(final String coordinates) {
+    public synchronized Exceptional<List<Path>> resolveTransitiveDependencies(final String coordinates) {
         try {
             final org.eclipse.aether.artifact.Artifact artifact = new DefaultArtifact(coordinates);
             final CollectRequest collectRequest = new CollectRequest(
@@ -250,6 +253,10 @@ class MavenFacade {
             this.recorder.error(e, "Failed to resolve transitive dependencies for %s", coordinates);
             return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
         }
+        catch (final RuntimeException e) {
+            this.recorder.error(e, "Unexpected error resolving transitive dependencies for %s", coordinates);
+            return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
+        }
     }
 
     /**
@@ -258,7 +265,7 @@ class MavenFacade {
      * @param coordinates the group:artifact:classifier:type:version coordinates
      * @return an {@link Exceptional} {@link ArtifactDescriptorResult}
      */
-    public Exceptional<ArtifactDescriptorResult> resolveArtifactDescriptor(final String coordinates) {
+    public synchronized Exceptional<ArtifactDescriptorResult> resolveArtifactDescriptor(final String coordinates) {
         try {
             final Artifact artifact = new DefaultArtifact(coordinates);
 
@@ -277,7 +284,10 @@ class MavenFacade {
         }
         catch (final ArtifactDescriptorException e) {
             this.recorder.error(e, "Failed to resolve descriptor for %s", coordinates);
-
+            return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
+        }
+        catch (final RuntimeException e) {
+            this.recorder.error(e, "Unexpected error resolving descriptor for %s", coordinates);
             return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
         }
     }

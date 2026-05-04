@@ -259,6 +259,15 @@ public abstract class AbstractCompile
             // include -verbose (for debugging)
             writer.println("-verbose");
 
+            // pin the release; --release and --enable-preview are Java 9+ only
+            if (this.javaVersion.isModular()) {
+                writer.println("--release " + this.javaVersion.major());
+                writer.println("--enable-preview");
+            } else {
+                writer.println("-source " + this.javaVersion.major());
+                writer.println("-target " + this.javaVersion.major());
+            }
+
             // when the source set contains a module-info.java the compilation is named-module mode:
             // use the module path and classpath as classified by the detection tasks.
             // when there is no module-info.java the sources belong to the unnamed module and JPMS
@@ -292,11 +301,12 @@ public abstract class AbstractCompile
                 }
             }
 
-            // add annotation processor modules (+ their full transitive dep closure) to
-            // --processor-module-path so javac discovers and runs them without an explicit `requires`
+            // add annotation processor modules (+ their full transitive dep closure) to the processor path
+            // --processor-module-path is Java 9+; Java 8 uses -processorpath
             final String processorModulePath = buildProcessorModulePath();
             if (!processorModulePath.isEmpty()) {
-                writer.println("--processor-module-path "
+                final String processorFlag = this.javaVersion.isModular() ? "--processor-module-path" : "-processorpath";
+                writer.println(processorFlag + " "
                     + Strings.doubleQuoteIfContainsWhiteSpace(processorModulePath));
 
                 // direct generated source files to a predictable directory so javadoc can find them

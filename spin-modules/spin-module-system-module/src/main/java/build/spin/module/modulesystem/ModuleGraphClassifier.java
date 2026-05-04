@@ -277,13 +277,17 @@ public final class ModuleGraphClassifier {
             if (!visited.add(name)) {
                 continue;
             }
-            finder.find(name).ifPresent(ref -> {
-                for (final ModuleDescriptor.Requires req : ref.descriptor().requires()) {
-                    if (!visited.contains(req.name())) {
-                        frontier.add(req.name());
+            try {
+                finder.find(name).ifPresent(ref -> {
+                    for (final ModuleDescriptor.Requires req : ref.descriptor().requires()) {
+                        if (!visited.contains(req.name())) {
+                            frontier.add(req.name());
+                        }
                     }
-                }
-            });
+                });
+            } catch (final FindException e) {
+                // module directory exists but is partially written by a concurrent compilation; skip
+            }
         }
         return visited;
     }

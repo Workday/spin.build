@@ -74,9 +74,7 @@ public abstract class AbstractCopy
 
                     try {
                         if (Files.isDirectory(s)) {
-                            if (!Files.exists(d)) {
-                                Files.createDirectory(d);
-                            }
+                            Files.createDirectories(d);
                             return;
                         }
                         Files.copy(s, d, StandardCopyOption.REPLACE_EXISTING);

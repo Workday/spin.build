@@ -8,5 +8,5 @@ SCRIPTPATH=$(dirname `readlink -f "$0"`)
 MP=`readlink -f "$SCRIPTPATH/../modules"`
 LIB=`readlink -f "$SCRIPTPATH/../classpath"`
 
-$SCRIPTPATH/java --module-path $MP#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/#{mainClass} $@
+$SCRIPTPATH/java --enable-preview --module-path $MP#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/#{mainClass} $@
 @end

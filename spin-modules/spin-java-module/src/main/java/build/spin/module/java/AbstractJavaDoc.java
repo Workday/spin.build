@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.configuration.Default;
 import build.base.foundation.Strings;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
@@ -38,7 +39,6 @@ import build.spawn.jdk.option.ModulePath;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
-import build.spin.annotation.System;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.JavadocArguments;
@@ -55,6 +55,8 @@ import java.nio.file.Path;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
 /**
  * An abstract {@link Task} that compiles and produces Java Documentation for the Java Source Code in a {@link Project}
  * using the Java Platform {@code javadoc} command.
@@ -84,7 +86,7 @@ public abstract class AbstractJavaDoc
     private ModuleVersioning versioning;
 
     @Inject
-    @System
+    @Default
     private JDKVersion defaultJavaVersion;
 
     @Inject
@@ -145,7 +147,7 @@ public abstract class AbstractJavaDoc
             // create an "argument" file for "javadoc"
             // include the version number in the arguments file name
             // (so we can tell the arguments being used to compile with this plugin)
-            final Path arguments = buildPath.resolve("arguments-javadoc");
+            final Path arguments = buildPath.resolve("arguments-javadoc-" + this.javaVersion.major());
             try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(arguments))) {
                 // include the "javadoc" options
 
@@ -160,18 +162,36 @@ public abstract class AbstractJavaDoc
                     writer.println("-quiet");
                 }
 
-                // include the module-path and classpath from the detection tasks
-                if (!modulePath.isEmpty()) {
-                    final String mp = modulePath.stream()
-                        .map(Path::toString)
-                        .collect(Collectors.joining(File.pathSeparator));
-                    writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
+                // pin the release; --release and --enable-preview are Java 9+ only
+                if (this.javaVersion.isModular()) {
+                    writer.println("--release " + this.javaVersion.major());
+                    writer.println("--enable-preview");
+                } else {
+                    writer.println("-source " + this.javaVersion.major());
                 }
-                if (!classPath.isEmpty()) {
-                    final String cp = classPath.stream()
+
+                // include the module-path and classpath from the detection tasks
+                // --module-path is Java 9+; for Java 8 fold everything into -classpath
+                if (this.javaVersion.isModular()) {
+                    if (!modulePath.isEmpty()) {
+                        final String mp = modulePath.stream()
+                            .map(Path::toString)
+                            .collect(Collectors.joining(File.pathSeparator));
+                        writer.println("--module-path " + Strings.doubleQuoteIfContainsWhiteSpace(mp));
+                    }
+                    if (!classPath.isEmpty()) {
+                        final String cp = classPath.stream()
+                            .map(Path::toString)
+                            .collect(Collectors.joining(File.pathSeparator));
+                        writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                    }
+                } else {
+                    final String cp = Stream.concat(modulePath.stream(), classPath.stream())
                         .map(Path::toString)
                         .collect(Collectors.joining(File.pathSeparator));
-                    writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                    if (!cp.isEmpty()) {
+                        writer.println("-classpath " + Strings.doubleQuoteIfContainsWhiteSpace(cp));
+                    }
                 }
 
                 // include the -link(s) to external documentation

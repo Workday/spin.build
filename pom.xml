@@ -59,6 +59,7 @@
 
         <!-- Project Build Properties -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <surefire.jvm.args>--enable-preview</surefire.jvm.args>
 
         <!-- Platform Versions -->
         <java.version>25</java.version>
@@ -547,6 +548,18 @@
                     <release>${java.version}</release>
                     <parameters>true</parameters>
                     <testCompilerArgument>-parameters</testCompilerArgument>
+                    <compilerArgs>
+                        <arg>--enable-preview</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+                <configuration>
+                    <argLine>${surefire.jvm.args}</argLine>
                 </configuration>
             </plugin>
 
@@ -693,6 +706,10 @@
                     <doclint>all,-missing</doclint>
                     <sourceFileExcludes>module-info.java</sourceFileExcludes>
                     <attach>true</attach>
+                    <release>${java.version}</release>
+                    <additionalJOptions>
+                        <additionalJOption>--enable-preview</additionalJOption>
+                    </additionalJOptions>
                 </configuration>
                 <executions>
                     <execution>
