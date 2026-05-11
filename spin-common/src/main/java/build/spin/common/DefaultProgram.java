@@ -64,6 +64,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import java.util.Stack;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -391,11 +392,19 @@ public final class DefaultProgram
 
         final Queue<ProgramExecutionException> failures = new ConcurrentLinkedQueue<>();
 
+        // guards against a task being dispatched more than once when multiple dependents
+        // complete concurrently and both decrement pending to zero for the same reference
+        final var dispatched = ConcurrentHashMap.<Reference>newKeySet();
+
         try (var scope = StructuredTaskScope.open()) {
             // seed with tasks that have no dependencies
             this.instructions.keySet().stream()
                 .filter(ref -> pending.get(ref).get() == 0)
-                .forEach(ref -> scope.fork(() -> runTask(ref, pending, executionCache, execution, failures)));
+                .forEach(ref -> {
+                    if (dispatched.add(ref)) {
+                        scope.fork(() -> runTask(ref, pending, dispatched, executionCache, execution, failures));
+                    }
+                });
 
             scope.join();
         } catch (final StructuredTaskScope.FailedException e) {
@@ -419,6 +428,7 @@ public final class DefaultProgram
     @SuppressWarnings("unchecked")
     private Void runTask(final Reference reference,
                          final ConcurrentHashMap<Reference, AtomicInteger> pending,
+                         final Set<Reference> dispatched,
                          final AssetCache executionCache,
                          final Meter execution,
                          final Queue<ProgramExecutionException> failures) {
@@ -496,8 +506,10 @@ public final class DefaultProgram
 
         if (!readyDependents.isEmpty()) {
             try (var nestedScope = StructuredTaskScope.open()) {
-                readyDependents.forEach(dep ->
-                    nestedScope.fork(() -> runTask(dep, pending, executionCache, execution, failures)));
+                readyDependents.stream()
+                    .filter(dispatched::add)
+                    .forEach(dep -> nestedScope.fork(() ->
+                        runTask(dep, pending, dispatched, executionCache, execution, failures)));
                 nestedScope.join();
             } catch (final StructuredTaskScope.FailedException ignored) {
                 // runTask records failures without throwing; this branch is unreachable in normal operation
