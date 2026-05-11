@@ -36,6 +36,7 @@ import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -158,9 +159,16 @@ public abstract class AbstractDetectResolution
                 .findFirst();
 
             if (sibling.isPresent()) {
-                final Path siblingClasses = sibling.get().path()
+                final Path spinOutput = sibling.get().path()
                     .resolve(this.buildDirectoryName.get() + "/main/" + this.target.get());
-                siblingCandidates.add(siblingClasses);
+                // spin may be used purely as a dependency analyser, where the workspace projects
+                // were compiled by Maven or Gradle and will never have a spin output directory.
+                // Fall back to the conventional output location so the module/class-path we
+                // return is still correct.
+                final Optional<Path> siblingClasses = Files.exists(spinOutput)
+                    ? Optional.of(spinOutput)
+                    : resolveFallbackOutput(sibling.get().path());
+                siblingClasses.ifPresent(siblingCandidates::add);
 
                 // enqueue the sibling's own direct requires onto the frontier
                 sibling.get().plugins(JavaCompilerPlugin.class)
@@ -246,5 +254,18 @@ public abstract class AbstractDetectResolution
             msg -> this.recorder.diagnostic("[classify] %s", msg));
 
         return new CompilationResolution(classification.modulePath(), classification.classPath());
+    }
+
+    // Visible for testing.
+    static Optional<Path> resolveFallbackOutput(final Path projectPath) {
+        final Path mavenClasses = projectPath.resolve("target/classes");
+        if (Files.exists(mavenClasses)) {
+            return Optional.of(mavenClasses);
+        }
+        final Path gradleClasses = projectPath.resolve("build/classes/java/main");
+        if (Files.exists(gradleClasses)) {
+            return Optional.of(gradleClasses);
+        }
+        return Optional.empty();
     }
 }
