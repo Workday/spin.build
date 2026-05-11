@@ -100,7 +100,8 @@ public class Java8CompilerPlugin
      */
     @Named("detect.compilation.resolution")
     public static class DetectCompilationResolution
-        extends AbstractDetectResolution {
+        extends AbstractDetectResolution
+        implements JavaCompilerPlugin.DetectCompilationResolution {
 
     }
 
@@ -109,7 +110,8 @@ public class Java8CompilerPlugin
      */
     @Named("detect.compilation.module.path")
     public static class DetectCompilationModulePath
-        extends AbstractDetectModulePath {
+        extends AbstractDetectModulePath
+        implements JavaCompilerPlugin.DetectCompilationModulePath {
 
         public ModulePath create(
             @From(DetectCompilationResolution.class) final CompilationResolution resolution) {
@@ -123,7 +125,8 @@ public class Java8CompilerPlugin
      */
     @Named("detect.compilation.classpath")
     public static class DetectCompilationClassPath
-        extends AbstractDetectClassPath {
+        extends AbstractDetectClassPath
+        implements JavaCompilerPlugin.DetectCompilationClassPath {
 
         public ClassPath create(
             @From(DetectCompilationResolution.class) final CompilationResolution resolution) {

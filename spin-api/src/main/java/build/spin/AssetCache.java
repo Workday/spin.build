@@ -63,6 +63,44 @@ public interface AssetCache {
     <T> Optional<Asset<T>> putIfAbsent(Asset<T> asset);
 
     /**
+     * Obtains the first {@link Asset} whose {@link Task} class implements the given task interface.
+     *
+     * <p>Use this to retrieve results without coupling to a specific plugin version:
+     * {@code cache.get(JavaCompilerPlugin.DetectSourcePaths.class)} works regardless of whether
+     * the project uses {@code Java25CompilerPlugin} or any other compiler plugin.
+     *
+     * @param <T> the type of the {@link Asset}
+     * @param taskInterface the {@link Task} interface to match
+     * @return the first matching {@link Asset}, or {@link Optional#empty()} if none
+     */
+    @SuppressWarnings("unchecked")
+    default <T> Optional<Asset<T>> get(final Class<? extends Task<T>> taskInterface) {
+        return assets()
+            .filter(a -> taskInterface.isAssignableFrom(a.invocable().getTaskClass()))
+            .findFirst()
+            .map(a -> (Asset<T>) a);
+    }
+
+    /**
+     * Obtains the first {@link Asset} for the given {@link Project} whose {@link Task} class implements
+     * the given task interface.
+     *
+     * @param <T> the type of the {@link Asset}
+     * @param project the {@link Project} to scope the lookup to
+     * @param taskInterface the {@link Task} interface to match
+     * @return the first matching {@link Asset}, or {@link Optional#empty()} if none
+     */
+    @SuppressWarnings("unchecked")
+    default <T> Optional<Asset<T>> get(final Project project,
+                                       final Class<? extends Task<T>> taskInterface) {
+        return assets()
+            .filter(a -> project.equals(a.invocable().getProject()))
+            .filter(a -> taskInterface.isAssignableFrom(a.invocable().getTaskClass()))
+            .findFirst()
+            .map(a -> (Asset<T>) a);
+    }
+
+    /**
      * Determines if an {@link Asset} is available for the specified {@link Task} {@link Reference}.
      *
      * @param reference the {@link Task} {@link Reference}
