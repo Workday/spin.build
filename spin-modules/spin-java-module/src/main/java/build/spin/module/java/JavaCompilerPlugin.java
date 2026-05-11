@@ -21,11 +21,14 @@ package build.spin.module.java;
  */
 
 import build.base.io.PathSet;
+import build.spawn.jdk.option.ClassPath;
+import build.spawn.jdk.option.ModulePath;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.Category;
 import build.spin.common.annotation.Ordered;
+import build.spin.module.modulesystem.CompilationResolution;
 
 import java.nio.file.Path;
 
@@ -72,6 +75,30 @@ public interface JavaCompilerPlugin
      */
     interface DetectSourcePaths
         extends build.spin.common.task.DetectSourcePaths {
+
+    }
+
+    /**
+     * A {@link Task} to detect the {@link CompilationResolution} for the {@link Project}.
+     */
+    interface DetectCompilationResolution
+        extends Task<CompilationResolution> {
+
+    }
+
+    /**
+     * A {@link Task} to detect the compile {@link ClassPath} for the {@link Project}.
+     */
+    interface DetectCompilationClassPath
+        extends Task<ClassPath> {
+
+    }
+
+    /**
+     * A {@link Task} to detect the compile {@link ModulePath} for the {@link Project}.
+     */
+    interface DetectCompilationModulePath
+        extends Task<ModulePath> {
 
     }
 

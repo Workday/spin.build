@@ -245,20 +245,10 @@ public class FromResolver
                 requiredClass = dependencyClass;
             }
 
-            // (when the @From class is abstract (or an interface), we attempt to locate the result of the
-            // Task in the Project that is assignable to the required dependency)
+            @SuppressWarnings("unchecked")
             final Optional<Asset<Object>> optional =
                 fromClass.isInterface() || Modifier.isAbstract(fromClass.getModifiers())
-                    ? this.cache.references()
-                    .filter(reference -> reference.project().equals(project))
-                    .filter(reference -> fromClass.isAssignableFrom(reference.getTaskClass()))
-                    .map(this.cache::get)
-                    .filter(Objects::nonNull)
-                    .filter(Optional::isPresent)
-                    .map(Optional::get)
-                    .findFirst()
-
-                    // otherwise, for concrete task classes, simply reference the result of the task
+                    ? this.cache.get(project, (Class<? extends Task<Object>>) fromClass)
                     : this.cache.get(Reference.of(project, fromClass));
 
             return optional
