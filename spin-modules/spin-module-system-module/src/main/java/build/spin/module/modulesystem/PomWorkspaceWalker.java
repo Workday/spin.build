@@ -21,6 +21,7 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.foundation.CodeModel;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -67,12 +68,13 @@ final class PomWorkspaceWalker {
     }
 
     /**
-     * Walks the workspace pom tree and all transitive dependencies from the local repository,
-     * invoking {@code visitor} for every coordinate found.
+     * Walks the workspace pom tree, then follows module-info.class requires transitively
+     * through the local repository, invoking {@code visitor} for every coordinate found.
      */
     static void walk(final Path workspacePath,
                      final Path localRepo,
                      final TelemetryRecorder recorder,
+                     final CodeModel codeModel,
                      final CoordinateVisitor visitor) {
         final Path rootPom = workspacePath.resolve(POM_FILENAME);
         if (!Files.exists(rootPom)) {
@@ -84,47 +86,48 @@ final class PomWorkspaceWalker {
             final Map<String, String> rootProperties = PomXmlUtils.readProperties(builder, rootPom);
             final Map<String, String> rootDm = PomXmlUtils.readDependencyManagement(builder, rootPom, rootProperties);
 
-            final Deque<String[]> queue = new ArrayDeque<>();
+            // visited keyed by "groupId:artifactId" to avoid re-processing
             final Set<String> visited = new HashSet<>();
 
-            // Phase 1: walk the workspace poms. Dependencies are visited under all scopes here —
-            // test-scoped workspace deps (e.g. base-assertion) are still needed at test compile time.
+            // Phase 1: walk the workspace poms and their directly declared deps (with rootDm
+            // for version resolution). This seeds the module-info BFS with known coordinates.
+            final Deque<String[]> moduleQueue = new ArrayDeque<>();
+
             Files.walk(workspacePath)
                 .filter(p -> p.getFileName().toString().equals(POM_FILENAME))
                 .filter(Files::isRegularFile)
                 .filter(p -> !p.toString().contains("/target/"))
                 .forEach(pomPath -> {
-                    walkPom(builder, pomPath, rootProperties, rootDm, rootPom, localRepo, recorder, visitor);
+                    walkPom(builder, pomPath, rootProperties, rootDm, rootPom, localRepo, recorder, codeModel, visitor);
                     PomXmlUtils.readRawDependencies(builder, pomPath, rootProperties, rootDm)
                         .forEach(d -> {
                             if (visited.add(d[0] + ":" + d[1])) {
-                                queue.add(d);
+                                moduleQueue.add(d);
                             }
                         });
                 });
 
-            // Phase 2: BFS transitive poms from the local repository. Test and provided scopes
-            // are excluded here — external transitive deps of those scopes are not needed to
-            // build or test the workspace itself.
-            while (!queue.isEmpty()) {
-                final String[] coord = queue.poll();
+            // Phase 2: BFS transitive poms from the local repository.
+            while (!moduleQueue.isEmpty()) {
+                final String[] coord = moduleQueue.poll();
                 PomXmlUtils.localRepoPomPath(coord[0], coord[1], coord[2], localRepo)
                     .ifPresent(pomPath -> {
                         try {
                             final Map<String, String> pomProperties =
                                 PomXmlUtils.readProperties(builder, pomPath);
-                            PomXmlUtils.readRawDependencies(builder, pomPath, pomProperties, Map.of())
+                            final Map<String, String> pomDm =
+                                PomXmlUtils.readDependencyManagement(builder, pomPath, pomProperties, localRepo);
+                            PomXmlUtils.readRawDependencies(builder, pomPath, pomProperties, pomDm)
                                 .stream()
                                 .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))
                                 .forEach(d -> {
-                                    visitDependency(d[0], d[1], d[2], localRepo, recorder, visitor);
+                                    visitDependency(d[0], d[1], d[2], localRepo, recorder, codeModel, visitor);
                                     if (visited.add(d[0] + ":" + d[1])) {
-                                        queue.add(d);
+                                        moduleQueue.add(d);
                                     }
                                 });
                         } catch (final Exception e) {
-                            recorder.warn(e,
-                                "PomWorkspaceWalker failed to read transitive pom [%s]", pomPath);
+                            recorder.warn(e, "PomWorkspaceWalker failed to read transitive pom [%s]", pomPath);
                         }
                     });
             }
@@ -145,6 +148,7 @@ final class PomWorkspaceWalker {
                                 final Path rootPomPath,
                                 final Path localRepo,
                                 final TelemetryRecorder recorder,
+                                final CodeModel codeModel,
                                 final CoordinateVisitor visitor) {
         try {
             final Document doc = builder.parse(pomPath.toFile());
@@ -157,6 +161,11 @@ final class PomWorkspaceWalker {
             if (!isRootAggregator) {
                 visitSelf(doc, pomPath, properties, recorder, visitor);
             }
+
+            final Element root = doc.getDocumentElement();
+            final String pomGroupId = PomXmlUtils.directChildText(root, "groupId");
+            final String pomVersion = PomXmlUtils.resolveProperty(
+                PomXmlUtils.directChildText(root, "version"), properties);
 
             final NodeList deps = doc.getElementsByTagName("dependency");
             for (int i = 0; i < deps.getLength(); i++) {
@@ -175,11 +184,14 @@ final class PomWorkspaceWalker {
                 if (resolvedVersion == null || resolvedVersion.contains("${")) {
                     resolvedVersion = rootDm.get(groupId + ":" + artifactId);
                 }
+                if (resolvedVersion == null && groupId.equals(pomGroupId) && pomVersion != null) {
+                    resolvedVersion = pomVersion;
+                }
                 if (resolvedVersion == null) {
                     continue;
                 }
 
-                visitDependency(groupId, artifactId, resolvedVersion, localRepo, recorder, visitor);
+                visitDependency(groupId, artifactId, resolvedVersion, localRepo, recorder, codeModel, visitor);
             }
         } catch (final Exception e) {
             recorder.warn(e, "PomWorkspaceWalker failed to parse [%s]", pomPath);
@@ -241,10 +253,13 @@ final class PomWorkspaceWalker {
                                         final String resolvedVersion,
                                         final Path localRepo,
                                         final TelemetryRecorder recorder,
+                                        final CodeModel codeModel,
                                         final CoordinateVisitor visitor) {
         try {
             final List<String> names = new ArrayList<>(deriveNames(groupId, artifactId));
             PomXmlUtils.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo)
+                .ifPresent(names::add);
+            PomXmlUtils.readNamedModuleName(groupId, artifactId, resolvedVersion, localRepo, codeModel)
                 .ifPresent(names::add);
             visitor.accept(names, groupId, artifactId, resolvedVersion);
         } catch (final Exception e) {

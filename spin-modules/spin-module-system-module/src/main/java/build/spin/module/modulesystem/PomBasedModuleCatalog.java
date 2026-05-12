@@ -21,7 +21,10 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.injection.PostInject;
+import build.codemodel.jdk.JDKCodeModel;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Workspace;
@@ -56,12 +59,16 @@ public class PomBasedModuleCatalog
     @Inject
     private Project project;
 
+    @Inject
+    private CodeModel codeModel;
+
     private ModuleCatalog catalog;
+    private Path localRepo;
 
     @PostInject
     private void onInjected() {
-        final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        this.catalog = buildFromWorkspace(this.project.path(), localRepo, this.recorder);
+        this.localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        this.catalog = buildFromWorkspace(this.project.path(), this.localRepo, this.codeModel, this.recorder);
     }
 
     /**
@@ -70,7 +77,7 @@ public class PomBasedModuleCatalog
      */
     static ModuleCatalog buildFromWorkspace(final Path workspacePath, final TelemetryRecorder recorder) {
         final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        return buildFromWorkspace(workspacePath, localRepo, recorder);
+        return buildFromWorkspace(workspacePath, localRepo, new JDKCodeModel(new NonCachingNameProvider()), recorder);
     }
 
     /**
@@ -79,10 +86,11 @@ public class PomBasedModuleCatalog
      */
     static ModuleCatalog buildFromWorkspace(final Path workspacePath,
                                             final Path localRepo,
+                                            final CodeModel codeModel,
                                             final TelemetryRecorder recorder) {
         final ModuleCatalog result = ModuleCatalog.HeapBased.create();
 
-        PomWorkspaceWalker.walk(workspacePath, localRepo, recorder,
+        PomWorkspaceWalker.walk(workspacePath, localRepo, recorder, codeModel,
             (names, groupId, artifactId, version) -> {
                 try {
                     final Artifact.Constraint constraint = Artifact.Constraint.of(
@@ -106,6 +114,23 @@ public class PomBasedModuleCatalog
     @Override
     public Stream<Artifact.Constraint> constraints(final String moduleName) {
         return this.catalog.constraints(moduleName);
+    }
+
+    @Override
+    public Optional<Artifact> getArtifact(final ModuleReference reference) {
+        final Optional<Artifact> found = this.catalog.getArtifact(reference);
+        if (found.isPresent() || reference.version().isEmpty()) {
+            return found;
+        }
+        // Fallback: infer groupId/artifactId from the module name convention and probe the local repo.
+        final String version = reference.version().get().toString();
+        return PomXmlUtils.findJarByModuleName(reference.name(), version, this.localRepo)
+            .map(c -> {
+                final Artifact artifact = Artifact.create(c[0], c[1], c[2], "jar");
+                final Artifact.Constraint constraint = Artifact.Constraint.of(artifact);
+                this.catalog.add(reference.name(), constraint);
+                return artifact;
+            });
     }
 
     @Override

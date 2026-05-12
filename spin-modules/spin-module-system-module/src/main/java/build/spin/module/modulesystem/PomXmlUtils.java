@@ -20,6 +20,8 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -346,6 +348,22 @@ class PomXmlUtils {
         final List<String[]> result = new ArrayList<>();
         try {
             final Document doc = builder.parse(pomPath.toFile());
+
+            // Determine the pom's own groupId and version for same-group sibling fallback.
+            final Element root = doc.getDocumentElement();
+            String pomGroupId = directChildText(root, "groupId");
+            String pomVersion = directChildText(root, "version");
+            final NodeList parentNodes = doc.getElementsByTagName("parent");
+            if (parentNodes.getLength() > 0 && parentNodes.item(0) instanceof Element parent) {
+                if (pomGroupId == null) {
+                    pomGroupId = directChildText(parent, "groupId");
+                }
+                if (pomVersion == null) {
+                    pomVersion = directChildText(parent, "version");
+                }
+            }
+            final String resolvedPomVersion = resolveProperty(pomVersion, properties);
+
             final NodeList deps = doc.getElementsByTagName("dependency");
             for (int i = 0; i < deps.getLength(); i++) {
                 if (!(deps.item(i) instanceof Element dep)) {
@@ -360,6 +378,10 @@ class PomXmlUtils {
                 String resolvedVersion = resolveProperty(rawVersion, properties);
                 if (resolvedVersion == null || resolvedVersion.contains("${")) {
                     resolvedVersion = rootDm.get(groupId + ":" + artifactId);
+                }
+                // Maven convention: same-groupId sibling deps with no version use ${project.version}.
+                if (resolvedVersion == null && groupId.equals(pomGroupId) && resolvedPomVersion != null) {
+                    resolvedVersion = resolvedPomVersion;
                 }
                 if (resolvedVersion == null) {
                     continue;
@@ -404,6 +426,28 @@ class PomXmlUtils {
     }
 
     /**
+     * Reads the JPMS module name from the {@code module-info.class} entry inside the jar at the
+     * computed local-repository path. Returns empty if the jar doesn't exist, has no
+     * {@code module-info.class}, or cannot be read.
+     */
+    static Optional<String> readNamedModuleName(final String groupId,
+                                                final String artifactId,
+                                                final String version,
+                                                final Path localRepo,
+                                                final CodeModel codeModel) {
+        final Path jarPath = localRepo
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version)
+            .resolve(artifactId + "-" + version + ".jar");
+        if (!Files.exists(jarPath)) {
+            return Optional.empty();
+        }
+        return JDKModuleDescriptor.extractFresh(codeModel, jarPath)
+            .map(d -> d.moduleName().toString());
+    }
+
+    /**
      * Parses the {@code <properties>} section of the given pom.xml and returns a map of property
      * name to value.
      *
@@ -428,6 +472,54 @@ class PomXmlUtils {
     }
 
     /**
+     * Attempts to find a jar in the local repository for the given module name and version using
+     * the naming-convention heuristic: given a module name like {@code build.spin.module.clean},
+     * the groupId is the prefix up to the last dot ({@code build.spin.module}), and the artifactId
+     * is constructed as {@code {parentLastSegment}-{extra}-{groupLastSegment}}
+     * (e.g. {@code spin-clean-module}). Falls back to the plain {@code {extra}} artifactId form.
+     * Returns {@code [groupId, artifactId, version]} or empty.
+     */
+    static Optional<String[]> findJarByModuleName(final String moduleName,
+                                                  final String version,
+                                                  final Path localRepo) {
+        final int lastDot = moduleName.lastIndexOf('.');
+        if (lastDot < 0) {
+            return Optional.empty();
+        }
+        final String groupId = moduleName.substring(0, lastDot);
+        final String extra = moduleName.substring(lastDot + 1);
+        final String groupLastSegment = groupId.contains(".")
+            ? groupId.substring(groupId.lastIndexOf('.') + 1)
+            : groupId;
+        final String parentGroupId = groupId.contains(".")
+            ? groupId.substring(0, groupId.lastIndexOf('.'))
+            : null;
+        final String parentLastSegment = parentGroupId != null && parentGroupId.contains(".")
+            ? parentGroupId.substring(parentGroupId.lastIndexOf('.') + 1)
+            : parentGroupId;
+
+        final List<String> candidates = new ArrayList<>();
+        if (parentLastSegment != null) {
+            candidates.add(parentLastSegment + "-" + extra + "-" + groupLastSegment);
+        }
+        candidates.add(groupLastSegment + "-" + extra);
+        candidates.add(extra + "-" + groupLastSegment);
+        candidates.add(extra);
+
+        for (final String artifactId : candidates) {
+            final Path jarPath = localRepo
+                .resolve(groupId.replace('.', '/'))
+                .resolve(artifactId)
+                .resolve(version)
+                .resolve(artifactId + "-" + version + ".jar");
+            if (Files.exists(jarPath)) {
+                return Optional.of(new String[]{groupId, artifactId, version});
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Reads the {@code <dependencyManagement>} section of the given pom and returns a map of
      * {@code groupId:artifactId} to resolved version string. Property references are resolved
      * against the supplied {@code properties} map. Entries whose version cannot be resolved are
@@ -436,9 +528,47 @@ class PomXmlUtils {
     static Map<String, String> readDependencyManagement(final DocumentBuilder builder,
                                                         final Path pomPath,
                                                         final Map<String, String> properties) {
+        return readDependencyManagement(builder, pomPath, properties, Optional.empty(), 0);
+    }
+
+    static Map<String, String> readDependencyManagement(final DocumentBuilder builder,
+                                                        final Path pomPath,
+                                                        final Map<String, String> properties,
+                                                        final Path localRepo) {
+        return readDependencyManagement(builder, pomPath, properties, Optional.of(localRepo), 0);
+    }
+
+    private static Map<String, String> readDependencyManagement(final DocumentBuilder builder,
+                                                                final Path pomPath,
+                                                                final Map<String, String> properties,
+                                                                final Optional<Path> localRepo,
+                                                                final int depth) {
         final Map<String, String> dm = new HashMap<>();
+        if (depth > 8) {
+            return dm;
+        }
         try {
             final Document doc = builder.parse(pomPath.toFile());
+
+            // Merge parent DM first (lower priority than own DM)
+            localRepo.ifPresent(repo -> {
+                final NodeList parentNodes = doc.getElementsByTagName("parent");
+                if (parentNodes.getLength() > 0 && parentNodes.item(0) instanceof Element parent) {
+                    final String pg = directChildText(parent, "groupId");
+                    final String pa = directChildText(parent, "artifactId");
+                    final String pv = resolveProperty(directChildText(parent, "version"), properties);
+                    if (pg != null && pa != null && pv != null && !pv.contains("${")) {
+                        localRepoPomPath(pg, pa, pv, repo).ifPresent(parentPom -> {
+                            try {
+                                final Map<String, String> parentProps = readProperties(builder, parentPom);
+                                dm.putAll(readDependencyManagement(builder, parentPom, parentProps, localRepo, depth + 1));
+                            } catch (final Exception ignored) {
+                            }
+                        });
+                    }
+                }
+            });
+
             final NodeList dmNodes = doc.getElementsByTagName("dependencyManagement");
             if (dmNodes.getLength() == 0) {
                 return dm;
