@@ -21,6 +21,8 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
+import build.codemodel.jdk.JDKCodeModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -43,6 +45,7 @@ import static org.mockito.Mockito.mock;
 class PomWorkspaceWalkerTests {
 
     private static final TelemetryRecorder RECORDER = mock(TelemetryRecorder.class);
+    private static final JDKCodeModel CODE_MODEL = new JDKCodeModel(new NonCachingNameProvider());
 
     // -------------------------------------------------------------------------
     // basic walking
@@ -51,7 +54,7 @@ class PomWorkspaceWalkerTests {
     @Test
     void walk_emitsNothingWhenNoPomExists(@TempDir final Path workspace) {
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, workspace.resolve("missing-repo"), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
         assertThat(visitor.visits).isEmpty();
     }
 
@@ -73,7 +76,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         final Visit v = visitor.forCoordinate("org.junit.jupiter", "junit-jupiter-api");
         assertThat(v.version).isEqualTo("5.10.0");
@@ -101,7 +104,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("org.assertj", "assertj-core").version).isEqualTo("3.25.0");
     }
@@ -147,7 +150,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
     }
@@ -174,7 +177,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // org.junit.jupiter + last segment "api" -> org.junit.jupiter.api
         assertThat(visitor.forCoordinate("org.junit.jupiter", "junit-jupiter-api").names)
@@ -199,7 +202,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // build.base + artifactId-minus-groupId-prefix -> build.base.telemetry.foundation
         assertThat(visitor.forCoordinate("build.base", "base-telemetry-foundation").names)
@@ -224,7 +227,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // build.codemodel + artifactId-minus-groupId-suffix -> build.codemodel.jdk
         assertThat(visitor.forCoordinate("build.codemodel", "jdk-codemodel").names)
@@ -249,7 +252,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // parent groupId + last artifact segment -> com.fasterxml.jackson.databind
         assertThat(visitor.forCoordinate("com.fasterxml.jackson.core", "jackson-databind").names)
@@ -272,7 +275,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // root pom has no deps and its own artifact is deliberately NOT visited
         assertThat(visitor.visits).isEmpty();
@@ -302,7 +305,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // child's groupId/version inherited from <parent>; names come from derivation
         final Visit v = visitor.forCoordinate("com.example", "child-module");
@@ -336,7 +339,7 @@ class PomWorkspaceWalkerTests {
             "module com.example.totally.custom {\n}\n");
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // when module-info.java is present, its declared name is the ONLY name the walker emits
         final Visit v = visitor.forCoordinate("com.example", "child-module");
@@ -383,7 +386,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("build.codemodel", "codemodel-expression").version)
             .isEqualTo("0.19.0");
@@ -426,7 +429,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.coordinateVisited("org.only.in.external.test", "external-test-only")).isFalse();
     }
@@ -469,11 +472,33 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, visitor);
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         // base-retryable is only reachable through the test-scoped workspace dep chain
         assertThat(visitor.forCoordinate("build.base", "base-retryable").names)
             .contains("build.base.retryable");
+    }
+
+    @Test
+    void walk_infersSameGroupVersionFromPomVersion(@TempDir final Path workspace) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>2.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>com.example</groupId>
+                  <artifactId>sibling</artifactId>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.forCoordinate("com.example", "sibling").version).isEqualTo("2.0.0");
     }
 
     // -------------------------------------------------------------------------

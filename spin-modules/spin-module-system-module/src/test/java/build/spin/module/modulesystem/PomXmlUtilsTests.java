@@ -21,11 +21,14 @@ package build.spin.module.modulesystem;
  */
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.w3c.dom.Element;
 import org.xml.sax.SAXParseException;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -130,6 +133,33 @@ class PomXmlUtilsTests {
     void groupParentWithLastArtifactSegment_returnsEmptyForSingleSegmentArtifactId() {
         assertThat(PomXmlUtils.groupParentWithLastArtifactSegment("com.example.sub", "artifact"))
             .isEmpty();
+    }
+
+    // -------------------------------------------------------------------------
+    // findJarByModuleName
+    // -------------------------------------------------------------------------
+
+    @Test
+    void findJarByModuleName_returnsEmptyForSingleSegmentModuleName(@TempDir final Path repo) {
+        assertThat(PomXmlUtils.findJarByModuleName("singlemodule", "1.0.0", repo)).isEmpty();
+    }
+
+    @Test
+    void findJarByModuleName_returnsEmptyWhenNoJarExists(@TempDir final Path repo) {
+        assertThat(PomXmlUtils.findJarByModuleName("build.spin.module.clean", "0.1.0", repo)).isEmpty();
+    }
+
+    @Test
+    void findJarByModuleName_findsJarByNamingConvention(@TempDir final Path repo) throws Exception {
+        // build.spin.module.clean -> groupId=build.spin.module, candidates include spin-clean-module
+        final Path jarDir = repo.resolve("build/spin/module/spin-clean-module/0.1.0");
+        Files.createDirectories(jarDir);
+        Files.createFile(jarDir.resolve("spin-clean-module-0.1.0.jar"));
+
+        final String[] coord = PomXmlUtils.findJarByModuleName("build.spin.module.clean", "0.1.0", repo).orElseThrow();
+        assertThat(coord[0]).isEqualTo("build.spin.module");
+        assertThat(coord[1]).isEqualTo("spin-clean-module");
+        assertThat(coord[2]).isEqualTo("0.1.0");
     }
 
     // -------------------------------------------------------------------------

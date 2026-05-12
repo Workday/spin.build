@@ -22,7 +22,10 @@ package build.spin.module.modulesystem;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.injection.PostInject;
+import build.codemodel.jdk.JDKCodeModel;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Workspace;
@@ -58,12 +61,15 @@ public class PomBasedModuleVersioning
     @Inject
     private Project project;
 
+    @Inject
+    private CodeModel codeModel;
+
     private ModuleVersioning versioning;
 
     @PostInject
     private void onInjected() {
         final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        this.versioning = buildFromWorkspace(this.project.path(), localRepo, this.recorder);
+        this.versioning = buildFromWorkspace(this.project.path(), localRepo, this.codeModel, this.recorder);
     }
 
     /**
@@ -72,7 +78,7 @@ public class PomBasedModuleVersioning
      */
     static ModuleVersioning buildFromWorkspace(final Path workspacePath, final TelemetryRecorder recorder) {
         final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        return buildFromWorkspace(workspacePath, localRepo, recorder);
+        return buildFromWorkspace(workspacePath, localRepo, new JDKCodeModel(new NonCachingNameProvider()), recorder);
     }
 
     /**
@@ -81,10 +87,11 @@ public class PomBasedModuleVersioning
      */
     static ModuleVersioning buildFromWorkspace(final Path workspacePath,
                                                final Path localRepo,
+                                               final CodeModel codeModel,
                                                final TelemetryRecorder recorder) {
         final Map<String, Version> versions = new LinkedHashMap<>();
 
-        PomWorkspaceWalker.walk(workspacePath, localRepo, recorder,
+        PomWorkspaceWalker.walk(workspacePath, localRepo, recorder, codeModel,
             (names, groupId, artifactId, rawVersion) -> {
                 try {
                     final Version version = Version.parse(rawVersion);
