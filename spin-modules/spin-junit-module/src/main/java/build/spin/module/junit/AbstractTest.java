@@ -15,6 +15,8 @@ import build.spawn.application.option.Name;
 import build.spawn.jdk.JDK;
 import build.spawn.jdk.JDKApplication;
 import build.spawn.jdk.option.AddModules;
+import build.spawn.jdk.option.AddOpens;
+import build.spawn.jdk.option.AddReads;
 import build.spawn.jdk.option.ClassPath;
 import build.spawn.jdk.option.JDKHome;
 import build.spawn.jdk.option.JDKOption;
@@ -179,8 +181,7 @@ public abstract class AbstractTest
             args.add(classPathWithTestDir);
             args.add(PatchModule.of(rootModule, testClassesDir.toString()));
             args.add(AddModules.of(rootModule, "ALL-MODULE-PATH"));
-            args.add(JDKOption.of("--add-reads"));
-            args.add(JDKOption.of(rootModule + "=ALL-UNNAMED"));
+            args.add(AddReads.of(rootModule, "ALL-UNNAMED"));
 
             // Add --add-reads for every named-module JAR on the module path that the main
             // module doesn't explicitly require (e.g. assertj, JUnit APIs used in tests).
@@ -189,10 +190,8 @@ public abstract class AbstractTest
                 .filter(p -> !Files.isDirectory(p))
                 .forEach(jar -> {
                     try {
-                        ModuleFinder.of(jar).findAll().forEach(ref -> {
-                            args.add(JDKOption.of("--add-reads"));
-                            args.add(JDKOption.of(rootModule + "=" + ref.descriptor().name()));
-                        });
+                        ModuleFinder.of(jar).findAll().forEach(ref ->
+                            args.add(AddReads.of(rootModule, ref.descriptor().name())));
                     } catch (final Exception ignored) {
                         // skip JARs that cannot be opened as modules
                     }
@@ -204,10 +203,8 @@ public abstract class AbstractTest
                     .map(Path::toString)
                     .filter(s -> !s.isEmpty())
                     .map(s -> s.replace(File.separatorChar, '.'))
-                    .forEach(pkg -> {
-                        args.add(JDKOption.of("--add-opens"));
-                        args.add(JDKOption.of(rootModule + "/" + pkg + "=org.junit.platform.commons"));
-                    });
+                    .forEach(pkg ->
+                        args.add(AddOpens.of(rootModule, pkg, "org.junit.platform.commons")));
             } catch (final IOException e) {
                 this.recorder.warn("Could not scan test classes for --add-opens: %s", e.getMessage());
             }
