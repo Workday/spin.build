@@ -68,9 +68,11 @@ jobs:
         run: sha256sum *.tar.gz > SHA256SUMS
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            dist/*.tar.gz
-            dist/SHA256SUMS
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREV=$(gh release list --repo ${{ github.repository }} --limit 1 --json tagName --jq '.[0].tagName')
+          gh release create ${{ github.ref_name }} dist/*.tar.gz dist/SHA256SUMS \
+            --repo ${{ github.repository }} \
+            --generate-notes \
+            --notes-start-tag "$PREV"
