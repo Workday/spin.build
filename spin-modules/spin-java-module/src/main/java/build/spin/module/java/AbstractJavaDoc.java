@@ -114,6 +114,11 @@ public abstract class AbstractJavaDoc
                            final Optional<URL> javaPlatformURL)
         throws Exception {
 
+        if (sourceCode.isEmpty()) {
+            this.recorder.diagnostic("Skipping javadoc for [%s]: no source files", this.project.path());
+            return buildPath.resolve("main/javadoc");
+        }
+
         // the path in which to place the javadoc
         final Path targetPath = buildPath.resolve("main/javadoc");
 
