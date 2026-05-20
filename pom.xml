@@ -890,6 +890,7 @@
                         <configuration>
                             <publishingServerId>central</publishingServerId>
                             <autoPublish>true</autoPublish>
+                            <skipPublishing>${central.publishing.skip}</skipPublishing>
                         </configuration>
                     </plugin>
                 </plugins>
