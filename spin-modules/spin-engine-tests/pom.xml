@@ -13,6 +13,10 @@
 
     <name>Spin Engine Tests</name>
 
+    <properties>
+        <central.publishing.skip>true</central.publishing.skip>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>build.spin</groupId>
