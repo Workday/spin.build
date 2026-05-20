@@ -2,7 +2,11 @@
          xmlns="http://maven.apache.org/POM/4.1.0"
          xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 https://maven.apache.org/xsd/maven-4.1.0.xsd">
 
-    <parent/>
+    <parent>
+        <groupId>build.spin.module</groupId>
+        <artifactId>spin-modules</artifactId>
+        <version>${revision}</version>
+    </parent>
 
     <artifactId>spin-reporting-module</artifactId>
     <packaging>jar</packaging>
