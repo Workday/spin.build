@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xmlns="http://maven.apache.org/POM/4.1.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 https://maven.apache.org/xsd/maven-4.1.0.xsd">
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
 
     <groupId>build.spin</groupId>
     <artifactId>project</artifactId>
@@ -63,7 +65,8 @@
 
         <!-- Platform Versions -->
         <java.version>25</java.version>
-        <maven.version>4.0.0-rc-5</maven.version>
+        <maven.version>3.9.16</maven.version>
+        <maven-as-dep.version>4.0.0-rc-5</maven-as-dep.version>
 
         <!-- Module Dependency Versions -->
         <base.version>0.26.0</base.version>
@@ -108,16 +111,16 @@
         <central.publishing.skip>false</central.publishing.skip>
     </properties>
 
-    <subprojects>
-        <subproject>spin</subproject>
-        <subproject>spin-api</subproject>
-        <subproject>spin-common</subproject>
-        <subproject>spin-engine</subproject>
-        <subproject>spin-modules</subproject>
-        <subproject>spin-classifier-maven-plugin</subproject>
-        <subproject>spin-testing</subproject>
-        <subproject>spin-collider</subproject>
-    </subprojects>
+    <modules>
+        <module>spin</module>
+        <module>spin-api</module>
+        <module>spin-common</module>
+        <module>spin-engine</module>
+        <module>spin-modules</module>
+        <module>spin-classifier-maven-plugin</module>
+        <module>spin-testing</module>
+        <module>spin-collider</module>
+    </modules>
 
     <dependencyManagement>
         <dependencies>
@@ -372,25 +375,25 @@
             <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-core</artifactId>
-                <version>${maven.version}</version>
+                <version>${maven-as-dep.version}</version>
             </dependency>
 
             <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-api-settings</artifactId>
-                <version>${maven.version}</version>
+                <version>${maven-as-dep.version}</version>
             </dependency>
 
             <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-settings</artifactId>
-                <version>${maven.version}</version>
+                <version>${maven-as-dep.version}</version>
             </dependency>
 
             <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-resolver-provider</artifactId>
-                <version>${maven.version}</version>
+                <version>${maven-as-dep.version}</version>
             </dependency>
 
             <!-- Maven Resolver Dependencies -->

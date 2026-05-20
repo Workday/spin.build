@@ -1,6 +1,8 @@
 <project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xmlns="http://maven.apache.org/POM/4.1.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 https://maven.apache.org/xsd/maven-4.1.0.xsd">
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
 
     <parent>
         <groupId>build.spin</groupId>
@@ -47,19 +49,19 @@
         </plugins>
     </build>
 
-    <subprojects>
-        <subproject>spin-clean-module</subproject>
-        <subproject>spin-checkstyle-module</subproject>
-        <subproject>spin-configuration-module</subproject>
-        <subproject>spin-console-module</subproject>
-        <subproject>spin-git-module</subproject>
-        <subproject>spin-java-module</subproject>
-        <subproject>spin-engine-tests</subproject>
-        <subproject>spin-java-module-tests</subproject>
-        <subproject>spin-junit-module</subproject>
-        <subproject>spin-maven-module</subproject>
-        <subproject>spin-module-system-module</subproject>
-        <subproject>spin-language-server-module</subproject>
-        <subproject>spin-reporting-module</subproject>
-    </subprojects>
+    <modules>
+        <module>spin-clean-module</module>
+        <module>spin-checkstyle-module</module>
+        <module>spin-configuration-module</module>
+        <module>spin-console-module</module>
+        <module>spin-git-module</module>
+        <module>spin-java-module</module>
+        <module>spin-engine-tests</module>
+        <module>spin-java-module-tests</module>
+        <module>spin-junit-module</module>
+        <module>spin-maven-module</module>
+        <module>spin-module-system-module</module>
+        <module>spin-language-server-module</module>
+        <module>spin-reporting-module</module>
+    </modules>
 </project>
