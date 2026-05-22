@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.version.Version;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
@@ -27,7 +28,10 @@ import build.spin.module.modulesystem.ModuleReference;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -153,6 +157,71 @@ class AbstractJavaDependencyAnalysisTest {
         final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
             List.of(b, c, a), (kept, dropped) -> { });
         assertThat(result.values()).containsExactly(b, c, a);
+    }
+
+    // -------------------------------------------------------------------------
+    // shouldProcess
+    // -------------------------------------------------------------------------
+
+    @Test
+    void shouldProcess_moduleNotYetSeen_returnsTrue() {
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "build.base.parsing", Optional.of(Version.parse("0.21.5")), seen)).isTrue();
+    }
+
+    @Test
+    void shouldProcess_seenWithSameVersion_returnsFalse() {
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        seen.put("build.base.parsing", Optional.of(Version.parse("0.21.5")));
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "build.base.parsing", Optional.of(Version.parse("0.21.5")), seen)).isFalse();
+    }
+
+    @Test
+    void shouldProcess_seenAtLowerVersion_higherVersionArrives_returnsTrue() {
+        // The exact scenario that was broken: 0.21.5 processed first; 0.26.0 arrives
+        // and must trigger re-processing so its jars reach the module-path.
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        seen.put("build.base.parsing", Optional.of(Version.parse("0.21.5")));
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "build.base.parsing", Optional.of(Version.parse("0.26.0")), seen)).isTrue();
+    }
+
+    @Test
+    void shouldProcess_seenAtHigherVersion_lowerVersionArrives_returnsFalse() {
+        // 0.26.0 processed first; a stale 0.21.5 reference must not clobber it.
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        seen.put("build.base.parsing", Optional.of(Version.parse("0.26.0")));
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "build.base.parsing", Optional.of(Version.parse("0.21.5")), seen)).isFalse();
+    }
+
+    @Test
+    void shouldProcess_seenWithoutVersion_versionedReferenceArrives_returnsTrue() {
+        // A module-info.java requires clause carries no version; when the resolved
+        // ArtifactDescriptor later provides a version we must re-walk.
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        seen.put("build.base.parsing", Optional.empty());
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "build.base.parsing", Optional.of(Version.parse("0.26.0")), seen)).isTrue();
+    }
+
+    @Test
+    void shouldProcess_seenWithoutVersion_unversionedReferenceArrives_returnsFalse() {
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        seen.put("build.base.parsing", Optional.empty());
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "build.base.parsing", Optional.empty(), seen)).isFalse();
+    }
+
+    @Test
+    void shouldProcess_seenWithVersion_unversionedReferenceArrives_returnsFalse() {
+        // A no-version reference can never be "higher" than a known version.
+        final Map<String, Optional<Version>> seen = new LinkedHashMap<>();
+        seen.put("build.base.parsing", Optional.of(Version.parse("0.26.0")));
+        assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
+            "build.base.parsing", Optional.empty(), seen)).isFalse();
     }
 
     private static ArtifactDescriptor descriptor(final String groupId,
