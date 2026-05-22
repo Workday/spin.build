@@ -119,6 +119,11 @@ public abstract class AbstractJavaDoc
             return buildPath.resolve("main/javadoc");
         }
 
+        if (sourceCode.stream().noneMatch(this::hasPackageDeclaration)) {
+            this.recorder.diagnostic("Skipping javadoc for [%s]: no source files contain a package declaration", this.project.path());
+            return buildPath.resolve("main/javadoc");
+        }
+
         // the path in which to place the javadoc
         final Path targetPath = buildPath.resolve("main/javadoc");
 
@@ -273,5 +278,13 @@ public abstract class AbstractJavaDoc
         }
 
         return targetPath;
+    }
+
+    private boolean hasPackageDeclaration(final Path sourceFile) {
+        try (var lines = Files.lines(sourceFile)) {
+            return lines.anyMatch(line -> line.stripLeading().startsWith("package "));
+        } catch (final IOException e) {
+            return false;
+        }
     }
 }

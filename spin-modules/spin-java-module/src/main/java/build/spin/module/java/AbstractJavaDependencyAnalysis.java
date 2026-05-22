@@ -176,9 +176,9 @@ public abstract class AbstractJavaDependencyAnalysis
         // obtain the non-Java Platform artifacts transitively, inside and outside the Workspace
         // (so we can put them on a classpath/modulepath for analysis)
         final var pending = new Stack<ModuleReference>();
-        // Deduplicate by name only: a module queued without a version (from source module-info files)
-        // must not be re-processed just because the resolved reference carries a specific version.
-        final var processed = new LinkedHashSet<String>();
+        // Track processed modules by name → version so a higher-version encounter triggers
+        // re-processing (the lower-version jar's transitive deps may differ from the higher one).
+        final var processed = new LinkedHashMap<String, Optional<Version>>();
         final var ignored = new LinkedHashSet<String>();
 
         final var platformModules = new LinkedHashSet<ModuleReference>();
@@ -205,7 +205,7 @@ public abstract class AbstractJavaDependencyAnalysis
         while (!pending.isEmpty()) {
             final var module = pending.pop();
 
-            if (!processed.contains(module.name()) && !ignored.contains(module.name())) {
+            if (shouldProcess(module.name(), module.version(), processed) && !ignored.contains(module.name())) {
 
                 // ensure the ModuleReference has a Version with which we can resolve (when required)
                 final ModuleReference reference = module.version().isPresent()
@@ -258,7 +258,7 @@ public abstract class AbstractJavaDependencyAnalysis
                         .or(() -> resolvedDescriptor.optional())
                         .map(moduleDescriptor -> {
                             moduleDescriptors.put(reference, moduleDescriptor);
-                            processed.add(reference.name());
+                            processed.put(reference.name(), reference.version());
 
                             // TODO: correct the module reference if it's name is different!
                             // (eg: asm-7.2 has a different jar name but the same module name as asm-9.4!)
@@ -296,7 +296,7 @@ public abstract class AbstractJavaDependencyAnalysis
                                     // instead of module-path (the graphql-java-kickstart bug).
                                     requiredModules.add(r.name());
                                 })
-                                .filter(r -> !processed.contains(r.name()))
+                                .filter(r -> shouldProcess(r.name(), r.version(), processed))
                                 .peek(r -> this.recorder.info("[jdeps] Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.moduleName().toString(), r))
                                 .forEach(pending::push);
 
@@ -629,6 +629,32 @@ public abstract class AbstractJavaDependencyAnalysis
                 }
             };
         }
+    }
+
+    /**
+     * Returns {@code true} if the module with the given {@code name} and {@code version} should be
+     * processed during jdeps traversal.
+     *
+     * <p>A module is processed if it has never been seen before, or if the incoming version is
+     * strictly higher than the version that was previously processed — this ensures the higher-version
+     * jar's transitive dependencies are walked rather than silently inheriting the lower-version walk.
+     *
+     * @param name    the JPMS module name
+     * @param version the version of the candidate, if known
+     * @param seen    the map of already-processed module names to their processed versions
+     * @return {@code true} iff the module should be (re-)processed
+     */
+    static boolean shouldProcess(final String name,
+                                 final Optional<Version> version,
+                                 final Map<String, Optional<Version>> seen) {
+        if (!seen.containsKey(name)) {
+            return true;
+        }
+        final Optional<Version> seenVersion = seen.get(name);
+        if (seenVersion.isEmpty()) {
+            return version.isPresent();
+        }
+        return version.isPresent() && version.get().compareTo(seenVersion.get()) > 0;
     }
 
     /**
