@@ -31,6 +31,7 @@ import build.spin.Extension;
 import build.spin.Project;
 import build.spin.Service;
 import build.spin.annotation.Bootstrap;
+import build.spin.common.util.AnnotationValues;
 import jakarta.inject.Inject;
 
 import java.nio.file.FileSystem;
@@ -87,8 +88,7 @@ public class ConfigurationService
                     .traits(AnnotationTypeUsage.class)
                     .filter(a -> a.typeName().canonicalName().equals(Source.class.getCanonicalName()))
                     .findFirst()
-                    .flatMap(a -> a.values().findFirst())
-                    .<String>flatMap(v -> v.as(String.class))
+                    .flatMap(a -> AnnotationValues.firstLiteral(a, String.class))
                     .orElse(null);
 
                 final String name = sourceValue != null

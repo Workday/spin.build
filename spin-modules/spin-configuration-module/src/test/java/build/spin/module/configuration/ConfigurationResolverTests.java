@@ -8,7 +8,9 @@ import build.base.json.JsonValue;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
 import build.spin.common.telemetry.TelemetryPublisher;
+import build.codemodel.foundation.usage.AnnotationTypeUsage;
 import build.codemodel.injection.Context;
+import build.spin.common.util.AnnotationValues;
 import build.codemodel.injection.InjectionFramework;
 import build.codemodel.injection.UnsatisfiedDependencyException;
 import jakarta.inject.Inject;
@@ -94,11 +96,10 @@ class ConfigurationResolverTests {
             pathSet,
             dependency -> {
                 final String sourceValue = dependency.typeUsage()
-                    .traits(build.codemodel.foundation.usage.AnnotationTypeUsage.class)
+                    .traits(AnnotationTypeUsage.class)
                     .filter(a -> a.typeName().canonicalName().equals(Source.class.getCanonicalName()))
                     .findFirst()
-                    .flatMap(a -> a.values().findFirst())
-                    .<String>flatMap(v -> v.as(String.class))
+                    .flatMap(a -> AnnotationValues.firstLiteral(a, String.class))
                     .orElse(null);
                 return sourceValue != null ? sourceValue : "config";
             });

@@ -33,6 +33,7 @@ import build.codemodel.jdk.descriptor.JDKType;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Workspace;
+import build.spin.common.util.AnnotationValues;
 import build.spin.common.util.Globs;
 import jakarta.inject.Inject;
 
@@ -110,8 +111,7 @@ public class ConfigurationResource
                     .traits(AnnotationTypeUsage.class)
                     .filter(a -> a.typeName().canonicalName().equals(Source.class.getCanonicalName()))
                     .findFirst()
-                    .flatMap(a -> a.values().findFirst())
-                    .<String>flatMap(v -> v.as(String.class))
+                    .flatMap(a -> AnnotationValues.firstLiteral(a, String.class))
                     .orElse(null);
                 return sourceValue != null
                     ? sourceValue
