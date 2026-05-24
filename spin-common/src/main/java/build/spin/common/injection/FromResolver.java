@@ -38,6 +38,7 @@ import build.spin.Reference;
 import build.spin.Task;
 import build.spin.annotation.From;
 import build.spin.common.VoidAsset;
+import build.spin.common.util.AnnotationValues;
 
 import java.lang.reflect.Modifier;
 import java.util.Objects;
@@ -94,8 +95,7 @@ public class FromResolver
             .traits(AnnotationTypeUsage.class)
             .filter(a -> a.typeName().canonicalName().equals(From.class.getCanonicalName()))
             .findFirst()
-            .flatMap(a -> a.values().findFirst())
-            .flatMap(v -> v.as(Class.class))
+            .flatMap(AnnotationValues::firstClassRef)
             .map(c -> (Class<? extends Task<?>>) c);
     }
 
