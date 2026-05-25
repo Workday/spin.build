@@ -30,8 +30,11 @@ import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.ModuleModifier;
 import build.codemodel.jdk.descriptor.OpenModule;
 import build.spawn.jdk.JDK;
+import build.spin.Invocable;
 import build.spin.Plugin;
 import build.spin.Project;
+import build.spin.Reference;
+import build.spin.Task;
 import build.spin.module.modulesystem.ModuleVersioning;
 import jakarta.inject.Inject;
 
@@ -43,7 +46,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * An abstract {@link Plugin} for Java-based {@link Project}s.
@@ -201,6 +207,38 @@ public abstract class AbstractJavaPlugin
     public Version getVersion() {
         return this.versioning.getVersion(getModuleDescriptor().moduleName().toString())
             .orElse(ModuleVersioning.DEFAULT_VERSION);
+    }
+
+    /**
+     * Returns cross-project compile {@link Reference}s for tasks that extend
+     * {@link AbstractDetectResolution} — specifically, the {@link JavaCompilerPlugin.Compile}
+     * task of each workspace sibling whose module is directly required by this plugin's
+     * module descriptor.
+     *
+     * <p>This drives the cross-project ordering in {@link build.spin.common.DefaultInvocable}:
+     * the scheduler will not start a detection task until every required sibling has been
+     * compiled, ensuring that the sibling's spin output directory exists when
+     * {@link AbstractDetectResolution} checks for it.
+     */
+    @Override
+    public Stream<Reference> projectDependencies(final Class<? extends Task<?>> forTaskClass) {
+        if (!AbstractDetectResolution.class.isAssignableFrom(forTaskClass)) {
+            return Stream.empty();
+        }
+
+        final Set<String> requiredModuleNames = getModuleDescriptor().requiresClauses()
+            .map(r -> r.requiresModuleName().toString())
+            .collect(Collectors.toSet());
+
+        return this.project.workspace().stream()
+            .filter(prj -> prj != this.project)
+            .filter(prj -> prj.plugins(JavaCompilerPlugin.class)
+                .findFirst()
+                .map(p -> requiredModuleNames.contains(p.getModuleDescriptor().moduleName().toString()))
+                .orElse(false))
+            .flatMap(prj -> prj.invocables()
+                .filter(inv -> JavaCompilerPlugin.Compile.class.isAssignableFrom(inv.getTaskClass()))
+                .map(Invocable::getReference));
     }
 }
 
