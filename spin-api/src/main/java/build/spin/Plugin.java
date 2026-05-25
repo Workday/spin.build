@@ -50,6 +50,23 @@ public interface Plugin
     }
 
     /**
+     * Obtains cross-project task {@link Reference}s that must complete before the specified
+     * {@link Task} class in this plugin's {@link Project} may execute.
+     *
+     * <p>This is the mechanism for expressing inter-project compile ordering derived from
+     * the module graph: a plugin whose module {@code requires} modules owned by workspace
+     * siblings can return the sibling's compile-task {@link Reference} here so that the
+     * {@link build.spin.Program} scheduler enforces the correct dependency order without
+     * relying on filesystem state at task-inference time.
+     *
+     * @param forTaskClass the task class about to be scheduled
+     * @return a {@link Stream} of cross-project {@link Reference}s that must finish first
+     */
+    default Stream<Reference> projectDependencies(final Class<? extends Task<?>> forTaskClass) {
+        return Stream.empty();
+    }
+
+    /**
      * Defines the {@link Extension.MetaClass} for a {@link Plugin}.
      */
     interface MetaClass
