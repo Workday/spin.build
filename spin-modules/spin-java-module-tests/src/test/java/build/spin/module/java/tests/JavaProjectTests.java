@@ -1,7 +1,6 @@
 package build.spin.module.java.tests;
 
 import build.base.assertion.Eventually;
-import build.base.version.Version;
 import build.base.flow.CompletingSubscriber;
 import build.base.flow.RecordingSubscriber;
 import build.base.foundation.Strings;
@@ -10,6 +9,8 @@ import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Error;
 import build.base.telemetry.Telemetry;
+import build.base.version.Version;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Application;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
@@ -25,6 +26,7 @@ import build.spin.Project;
 import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.common.DefaultAssetCache;
+import build.spin.common.ProcessFailedException;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.java.Java8CompilerPlugin;
@@ -36,7 +38,6 @@ import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.DefaultModuleCatalog;
 import build.spin.module.modulesystem.DefaultModuleVersioning;
 import build.spin.module.modulesystem.ModuleCatalog;
-import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
@@ -54,12 +55,15 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Stack;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -72,6 +76,15 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 @ExtendWith(WorkspaceDiscovery.class)
 public class JavaProjectTests {
+
+    private static <T extends Throwable> Optional<T> causeOfType(final Throwable t, final Class<T> type) {
+        for (Throwable current = t; current != null; current = current.getCause()) {
+            if (type.isInstance(current)) {
+                return Optional.of(type.cast(current));
+            }
+        }
+        return Optional.empty();
+    }
 
     @Test
     @WorkspacePath("java-8")
@@ -194,6 +207,26 @@ public class JavaProjectTests {
         }
         catch (final ProgramExecutionException e) {
             Eventually.assertThat(future).isCompleted();
+
+            // all task failures: thrown + suppressed
+            final var allFailures = Stream.concat(Stream.of(e), Arrays.stream(e.getSuppressed()))
+                .toList();
+
+            // extractOutput embeds stderr into the ProgramExecutionException message — verify it surfaced
+            final var compileTaskFailure = allFailures.stream()
+                .filter(t -> t.getMessage().contains("Broken.java") && t.getMessage().contains("error:"))
+                .findFirst();
+
+            assertThat(compileTaskFailure)
+                .as("expected javac errors (Broken.java, error:) to be embedded in a task failure message")
+                .isPresent();
+
+            // the ProcessFailedException in the cause chain should carry the raw output
+            final var pfe = causeOfType(compileTaskFailure.get(), ProcessFailedException.class);
+            assertThat(pfe)
+                .as("expected a ProcessFailedException in the cause chain of the compile failure")
+                .isPresent();
+            assertThat(pfe.get().output()).contains("Broken.java").contains("error:");
         }
     }
 

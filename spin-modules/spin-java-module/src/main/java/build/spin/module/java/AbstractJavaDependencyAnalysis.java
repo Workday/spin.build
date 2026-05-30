@@ -33,7 +33,6 @@ import build.base.version.Version;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.spawn.application.Application;
-import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
@@ -45,6 +44,7 @@ import build.spin.Reference;
 import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.annotation.System;
+import build.spin.common.ProcessFailedException;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
@@ -70,6 +70,7 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
 /**
  * An abstract {@link Task} to perform Java Dependency Analysis using the Java Platform
  * <a href="https://docs.oracle.com/en/java/javase/25/docs/specs/man/jdeps.html">jdeps</a> tool
@@ -494,8 +495,9 @@ public abstract class AbstractJavaDependencyAnalysis
         jdepsArgs.add(Argument.of("--multi-release"));
         jdepsArgs.add(Argument.of(jdk.version().major()));
         jdepsArgs.add(Argument.of(artifactPath));
-        jdepsArgs.add(Console.ofSystem());
+        final ErrorCapture captured = new ErrorCapture();
         jdepsArgs.add(stdoutObserver);
+        jdepsArgs.add(captured.subscriber(line -> this.recorder.error(line)));
 
         try (var jdeps = this.machine.launch(Application.class,
             jdepsArgs.toArray(Option[]::new))) {
@@ -503,8 +505,9 @@ public abstract class AbstractJavaDependencyAnalysis
             jdeps.onExit().get();
 
             if (jdeps.onExit().isCompletedExceptionally() || jdeps.exitValue().orElse(0) > 0) {
-                this.recorder.error("jdeps Execution Failed [%s]", jdeps.exitValue());
-                throw new RuntimeException("jdeps execution has failed");
+                throw new ProcessFailedException(
+                    "jdeps Execution Failed (exit code: " + jdeps.exitValue().orElse(-1) + ")",
+                    captured.output());
             }
 
             // build maps of java platform, module and non-module dependencies

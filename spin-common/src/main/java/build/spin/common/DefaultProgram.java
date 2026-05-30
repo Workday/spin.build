@@ -9,9 +9,9 @@ package build.spin.common;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -418,11 +418,22 @@ public final class DefaultProgram
         }
 
         if (!failures.isEmpty()) {
-            throw failures.peek();
+            final ProgramExecutionException first = failures.poll();
+            failures.forEach(first::addSuppressed);
+            throw first;
         }
 
         execution.complete();
         return localCache;
+    }
+
+    private static String extractOutput(final Throwable throwable) {
+        for (Throwable current = throwable; current != null; current = current.getCause()) {
+            if (current instanceof ProcessFailedException p && !p.output().isEmpty()) {
+                return p.output();
+            }
+        }
+        return "";
     }
 
     @SuppressWarnings("unchecked")
@@ -491,8 +502,12 @@ public final class DefaultProgram
                     : DefaultAsset.create((Invocable<Object>) invocable, taskResult));
             } catch (final Exception e) {
                 activity.completeExceptionally(e);
+                final String output = extractOutput(e);
                 failures.add(new ProgramExecutionException(
-                    this, reference, "Failed to execute Task [" + invocable.getTaskName() + "]", e));
+                    this, reference,
+                    output.isEmpty() ? "Failed to execute " + invocable
+                                     : "Failed to execute " + invocable + "\n" + output,
+                    e));
                 return null; // dependents are not fired when a task fails
             }
         }
