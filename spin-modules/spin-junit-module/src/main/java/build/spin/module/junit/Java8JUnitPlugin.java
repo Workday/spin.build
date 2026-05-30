@@ -22,8 +22,6 @@ package build.spin.module.junit;
 
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
-import build.spawn.jdk.option.ClassPath;
-import build.spawn.jdk.option.ModulePath;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Reference;
@@ -31,8 +29,6 @@ import build.spin.annotation.From;
 import build.spin.annotation.System;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractCompile;
-import build.spin.module.java.AbstractDetectClassPath;
-import build.spin.module.java.AbstractDetectModulePath;
 import build.spin.module.java.AbstractDetectSourceFiles;
 import build.spin.module.java.AbstractDetectSourcePaths;
 import build.spin.module.java.Java8CompilerPlugin;
@@ -102,36 +98,6 @@ public class Java8JUnitPlugin
     }
 
     /**
-     * A {@link build.spin.Task} to detect the {@link ModulePath} suitable for <strong>compiling</strong>
-     * and <strong>running</strong> tests for the {@link Project}.
-     */
-    @Named("detect.test.compilation.module.path")
-    public static class DetectTestModulePath
-        extends AbstractDetectModulePath {
-
-        public ModulePath create(
-            @From(DetectTestResolution.class) final CompilationResolution resolution) {
-
-            return super.project(resolution);
-        }
-    }
-
-    /**
-     * A {@link build.spin.Task} to detect the {@link ClassPath} suitable for <strong>compiling</strong>
-     * and <strong>running</strong> tests for the {@link Project}.
-     */
-    @Named("detect.test.compilation.classpath")
-    public static class DetectTestClassPath
-        extends AbstractDetectClassPath {
-
-        public ClassPath create(
-            @From(DetectTestResolution.class) final CompilationResolution resolution) {
-
-            return super.project(resolution);
-        }
-    }
-
-    /**
      * A {@link build.spin.Task} to compile the source code in the {@link Project}.
      */
     @Named("test-compile")
@@ -160,23 +126,21 @@ public class Java8JUnitPlugin
          * Compiles the test source code in the provided {@link PathSet} into the specified build {@link Path}.
          *
          * @param sourceCode the source code
-         * @param modulePath the {@link ModulePath}
-         * @param classPath  the {@link ClassPath}
+         * @param resolution the {@link CompilationResolution} (module-path and classpath)
          * @param buildPath  the build {@link Path}
          *
          * @return the {@link PathSet} containing the compiled classes
          * @throws Exception should compilation fail
          */
         public PathSet compile(final @From(DetectSourceFiles.class) PathSet sourceCode,
-                               final @From(DetectTestModulePath.class) ModulePath modulePath,
-                               final @From(DetectTestClassPath.class) ClassPath classPath,
+                               final @From(DetectTestResolution.class) CompilationResolution resolution,
                                final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {
 
             // the path in which to place the compiled classes
             final Path targetPath = buildPath.resolve("test/" + this.target.get());
 
-            return super.compile(sourceCode, modulePath, classPath, buildPath, targetPath);
+            return super.compile(sourceCode, resolution, buildPath, targetPath);
         }
     }
 
@@ -197,11 +161,10 @@ public class Java8JUnitPlugin
                 super.dependencies());
         }
 
-        public PathSet test(final @From(DetectTestModulePath.class) ModulePath modulePath,
-                            final @From(DetectTestClassPath.class) ClassPath classPath,
+        public PathSet test(final @From(DetectTestResolution.class) CompilationResolution resolution,
                             final @From(CleanPlugin.CreateBuildPath.class) Path buildPath) {
 
-            return super.test(modulePath, classPath, buildPath);
+            return super.test(resolution, buildPath);
         }
     }
 

@@ -48,8 +48,8 @@ import java.util.stream.Collectors;
  * {@value #ROOT_MODULE}, then re-execs the JVM as a proper modular application via {@code -m}.
  *
  * <p>Scope: this class exists only to fix the Maven exec bridge. It is not used by spin's jlink
- * packaging (see {@code AbstractJavaLinker}) or its compile-time classpath detection (see
- * {@code AbstractDetectCompilationClassPath}). Those use the same classifier with different
+ * packaging (see {@code AbstractJavaLinker}) or its compile-time detection (see
+ * {@code AbstractDetectResolution}). Those use the same classifier with different
  * parent-configuration / before-finder arguments.
  */
 public final class Launcher {

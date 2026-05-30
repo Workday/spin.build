@@ -28,9 +28,8 @@ import java.util.List;
  * compiled-class directories into those that belong on {@code --module-path} and those that
  * belong on {@code -classpath}.
  *
- * <p>Produced by {@code AbstractDetectResolution} (one instance per plugin scope) and
- * consumed by the two thin projection tasks {@code AbstractDetectModulePath} and
- * {@code AbstractDetectClassPath}.
+ * <p>Produced by {@code AbstractDetectResolution} and {@code AbstractDetectTestResolution}
+ * and consumed directly by compile, javadoc, and test tasks via {@code @From}.
  */
 public record CompilationResolution(List<Path> modulePath, List<Path> classPath) {
 

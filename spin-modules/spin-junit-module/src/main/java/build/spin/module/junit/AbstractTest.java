@@ -32,6 +32,7 @@ import build.spin.common.ProcessFailedException;
 import build.spin.module.java.ErrorCapture;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.java.JavaPlugin;
+import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.module.modulesystem.TestArguments;
 import build.spin.option.TargetDirectoryName;
@@ -88,14 +89,15 @@ public abstract class AbstractTest
     /**
      * Execute tests in the specified build {@link Path}, using the provided module-path and classpath.
      *
-     * @param modulePath the runtime {@link ModulePath} (from DetectTestModulePath)
-     * @param classPath  the runtime {@link ClassPath} (from DetectTestClassPath)
+     * @param resolution the {@link CompilationResolution} (module-path and classpath)
      * @param buildPath  the build {@link Path}
      * @return the {@link PathSet} containing the JUnit Reports
      */
-    protected PathSet test(final ModulePath modulePath,
-                           final ClassPath classPath,
+    protected PathSet test(final CompilationResolution resolution,
                            final Path buildPath) {
+
+        final ModulePath modulePath = ModulePath.of(resolution.modulePath().stream());
+        final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
         // JUnit 6+ uses subcommands; JUnit 5 uses flat options
         final String jupiterVersion = this.versioning.getVersion("org.junit.jupiter")

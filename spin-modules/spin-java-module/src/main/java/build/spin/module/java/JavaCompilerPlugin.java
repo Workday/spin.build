@@ -21,8 +21,6 @@ package build.spin.module.java;
  */
 
 import build.base.io.PathSet;
-import build.spawn.jdk.option.ClassPath;
-import build.spawn.jdk.option.ModulePath;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
@@ -83,22 +81,6 @@ public interface JavaCompilerPlugin
      */
     interface DetectCompilationResolution
         extends Task<CompilationResolution> {
-
-    }
-
-    /**
-     * A {@link Task} to detect the compile {@link ClassPath} for the {@link Project}.
-     */
-    interface DetectCompilationClassPath
-        extends Task<ClassPath> {
-
-    }
-
-    /**
-     * A {@link Task} to detect the compile {@link ModulePath} for the {@link Project}.
-     */
-    interface DetectCompilationModulePath
-        extends Task<ModulePath> {
 
     }
 

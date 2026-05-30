@@ -48,6 +48,7 @@ import build.spin.annotation.System;
 import build.spin.common.ProcessFailedException;
 import build.spin.common.reactive.ConditionalConsumingObserver;
 import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.CompilerArguments;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleVersioning;
@@ -187,19 +188,20 @@ public abstract class AbstractCompile
      * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path}.
      *
      * @param sourceCode the source code
-     * @param modulePath the {@link ModulePath} (empty for non-modular projects)
-     * @param classPath  the {@link ClassPath}
+     * @param resolution the {@link CompilationResolution} (module-path and classpath)
      * @param buildPath  the build {@link Path} (.build)
      * @param targetPath the path in which to place the compiled classes
      * @return the {@link PathSet} containing the compiled classes
      * @throws Exception should compilation fail
      */
     protected PathSet compile(final PathSet sourceCode,
-                              final ModulePath modulePath,
-                              final ClassPath classPath,
+                              final CompilationResolution resolution,
                               final Path buildPath,
                               final Path targetPath)
         throws Exception {
+
+        final ModulePath modulePath = ModulePath.of(resolution.modulePath().stream());
+        final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
         // compilation output location varies depending on whether the plugin is
         // using the system provided version of java
