@@ -36,6 +36,8 @@ import build.spin.Project;
 import build.spin.Reference;
 import build.spin.Task;
 import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.option.BuildDirectoryName;
+import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
 import java.io.BufferedReader;
@@ -74,6 +76,12 @@ public abstract class AbstractJavaPlugin
 
     @Inject
     private CodeModel codeModel;
+
+    @Inject
+    private BuildDirectoryName buildDirectoryName;
+
+    @Inject
+    private TargetDirectoryName targetDirectoryName;
 
     /**
      * The cached {@link JDKModuleDescriptor} determined for the {@link Project}.
@@ -236,8 +244,11 @@ public abstract class AbstractJavaPlugin
                 .findFirst()
                 .map(p -> requiredModuleNames.contains(p.getModuleDescriptor().moduleName().toString()))
                 .orElse(false))
+            .filter(prj -> AbstractDetectResolution.resolveCompiledOutput(
+                prj.path(), this.buildDirectoryName.get(), this.targetDirectoryName.get()).isEmpty())
             .flatMap(prj -> prj.invocables()
                 .filter(inv -> JavaCompilerPlugin.Compile.class.isAssignableFrom(inv.getTaskClass()))
+                .filter(inv -> inv.getTaskClass().getEnclosingClass() == forTaskClass.getEnclosingClass())
                 .map(Invocable::getReference));
     }
 }

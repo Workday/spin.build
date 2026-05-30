@@ -35,36 +35,45 @@ class AbstractDetectResolutionTest {
     Path projectRoot;
 
     @Test
-    void resolveFallbackOutput_neitherExists_returnsEmpty() {
-        assertThat(AbstractDetectResolution.resolveFallbackOutput(projectRoot)).isEmpty();
+    void resolveCompiledOutput_noneExists_returnsEmpty() {
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes")).isEmpty();
     }
 
     @Test
-    void resolveFallbackOutput_mavenClassesExist_returnsMavenPath() throws IOException {
+    void resolveCompiledOutput_spinOutputExists_returnsSpinPath() throws IOException {
+        final Path spinOutput = projectRoot.resolve(".build/main/classes");
+        Files.createDirectories(spinOutput);
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+            .contains(spinOutput);
+    }
+
+    @Test
+    void resolveCompiledOutput_mavenClassesExist_returnsMavenPath() throws IOException {
         final Path mavenClasses = projectRoot.resolve("target/classes");
         Files.createDirectories(mavenClasses);
 
-        assertThat(AbstractDetectResolution.resolveFallbackOutput(projectRoot))
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
             .contains(mavenClasses);
     }
 
     @Test
-    void resolveFallbackOutput_gradleClassesExist_returnsGradlePath() throws IOException {
+    void resolveCompiledOutput_gradleClassesExist_returnsGradlePath() throws IOException {
         final Path gradleClasses = projectRoot.resolve("build/classes/java/main");
         Files.createDirectories(gradleClasses);
 
-        assertThat(AbstractDetectResolution.resolveFallbackOutput(projectRoot))
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
             .contains(gradleClasses);
     }
 
     @Test
-    void resolveFallbackOutput_bothExist_prefersMaven() throws IOException {
+    void resolveCompiledOutput_spinAndMavenExist_prefersSpinOutput() throws IOException {
+        final Path spinOutput = projectRoot.resolve(".build/main/classes");
         final Path mavenClasses = projectRoot.resolve("target/classes");
-        final Path gradleClasses = projectRoot.resolve("build/classes/java/main");
+        Files.createDirectories(spinOutput);
         Files.createDirectories(mavenClasses);
-        Files.createDirectories(gradleClasses);
 
-        assertThat(AbstractDetectResolution.resolveFallbackOutput(projectRoot))
-            .contains(mavenClasses);
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+            .contains(spinOutput);
     }
 }
