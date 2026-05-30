@@ -22,8 +22,6 @@ package build.spin.module.java;
 
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
-import build.spawn.jdk.option.ClassPath;
-import build.spawn.jdk.option.ModulePath;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
@@ -108,36 +106,6 @@ public class Java25CompilerPlugin
     }
 
     /**
-     * A {@link Task} to detect the {@link ModulePath} suitable for <strong>compiling</strong> the {@link Project}.
-     */
-    @Named("detect.compilation.module.path")
-    public static class DetectCompilationModulePath
-        extends AbstractDetectModulePath
-        implements JavaCompilerPlugin.DetectCompilationModulePath {
-
-        public ModulePath create(
-            @From(DetectCompilationResolution.class) final CompilationResolution resolution) {
-
-            return super.project(resolution);
-        }
-    }
-
-    /**
-     * A {@link Task} to detect the {@link ClassPath} suitable for <strong>compiling</strong> the {@link Project}.
-     */
-    @Named("detect.compilation.classpath")
-    public static class DetectCompilationClassPath
-        extends AbstractDetectClassPath
-        implements JavaCompilerPlugin.DetectCompilationClassPath {
-
-        public ClassPath create(
-            @From(DetectCompilationResolution.class) final CompilationResolution resolution) {
-
-            return super.project(resolution);
-        }
-    }
-
-    /**
      * A {@link Task} to compile the source code in the {@link Project}.
      */
     @Named("compile")
@@ -153,23 +121,21 @@ public class Java25CompilerPlugin
          * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path}.
          *
          * @param sourceCode the source code
-         * @param modulePath the {@link ModulePath}
-         * @param classPath the {@link ClassPath}
+         * @param resolution the {@link CompilationResolution} (module-path and classpath)
          * @param buildPath the build {@link Path}
          *
          * @return the {@link PathSet} containing the compiled classes
          * @throws Exception should compilation fail
          */
         public PathSet compile(final @From(DetectSourceFiles.class) PathSet sourceCode,
-                               final @From(DetectCompilationModulePath.class) ModulePath modulePath,
-                               final @From(DetectCompilationClassPath.class) ClassPath classPath,
+                               final @From(DetectCompilationResolution.class) CompilationResolution resolution,
                                final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {
 
             // the path in which to place the compiled classes
             final Path targetPath = buildPath.resolve("main/" + this.target.get());
 
-            return super.compile(sourceCode, modulePath, classPath, buildPath, targetPath);
+            return super.compile(sourceCode, resolution, buildPath, targetPath);
         }
     }
 
@@ -188,23 +154,20 @@ public class Java25CompilerPlugin
          * Generates Java Documentation from the source code in the {@link Project}.
          *
          * @param sourceCode the source code
-         * @param modulePath the {@link ModulePath}
-         * @param classPath the {@link ClassPath}
+         * @param resolution the {@link CompilationResolution} (module-path and classpath)
          * @param buildPath the build {@link Path}
          *
          * @return the {@link Path} of the generated documentation
          * @throws Exception should documentation fail
          */
         public Path javadoc(final @From(DetectSourceFiles.class) PathSet sourceCode,
-                            final @From(DetectCompilationModulePath.class) ModulePath modulePath,
-                            final @From(DetectCompilationClassPath.class) ClassPath classPath,
+                            final @From(DetectCompilationResolution.class) CompilationResolution resolution,
                             final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {
 
             return super.javadoc(
                 sourceCode,
-                modulePath,
-                classPath,
+                resolution,
                 buildPath,
                 Optional.of(new URL("https://docs.oracle.com/en/java/javase/25/docs/api/")));
         }

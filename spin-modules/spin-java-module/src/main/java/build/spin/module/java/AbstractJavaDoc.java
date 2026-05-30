@@ -41,6 +41,7 @@ import build.spin.Task;
 import build.spin.common.ProcessFailedException;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.configuration.Source;
+import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.JavadocArguments;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.Verbose;
@@ -102,19 +103,20 @@ public abstract class AbstractJavaDoc
      * into the specified build {@link Path}.
      *
      * @param sourceCode the source code
-     * @param modulePath the {@link ModulePath} (empty for non-modular projects)
-     * @param classPath the {@link ClassPath}
+     * @param resolution the {@link CompilationResolution} (module-path and classpath)
      * @param buildPath the build {@link Path} (.build)
      * @param javaPlatformURL the {@link Optional} {@link URL} for the external Java Development Kit documentation
      * @return the {@link Path} containing the generated documentation
      * @throws Exception should documentation fail
      */
     protected Path javadoc(final PathSet sourceCode,
-                           final ModulePath modulePath,
-                           final ClassPath classPath,
+                           final CompilationResolution resolution,
                            final Path buildPath,
                            final Optional<URL> javaPlatformURL)
         throws Exception {
+
+        final ModulePath modulePath = ModulePath.of(resolution.modulePath().stream());
+        final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
         if (sourceCode.isEmpty()) {
             this.recorder.diagnostic("Skipping javadoc for [%s]: no source files", this.project.path());
