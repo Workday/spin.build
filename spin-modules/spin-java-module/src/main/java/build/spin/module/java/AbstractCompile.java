@@ -45,6 +45,7 @@ import build.spin.Reference;
 import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.annotation.System;
+import build.spin.common.ProcessFailedException;
 import build.spin.common.reactive.ConditionalConsumingObserver;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.CompilerArguments;
@@ -347,6 +348,7 @@ public abstract class AbstractCompile
 
         // a Capture for the last error message
         final Capture<String> error = Capture.empty();
+        final ErrorCapture captured = new ErrorCapture();
 
         final ConditionalConsumingObserver<String> observer = ConditionalConsumingObserver.Builder.<String>create()
             .with(string -> string.startsWith(parsingPrefix), __ -> {
@@ -378,7 +380,10 @@ public abstract class AbstractCompile
             })
             .with(string -> string.startsWith("["), string -> {
                 // record and clear the error
-                error.ifPresent(e -> this.recorder.error(e));
+                error.ifPresent(e -> {
+                    this.recorder.error(e);
+                    captured.append(e);
+                });
                 error.clear();
             })
             .build();
@@ -395,7 +400,10 @@ public abstract class AbstractCompile
             javac.onExit().get();
 
             // flush any error lines that were not followed by a subsequent "[" line
-            error.ifPresent(e -> this.recorder.error(e));
+            error.ifPresent(e -> {
+                this.recorder.error(e);
+                captured.append(e);
+            });
             error.clear();
 
             // output the exit value for the completion
@@ -404,12 +412,13 @@ public abstract class AbstractCompile
                     if (value == 0) {
                         compilation.complete();
                     } else {
-                        final RuntimeException runtimeException =
-                            new RuntimeException("Compilation Failed (exit code :" + value + ")");
+                        final ProcessFailedException exception =
+                            new ProcessFailedException("Compilation Failed (exit code: " + value + ")",
+                                captured.output());
 
-                        compilation.completeExceptionally(runtimeException);
+                        compilation.completeExceptionally(exception);
 
-                        throw runtimeException;
+                        throw exception;
                     }
                 });
 

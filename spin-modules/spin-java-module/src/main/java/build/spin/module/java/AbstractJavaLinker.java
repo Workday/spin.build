@@ -25,7 +25,6 @@ import build.base.telemetry.TelemetryRecorder;
 import build.base.template.TextOut;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Application;
-import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
@@ -33,6 +32,7 @@ import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.System;
+import build.spin.common.ProcessFailedException;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
@@ -48,6 +48,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+
 /**
  * An abstract {@link Task} to perform Java Linking using the Java Platform
  * <a href="https://docs.oracle.com/en/java/javase/25/docs/specs/man/jlink.html">jlink</a> tool
@@ -148,14 +149,23 @@ public abstract class AbstractJavaLinker
             .filter(jdkModuleNames::contains)  // only include modules that actually exist in this JDK
             .collect(Collectors.joining(","));
 
+        final ErrorCapture captured = new ErrorCapture();
         try (var jlink = this.machine.launch(Application.class,
             Executable.of(jlinkPath.toString()),
             Name.of("jlink"),
             Argument.of("--module-path"), Argument.of(analysis.modulePath()),
             Argument.of("--output"), Argument.of(packagePath),
             Argument.of("--add-modules"), Argument.of(moduleNames),
-            Console.ofSystem())) {
+            captured.subscriber(line -> this.recorder.error(line)))) {
             jlink.onExit().get();
+
+            jlink.exitValue().ifPresent(value -> {
+                if (value != 0) {
+                    throw new ProcessFailedException(
+                        "Runtime Image Generation Failed (exit code: " + value + ")",
+                        captured.output());
+                }
+            });
 
             // -----
             // Classify application jars into --module-path (modules/) vs -cp (classpath/).

@@ -35,7 +35,6 @@ import build.codemodel.foundation.naming.ModuleName;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.spawn.application.Application;
-import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Name;
 import build.spawn.jdk.JDK;
@@ -46,6 +45,7 @@ import build.spin.Invocable;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
+import build.spin.common.ProcessFailedException;
 import build.spin.common.util.Invocables;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
@@ -403,6 +403,7 @@ public class CustomizationPlugin
                 final String executable = javaHome.path().resolve("bin/javac").toString();
 
                 // launch "javac"
+                final ErrorCapture captured = new ErrorCapture();
                 try (Application javac = this.machine.launch(executable,
                     javaHome,
                     Name.of("javac " + javaDevelopmentKit.version().toString()),
@@ -411,21 +412,18 @@ public class CustomizationPlugin
                     Argument.of("-g"), // always compile with debugging information
                     Argument.of("-d"),
                     Argument.of(Strings.doubleQuoteIfContainsWhiteSpace(target.toString())),
-                    Console.ofSystem())) {
+                    captured.subscriber(line -> this.recorder.error(line)))) {
 
                     // wait for "javac" to exit
                     try {
                         javac.onExit().get();
 
-                        // output the exit value for the completion
                         javac.exitValue()
                             .ifPresent(value -> {
-                                this.recorder.info("Java customization compilation finished with exit code %d",
-                                    value);
-
                                 if (value != 0) {
-                                    throw new RuntimeException(
-                                        "Customization Compilation Failed (exit code :" + value + ")");
+                                    throw new ProcessFailedException(
+                                        "Customization Compilation Failed (exit code: " + value + ")",
+                                        captured.output());
                                 }
                             });
                     }

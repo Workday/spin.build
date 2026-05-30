@@ -28,6 +28,8 @@ import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.Category;
 import build.spin.annotation.System;
+import build.spin.common.ProcessFailedException;
+import build.spin.module.java.ErrorCapture;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.java.JavaPlugin;
 import build.spin.module.modulesystem.ModuleVersioning;
@@ -232,6 +234,9 @@ public abstract class AbstractTest
         args.add(Argument.of("--reports-dir=" + reportPath));
         args.add(Console.ofSystem());
 
+        final ErrorCapture captured = new ErrorCapture();
+        args.add(captured.subscriber(line -> this.recorder.error(line)));
+
         try (JDKApplication junit = this.machine.launch(
             JDKApplication.class,
             args.toArray(Option[]::new))) {
@@ -240,10 +245,10 @@ public abstract class AbstractTest
 
             junit.exitValue()
                 .ifPresent(value -> {
-                    this.recorder.info("JUnit Platform finished with exit code %d", value);
-
                     if (value != 0) {
-                        throw new RuntimeException("JUnit Failed (exit code " + value + ")");
+                        throw new ProcessFailedException(
+                            "JUnit Failed (exit code " + value + ")",
+                            captured.output());
                     }
                 });
         } catch (final Exception e) {

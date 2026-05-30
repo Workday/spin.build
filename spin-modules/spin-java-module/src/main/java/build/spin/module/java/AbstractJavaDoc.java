@@ -28,9 +28,9 @@ import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Application;
-import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Name;
+import build.spawn.application.option.StandardErrorSubscriber;
 import build.spawn.jdk.JDK;
 import build.spawn.jdk.option.ClassPath;
 import build.spawn.jdk.option.JDKHome;
@@ -38,6 +38,7 @@ import build.spawn.jdk.option.ModulePath;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
+import build.spin.common.ProcessFailedException;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.JavadocArguments;
@@ -53,6 +54,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -247,11 +249,27 @@ public abstract class AbstractJavaDoc
         final String executable = javaHome.path().resolve("bin/javadoc").toString();
 
         // launch "javadoc"
+        final ErrorCapture captured = new ErrorCapture();
+        final AtomicBoolean inWarning = new AtomicBoolean();
         try (Application javadoc = this.machine.launch(executable,
             javaHome,
             Name.of("javadoc " + this.javaDevelopmentKit.version().toString()),
             Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())),
-            Console.ofSystem())) {
+            StandardErrorSubscriber.of(line -> {
+                if (line.contains(": error:")) {
+                    inWarning.set(false);
+                    this.recorder.error(line);
+                    captured.append(line);
+                } else if (line.contains(": warning:")) {
+                    inWarning.set(true);
+                    this.recorder.warn(line);
+                } else if (inWarning.get()) {
+                    this.recorder.warn(line);
+                } else {
+                    this.recorder.error(line);
+                    captured.append(line);
+                }
+            }))) {
 
             // wait for "javadoc" to exit
             javadoc.onExit().get();
@@ -263,12 +281,13 @@ public abstract class AbstractJavaDoc
                         documentation.complete();
                     }
                     else {
-                        final RuntimeException runtimeException =
-                            new RuntimeException("Documentation Generation Failed (exit code :" + value + ")");
+                        final ProcessFailedException exception =
+                            new ProcessFailedException("Documentation Generation Failed (exit code:" + value + ")",
+                                captured.output());
 
-                        documentation.completeExceptionally(runtimeException);
+                        documentation.completeExceptionally(exception);
 
-                        throw runtimeException;
+                        throw exception;
                     }
                 });
 
