@@ -228,22 +228,10 @@ public abstract class AbstractJavaDoc
             this.project.findResource(JavadocArguments.class).ifPresent(args ->
                 args.get(this.project).forEach(writer::println));
 
-            // lastly include the source code to document, plus any sources generated
-            // by annotation processors during the preceding compile step
+            // lastly include the source code to document
             sourceCode.stream()
                 .peek(path -> this.recorder.diagnostic("Preparing [%s] for documentation", path))
                 .forEach(writer::println);
-
-            final Path generatedSources = buildPath.resolve("main/generated-sources");
-            if (Files.isDirectory(generatedSources)) {
-                try (var walk = Files.walk(generatedSources)) {
-                    walk.filter(p -> p.toString().endsWith(".java"))
-                        .peek(path -> this.recorder.diagnostic("Preparing [%s] for documentation", path))
-                        .forEach(writer::println);
-                } catch (final IOException e) {
-                    this.recorder.warn(e, "Failed to walk generated-sources [%s]", generatedSources);
-                }
-            }
         }
 
         // establish the "javadoc" executable based on the Java Development Kit
