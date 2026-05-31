@@ -69,10 +69,48 @@ public interface JavaCompilerPlugin
     }
 
     /**
+     * A {@link Task} to detect all Java source files — both declared and annotation-processor
+     * generated — for use by analysis consumers such as javadoc.
+     */
+    interface DetectAllSourceFiles
+        extends build.spin.common.task.DetectAllSourceFiles {
+
+    }
+
+    /**
      * A {@link Task} to detect the location of Java source paths.
      */
     interface DetectSourcePaths
         extends build.spin.common.task.DetectSourcePaths {
+
+    }
+
+    /**
+     * A {@link Task} to detect annotation-processor generated source paths from a prior build.
+     * Only surfaces directories that already exist on disk — never participates in compilation.
+     */
+    interface DetectGeneratedSourcePaths
+        extends build.spin.common.task.DetectGeneratedSourcePaths {
+
+    }
+
+    /**
+     * A {@link Task} to detect annotation-processor generated source files from a prior build.
+     */
+    interface DetectGeneratedSourceFiles
+        extends build.spin.common.task.DetectGeneratedSourceFiles {
+
+    }
+
+    /**
+     * A {@link Task} that merges {@link DetectSourcePaths} and {@link DetectGeneratedSourcePaths}
+     * into a single {@link PathSet} of source root directories.
+     *
+     * <p>Intended for analysis-only consumers (e.g. language servers, documentation indexers) that
+     * need all source roots in one shot without triggering compilation.
+     */
+    interface DetectAllSourcePaths
+        extends build.spin.common.task.DetectAllSourcePaths {
 
     }
 

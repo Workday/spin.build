@@ -79,6 +79,45 @@ public class Java8CompilerPlugin
     }
 
     /**
+     * A {@link Task} to detect annotation-processor generated source paths from a prior spin compile run.
+     */
+    @Named("detect.generated.source.paths")
+    public static class DetectGeneratedSourcePaths
+        extends AbstractDetectGeneratedSourcePaths
+        implements JavaCompilerPlugin.DetectGeneratedSourcePaths {
+
+    }
+
+    /**
+     * A {@link Task} to detect annotation-processor generated source files from a prior build.
+     */
+    @Named("detect.generated.source.files")
+    public static class DetectGeneratedSourceFiles
+        extends AbstractDetectSourceFiles
+        implements JavaCompilerPlugin.DetectGeneratedSourceFiles {
+
+        @Override
+        public PathSet detect(@From(DetectGeneratedSourcePaths.class) final PathSet pathSet) {
+            return super.detect(pathSet);
+        }
+    }
+
+    /**
+     * A {@link Task} that merges declared and generated source root directories for analysis consumers.
+     */
+    @Named("detect.all.source.paths")
+    public static class DetectAllSourcePaths
+        extends AbstractDetectAllSourcePaths
+        implements JavaCompilerPlugin.DetectAllSourcePaths {
+
+        @Override
+        public PathSet detect(@From(DetectSourcePaths.class) final PathSet declared,
+                              @From(DetectGeneratedSourcePaths.class) final PathSet generated) {
+            return super.detect(declared, generated);
+        }
+    }
+
+    /**
      * A {@link Task} to determine the source files for compilation.
      */
     @Named("detect.source.files")
@@ -88,6 +127,20 @@ public class Java8CompilerPlugin
 
         @Override
         public PathSet detect(@From(DetectSourcePaths.class) final PathSet pathSet) {
+            return super.detect(pathSet);
+        }
+    }
+
+    /**
+     * A {@link Task} to detect all source files (declared + generated) for analysis consumers.
+     */
+    @Named("detect.all.source.files")
+    public static class DetectAllSourceFiles
+        extends AbstractDetectSourceFiles
+        implements JavaCompilerPlugin.DetectAllSourceFiles {
+
+        @Override
+        public PathSet detect(@From(DetectAllSourcePaths.class) final PathSet pathSet) {
             return super.detect(pathSet);
         }
     }
@@ -156,7 +209,7 @@ public class Java8CompilerPlugin
          * @return the {@link Path} of the generated documentation
          * @throws Exception should documentation fail
          */
-        public Path javadoc(final @From(DetectSourceFiles.class) PathSet sourceCode,
+        public Path javadoc(final @From(DetectAllSourceFiles.class) PathSet sourceCode,
                             final @From(DetectCompilationResolution.class) CompilationResolution resolution,
                             final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {

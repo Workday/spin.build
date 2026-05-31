@@ -22,22 +22,21 @@ package build.spin.module.java;
 
 import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
-import build.spin.common.task.DetectSourceFiles;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Comparator;
 
 /**
- * Detects multi-version Java source code files for compilation using a {@link JavaCompilerPlugin}.
+ * Shared walk logic for source-file detection tasks. Concrete subclasses declare their own
+ * task interface ({@link JavaCompilerPlugin.DetectSourceFiles},
+ * {@link JavaCompilerPlugin.DetectGeneratedSourceFiles}, etc.).
  *
  * @author brian.oliver
  * @since Aug-2020
  */
-public abstract class AbstractDetectSourceFiles
-    implements DetectSourceFiles {
+public abstract class AbstractDetectSourceFiles {
 
-    @Override
     public PathSet detect(final PathSet pathSet) {
 
         // build the PathSet containing the source files
