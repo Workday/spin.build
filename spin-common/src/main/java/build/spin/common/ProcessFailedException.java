@@ -41,4 +41,19 @@ public class ProcessFailedException
     public String output() {
         return this.output;
     }
+
+    /**
+     * Walks the cause chain of {@code throwable} and returns the first {@link ProcessFailedException}
+     * found, or {@code throwable} itself if none is present. Use this when constructing a wrapper
+     * exception to ensure the root process failure is not buried under generic {@link RuntimeException}
+     * wrappers.
+     */
+    public static Throwable unwrap(final Throwable throwable) {
+        for (Throwable current = throwable; current != null; current = current.getCause()) {
+            if (current instanceof ProcessFailedException) {
+                return current;
+            }
+        }
+        return throwable;
+    }
 }
