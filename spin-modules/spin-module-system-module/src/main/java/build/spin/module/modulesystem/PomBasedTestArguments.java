@@ -62,12 +62,12 @@ public class PomBasedTestArguments
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return PomXmlUtils.isPomBasedWorkspace(path);
+            return PomXmlUtils.isMavenWorkspaceRoot(path);
         }
 
         @Override
         public boolean isDetectedIn(final Project project) {
-            return PomXmlUtils.isPomBasedProject(project);
+            return PomXmlUtils.isMavenWorkspaceProject(project);
         }
     }
 }

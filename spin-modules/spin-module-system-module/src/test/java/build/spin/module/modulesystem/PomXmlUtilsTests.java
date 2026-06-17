@@ -163,6 +163,18 @@ class PomXmlUtilsTests {
     }
 
     // -------------------------------------------------------------------------
+    // isMavenWorkspaceRoot — spin-native workspaces with a pom.xml must be recognized
+    // -------------------------------------------------------------------------
+
+    @Test
+    void isMavenWorkspaceRoot_returnsTrueForSpinNativeWorkspaceWithPom(@TempDir final Path dir) throws Exception {
+        Files.createFile(dir.resolve("pom.xml"));
+        Files.writeString(dir.resolve("pom.xml"), "<project><modelVersion>4.0.0</modelVersion></project>");
+        Files.createFile(dir.resolve(".spinignore"));
+        assertThat(PomXmlUtils.isMavenWorkspaceRoot(dir)).isTrue();
+    }
+
+    // -------------------------------------------------------------------------
 
     private static Element parseDocument(final String xml) throws Exception {
         final DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
