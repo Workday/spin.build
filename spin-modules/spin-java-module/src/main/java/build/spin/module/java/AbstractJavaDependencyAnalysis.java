@@ -497,7 +497,7 @@ public abstract class AbstractJavaDependencyAnalysis
         jdepsArgs.add(Argument.of(artifactPath));
         final ErrorCapture captured = new ErrorCapture();
         jdepsArgs.add(stdoutObserver);
-        jdepsArgs.add(captured.subscriber(line -> this.recorder.error(line)));
+        jdepsArgs.add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
 
         try (var jdeps = this.machine.launch(Application.class,
             jdepsArgs.toArray(Option[]::new))) {

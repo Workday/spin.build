@@ -237,7 +237,7 @@ public abstract class AbstractTest
         args.add(Console.ofSystem());
 
         final ErrorCapture captured = new ErrorCapture();
-        args.add(captured.subscriber(line -> this.recorder.error(line)));
+        args.add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
 
         try (JDKApplication junit = this.machine.launch(
             JDKApplication.class,

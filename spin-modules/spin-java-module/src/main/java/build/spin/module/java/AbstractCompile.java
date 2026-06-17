@@ -381,12 +381,7 @@ public abstract class AbstractCompile
                 }
             })
             .with(string -> string.startsWith("["), string -> {
-                // record and clear the error
-                error.ifPresent(e -> {
-                    this.recorder.error(e);
-                    captured.append(e);
-                });
-                error.clear();
+                flushError(error, captured);
             })
             .build();
 
@@ -402,11 +397,7 @@ public abstract class AbstractCompile
             javac.onExit().get();
 
             // flush any error lines that were not followed by a subsequent "[" line
-            error.ifPresent(e -> {
-                this.recorder.error(e);
-                captured.append(e);
-            });
-            error.clear();
+            flushError(error, captured);
 
             // output the exit value for the completion
             javac.exitValue()
@@ -455,6 +446,18 @@ public abstract class AbstractCompile
         }
 
         return PathSetBuilder.create(path).build();
+    }
+
+    private void flushError(final Capture<String> error, final ErrorCapture captured) {
+        error.ifPresent(e -> {
+            if (ErrorCapture.isJavacWarning(e)) {
+                this.recorder.warn(e);
+            } else {
+                this.recorder.error(e);
+                captured.append(e);
+            }
+        });
+        error.clear();
     }
 
 }

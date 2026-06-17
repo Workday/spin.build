@@ -412,7 +412,7 @@ public class CustomizationPlugin
                     Argument.of("-g"), // always compile with debugging information
                     Argument.of("-d"),
                     Argument.of(Strings.doubleQuoteIfContainsWhiteSpace(target.toString())),
-                    captured.subscriber(line -> this.recorder.error(line)))) {
+                    captured.triageSubscriber(ErrorCapture::isJavacWarning, this.recorder::warn, this.recorder::error))) {
 
                     // wait for "javac" to exit
                     try {
