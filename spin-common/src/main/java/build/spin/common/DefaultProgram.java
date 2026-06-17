@@ -436,7 +436,6 @@ public final class DefaultProgram
         return "";
     }
 
-
     @SuppressWarnings("unchecked")
     private Void runTask(final Reference reference,
                          final ConcurrentHashMap<Reference, AtomicInteger> pending,
