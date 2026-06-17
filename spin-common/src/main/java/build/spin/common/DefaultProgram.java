@@ -507,7 +507,7 @@ public final class DefaultProgram
                     this, reference,
                     output.isEmpty() ? "Failed to execute " + invocable
                                      : "Failed to execute " + invocable + "\n" + output,
-                    e));
+                    ProcessFailedException.unwrap(e)));
                 return null; // dependents are not fired when a task fails
             }
         }
