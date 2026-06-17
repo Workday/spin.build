@@ -20,6 +20,7 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.spin.Workspace;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.w3c.dom.Element;
@@ -35,6 +36,8 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Targeted unit tests for {@link PomXmlUtils}. Most behavior is exercised at the walker level
@@ -160,6 +163,27 @@ class PomXmlUtilsTests {
         assertThat(coord[0]).isEqualTo("build.spin.module");
         assertThat(coord[1]).isEqualTo("spin-clean-module");
         assertThat(coord[2]).isEqualTo("0.1.0");
+    }
+
+    // -------------------------------------------------------------------------
+    // isMavenWorkspaceProject — spin-native guard must be absent
+    // -------------------------------------------------------------------------
+
+    @Test
+    void isMavenWorkspaceProject_returnsTrueForSpinNativeWorkspaceWithPom(@TempDir final Path dir) throws Exception {
+        Files.createFile(dir.resolve("pom.xml"));
+        Files.createFile(dir.resolve(".spinignore"));
+        final Workspace workspace = mock(Workspace.class);
+        when(workspace.path()).thenReturn(dir);
+        assertThat(PomXmlUtils.isMavenWorkspaceProject(workspace)).isTrue();
+    }
+
+    @Test
+    void isMavenWorkspaceProject_returnsFalseForNonWorkspaceProject(@TempDir final Path dir) throws Exception {
+        Files.createFile(dir.resolve("pom.xml"));
+        final build.spin.Project project = mock(build.spin.Project.class);
+        when(project.path()).thenReturn(dir);
+        assertThat(PomXmlUtils.isMavenWorkspaceProject(project)).isFalse();
     }
 
     // -------------------------------------------------------------------------

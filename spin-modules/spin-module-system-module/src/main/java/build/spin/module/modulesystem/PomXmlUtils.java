@@ -97,33 +97,14 @@ class PomXmlUtils {
     }
 
     /**
-     * Returns {@code true} when the given path is a spin-native workspace, identified by the
-     * presence of a {@code .spinignore} file at the workspace root. {@code PomBased*} resources
-     * that have no spin-native counterpart yet (e.g. {@code TestArguments}, future
-     * {@code CompilerArguments}) should yield in spin-native workspaces — spin treats its own
-     * config as the source of truth and does not fall back to the pom.
-     */
-    static boolean isSpinNativeWorkspace(final Path path) {
-        return Files.exists(path.resolve(".spinignore"));
-    }
-
-    /**
-     * The canonical {@code Resource.MetaClass.isWorkspace} predicate for pom-based resources that
-     * have no spin-native counterpart: Maven workspace root AND not claimed as spin-native.
-     */
-    static boolean isPomBasedWorkspace(final Path path) {
-        return isMavenWorkspaceRoot(path) && !isSpinNativeWorkspace(path);
-    }
-
-    /**
      * The canonical {@code Resource.MetaClass.isDetectedIn} predicate for pom-based resources that
-     * have no spin-native counterpart: the project is a Workspace, has a {@code pom.xml}, and is
-     * not claimed as spin-native.
+     * should also apply in spin-native workspaces (i.e. resources for which spin has no native
+     * equivalent): the project is a Workspace and has a {@code pom.xml}, regardless of whether a
+     * {@code .spinignore} marker is present.
      */
-    static boolean isPomBasedProject(final build.spin.Project project) {
+    static boolean isMavenWorkspaceProject(final build.spin.Project project) {
         return project instanceof build.spin.Workspace
-            && Files.exists(project.path().resolve("pom.xml"))
-            && !isSpinNativeWorkspace(project.path());
+            && Files.exists(project.path().resolve("pom.xml"));
     }
 
     /**
