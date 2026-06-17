@@ -156,7 +156,7 @@ public abstract class AbstractJavaLinker
             Argument.of("--module-path"), Argument.of(analysis.modulePath()),
             Argument.of("--output"), Argument.of(packagePath),
             Argument.of("--add-modules"), Argument.of(moduleNames),
-            captured.subscriber(line -> this.recorder.error(line)))) {
+            captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error))) {
             jlink.onExit().get();
 
             jlink.exitValue().ifPresent(value -> {

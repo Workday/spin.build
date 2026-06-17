@@ -23,6 +23,8 @@ package build.spin.module.java;
 import build.base.flow.Consumer;
 import build.spawn.application.option.StandardErrorSubscriber;
 
+import java.util.function.Predicate;
+
 /**
  * Captures stderr output from a subprocess for inclusion in a {@link build.spin.common.ProcessFailedException}.
  * Use {@link #subscriber(Consumer)} when the subscriber can log every line uniformly;
@@ -40,6 +42,41 @@ public final class ErrorCapture {
         return StandardErrorSubscriber.of(line -> {
             log.onNext(line);
             append(line);
+        });
+    }
+
+    /**
+     * Returns {@code true} for javac stderr lines that are warnings rather than errors:
+     * {@code ": warning:"} diagnostics and {@code "Note:"} informational lines.
+     */
+    public static boolean isJavacWarning(final String line) {
+        return line.contains(": warning:") || line.startsWith("Note:");
+    }
+
+    /**
+     * Returns {@code true} for JVM stderr lines that are noise rather than errors:
+     * blank lines, {@code "WARNING:"} prefixed lines, and {@code "[SpawnAgent:]"} agent output.
+     */
+    public static boolean isJvmNoise(final String line) {
+        return line.isBlank()
+            || line.startsWith("WARNING:")
+            || line.startsWith("[SpawnAgent:]");
+    }
+
+    /**
+     * Returns a {@link StandardErrorSubscriber} that routes each line to {@code warn} when
+     * {@code isNoise} matches, or to {@code error} (and appends it) otherwise.
+     */
+    public StandardErrorSubscriber triageSubscriber(final Predicate<String> isNoise,
+                                                    final Consumer<String> warn,
+                                                    final Consumer<String> error) {
+        return StandardErrorSubscriber.of(line -> {
+            if (isNoise.test(line)) {
+                warn.onNext(line);
+            } else {
+                error.onNext(line);
+                append(line);
+            }
         });
     }
 
