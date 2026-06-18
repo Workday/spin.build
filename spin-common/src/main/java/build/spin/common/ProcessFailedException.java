@@ -35,6 +35,11 @@ public class ProcessFailedException
         this.output = output;
     }
 
+    public ProcessFailedException(final String message, final String output, final Throwable cause) {
+        super(message, cause);
+        this.output = output;
+    }
+
     /**
      * Returns the captured stderr output from the failed process, or an empty string if none.
      */
