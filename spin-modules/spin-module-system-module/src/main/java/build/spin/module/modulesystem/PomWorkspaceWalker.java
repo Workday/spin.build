@@ -26,8 +26,11 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -89,27 +92,46 @@ final class PomWorkspaceWalker {
             // visited keyed by "groupId:artifactId" to avoid re-processing
             final Set<String> visited = new HashSet<>();
 
-            // Phase 1: walk the workspace poms and their directly declared deps (with rootDm
-            // for version resolution). This seeds the module-info BFS with known coordinates.
+            // Phase 1: walk the workspace poms, visit each module's own artifact, and seed the
+            // dependency BFS queue with their directly declared dependencies.
             final Deque<String[]> moduleQueue = new ArrayDeque<>();
 
-            Files.walk(workspacePath)
-                .filter(p -> p.getFileName().toString().equals(POM_FILENAME))
-                .filter(Files::isRegularFile)
-                .filter(p -> !p.toString().contains("/target/"))
-                .forEach(pomPath -> {
-                    walkPom(builder, pomPath, rootProperties, rootDm, rootPom, localRepo, recorder, codeModel, visitor);
-                    PomXmlUtils.readRawDependencies(builder, pomPath, rootProperties, rootDm)
-                        .forEach(d -> {
-                            if (visited.add(d[0] + ":" + d[1])) {
-                                moduleQueue.add(d);
-                            }
-                        });
-                });
+            final List<Path> pomPaths = new ArrayList<>();
+            Files.walkFileTree(workspacePath, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(final Path dir, final BasicFileAttributes attrs) {
+                    final String name = dir.getFileName() == null ? "" : dir.getFileName().toString();
+                    if (name.equals("target") || name.equals(".build")) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
 
-            // Phase 2: BFS transitive poms from the local repository.
+                @Override
+                public FileVisitResult visitFile(final Path file, final BasicFileAttributes attrs) {
+                    if (file.getFileName().toString().equals(POM_FILENAME)) {
+                        pomPaths.add(file);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+
+            for (final Path pomPath : pomPaths) {
+                walkPom(builder, pomPath, rootProperties, rootPom, recorder, visitor);
+                PomXmlUtils.readRawDependencies(builder, pomPath, rootProperties, rootDm)
+                    .forEach(d -> {
+                        if (visited.add(d[0] + ":" + d[1])) {
+                            moduleQueue.add(d);
+                        }
+                    });
+            }
+
+            // Phase 2: BFS transitive poms from the local repository. Each coordinate is visited
+            // exactly once — the visited gate fires before enqueue, so visitDependency is called
+            // here at dequeue time rather than at the enqueue site.
             while (!moduleQueue.isEmpty()) {
                 final String[] coord = moduleQueue.poll();
+                visitDependency(coord[0], coord[1], coord[2], localRepo, recorder, codeModel, visitor);
                 PomXmlUtils.localRepoPomPath(coord[0], coord[1], coord[2], localRepo)
                     .ifPresent(pomPath -> {
                         try {
@@ -121,7 +143,6 @@ final class PomWorkspaceWalker {
                                 .stream()
                                 .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))
                                 .forEach(d -> {
-                                    visitDependency(d[0], d[1], d[2], localRepo, recorder, codeModel, visitor);
                                     if (visited.add(d[0] + ":" + d[1])) {
                                         moduleQueue.add(d);
                                     }
@@ -138,21 +159,17 @@ final class PomWorkspaceWalker {
     }
 
     /**
-     * Walks a single pom file: visits its own artifact (unless it is the root aggregator pom) and
-     * each of its direct {@code <dependency>} entries.
+     * Visits the self-artifact of a single workspace pom (unless it is the root aggregator pom).
+     * Direct dependencies are seeded into the BFS queue by the caller; they are visited in Phase 2.
      */
     private static void walkPom(final DocumentBuilder builder,
                                 final Path pomPath,
                                 final Map<String, String> properties,
-                                final Map<String, String> rootDm,
                                 final Path rootPomPath,
-                                final Path localRepo,
                                 final TelemetryRecorder recorder,
-                                final CodeModel codeModel,
                                 final CoordinateVisitor visitor) {
         try {
             final Document doc = builder.parse(pomPath.toFile());
-
             // Skip self-registration only for root aggregator poms (packaging=pom).
             // Single-module root poms (packaging=jar or absent) must be registered so
             // their own version is in the map.
@@ -160,38 +177,6 @@ final class PomWorkspaceWalker {
                 && "pom".equals(PomXmlUtils.directChildText(doc.getDocumentElement(), "packaging"));
             if (!isRootAggregator) {
                 visitSelf(doc, pomPath, properties, recorder, visitor);
-            }
-
-            final Element root = doc.getDocumentElement();
-            final String pomGroupId = PomXmlUtils.directChildText(root, "groupId");
-            final String pomVersion = PomXmlUtils.resolveProperty(
-                PomXmlUtils.directChildText(root, "version"), properties);
-
-            final NodeList deps = doc.getElementsByTagName("dependency");
-            for (int i = 0; i < deps.getLength(); i++) {
-                if (!(deps.item(i) instanceof Element dep)) {
-                    continue;
-                }
-
-                final String groupId = PomXmlUtils.textContent(dep, "groupId");
-                final String artifactId = PomXmlUtils.textContent(dep, "artifactId");
-                if (groupId == null || artifactId == null) {
-                    continue;
-                }
-
-                final String rawVersion = PomXmlUtils.textContent(dep, "version");
-                String resolvedVersion = PomXmlUtils.resolveProperty(rawVersion, properties);
-                if (resolvedVersion == null || resolvedVersion.contains("${")) {
-                    resolvedVersion = rootDm.get(groupId + ":" + artifactId);
-                }
-                if (resolvedVersion == null && groupId.equals(pomGroupId) && pomVersion != null) {
-                    resolvedVersion = pomVersion;
-                }
-                if (resolvedVersion == null) {
-                    continue;
-                }
-
-                visitDependency(groupId, artifactId, resolvedVersion, localRepo, recorder, codeModel, visitor);
             }
         } catch (final Exception e) {
             recorder.warn(e, "PomWorkspaceWalker failed to parse [%s]", pomPath);

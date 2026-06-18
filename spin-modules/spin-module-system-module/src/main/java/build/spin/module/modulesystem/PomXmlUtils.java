@@ -345,7 +345,20 @@ class PomXmlUtils {
             }
             final String resolvedPomVersion = resolveProperty(pomVersion, properties);
 
-            final NodeList deps = doc.getElementsByTagName("dependency");
+            // Find the <dependencies> that is a direct child of the root element so that
+            // entries inside <dependencyManagement> are not mistakenly included.
+            Element depsElement = null;
+            final NodeList rootChildren = root.getChildNodes();
+            for (int i = 0; i < rootChildren.getLength(); i++) {
+                if (rootChildren.item(i) instanceof Element e && e.getTagName().equals("dependencies")) {
+                    depsElement = e;
+                    break;
+                }
+            }
+            if (depsElement == null) {
+                return result;
+            }
+            final NodeList deps = depsElement.getElementsByTagName("dependency");
             for (int i = 0; i < deps.getLength(); i++) {
                 if (!(deps.item(i) instanceof Element dep)) {
                     continue;
