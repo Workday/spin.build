@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -144,6 +145,33 @@ class ErrorCaptureTests {
         assertThat(errored).containsExactly("Exception in thread \"main\" java.lang.NullPointerException");
         assertThat(warned).isEmpty();
         assertThat(capture.output()).isEqualTo("Exception in thread \"main\" java.lang.NullPointerException");
+    }
+
+    // -------------------------------------------------------------------------
+    // selectOutput
+    // -------------------------------------------------------------------------
+
+    @Test
+    void selectOutput_returnsStderrWhenNonEmpty() {
+        assertThat(ErrorCapture.selectOutput("Error: bad arg", Stream.of("stdout line")))
+            .isEqualTo("Error: bad arg");
+    }
+
+    @Test
+    void selectOutput_fallsBackToStdoutWhenStderrEmpty() {
+        assertThat(ErrorCapture.selectOutput("", Stream.of("Error: Module foo not found")))
+            .isEqualTo("Error: Module foo not found");
+    }
+
+    @Test
+    void selectOutput_joinsMultipleStdoutLinesWithNewline() {
+        assertThat(ErrorCapture.selectOutput("", Stream.of("line one", "line two", "line three")))
+            .isEqualTo("line one\nline two\nline three");
+    }
+
+    @Test
+    void selectOutput_returnsEmptyWhenBothEmpty() {
+        assertThat(ErrorCapture.selectOutput("", Stream.empty())).isEmpty();
     }
 
     @Test

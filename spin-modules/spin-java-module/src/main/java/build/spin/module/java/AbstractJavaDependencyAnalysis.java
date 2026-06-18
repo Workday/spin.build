@@ -502,12 +502,17 @@ public abstract class AbstractJavaDependencyAnalysis
         try (var jdeps = this.machine.launch(Application.class,
             jdepsArgs.toArray(Option[]::new))) {
 
-            jdeps.onExit().get();
+            try {
+                jdeps.onExit().get();
+            } catch (final Exception e) {
+                throw new ProcessFailedException("jdeps Execution Failed",
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
+            }
 
-            if (jdeps.onExit().isCompletedExceptionally() || jdeps.exitValue().orElse(0) > 0) {
+            if (jdeps.exitValue().orElse(0) > 0) {
                 throw new ProcessFailedException(
                     "jdeps Execution Failed (exit code: " + jdeps.exitValue().orElse(-1) + ")",
-                    captured.output());
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
             }
 
             // build maps of java platform, module and non-module dependencies

@@ -24,6 +24,8 @@ import build.base.flow.Consumer;
 import build.spawn.application.option.StandardErrorSubscriber;
 
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Captures stderr output from a subprocess for inclusion in a {@link build.spin.common.ProcessFailedException}.
@@ -78,6 +80,14 @@ public final class ErrorCapture {
                 append(line);
             }
         });
+    }
+
+    /**
+     * Returns {@code stderr} when non-empty, otherwise joins {@code stdout} lines with newlines.
+     * Use when a tool (e.g. jdeps) may write error messages to stdout rather than stderr.
+     */
+    public static String selectOutput(final String stderr, final Stream<String> stdout) {
+        return stderr.isEmpty() ? stdout.collect(Collectors.joining("\n")) : stderr;
     }
 
     /**
