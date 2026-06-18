@@ -156,6 +156,11 @@ public abstract class AbstractJavaLinker
             Argument.of("--module-path"), Argument.of(analysis.modulePath()),
             Argument.of("--output"), Argument.of(packagePath),
             Argument.of("--add-modules"), Argument.of(moduleNames),
+            Argument.of("--strip-debug"),
+            Argument.of("--no-header-files"),
+            Argument.of("--no-man-pages"),
+            Argument.of("--compress"), Argument.of("zip-6"),
+            Argument.of("--vm"), Argument.of("server"),
             captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error))) {
             jlink.onExit().get();
 
