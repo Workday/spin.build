@@ -259,6 +259,104 @@ class PomWorkspaceWalkerTests {
             .contains("com.fasterxml.jackson.databind");
     }
 
+    @Test
+    void walk_doesNotClaimShorterSiblingNameForMultiSegmentArtifact(@TempDir final Path workspace) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-json</artifactId>
+                  <version>0.26.1</version>
+                </dependency>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-transport-json</artifactId>
+                  <version>0.26.1</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final var visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+
+        // base-transport-json must NOT claim build.base.json -- that belongs to base-json
+        assertThat(visitor.forCoordinate("build.base", "base-transport-json").names)
+            .contains("build.base.transport.json")
+            .doesNotContain("build.base.json");
+
+        // base-json must still claim build.base.json via groupPrefixedModuleName
+        assertThat(visitor.forCoordinate("build.base", "base-json").names)
+            .contains("build.base.json");
+    }
+
+    @Test
+    void walk_doesNotClaimGroupPrefixedNameOfSiblingForNonPrefixedArtifact(@TempDir final Path workspace) throws Exception {
+        // com.example:example-api  -> groupPrefixedModuleName fires -> com.example.api
+        // com.example:acme-api     -> groupPrefixedModuleName is empty (acme != example),
+        //   so the groupId+lastSegment fallback currently adds com.example.api — collision
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>root</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>com.example</groupId>
+                  <artifactId>example-api</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+                <dependency>
+                  <groupId>com.example</groupId>
+                  <artifactId>acme-api</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final var visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+
+        // example-api is the rightful owner of com.example.api via groupPrefixedModuleName
+        assertThat(visitor.forCoordinate("com.example", "example-api").names)
+            .contains("com.example.api");
+
+        // acme-api must NOT steal com.example.api via the groupId+lastSegment fallback
+        assertThat(visitor.forCoordinate("com.example", "acme-api").names)
+            .doesNotContain("com.example.api");
+    }
+
+    @Test
+    void walk_doesNotProduceJunkNamesFromTwoSegmentGroupId(@TempDir final Path workspace) throws Exception {
+        // groupParentWithLastArtifactSegment for io.netty:netty-transport produces io.transport
+        // because the "parent" of io.netty is just the TLD "io" — that is not a useful namespace
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>io.netty</groupId>
+                  <artifactId>netty-transport</artifactId>
+                  <version>4.1.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final var visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.forCoordinate("io.netty", "netty-transport").names)
+            .doesNotContain("io.transport");
+    }
+
     // -------------------------------------------------------------------------
     // self-artifact handling
     // -------------------------------------------------------------------------

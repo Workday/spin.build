@@ -135,6 +135,14 @@ class PomXmlUtilsTests {
             .isEmpty();
     }
 
+    @Test
+    void groupParentWithLastArtifactSegment_returnsEmptyForTwoSegmentGroupId() {
+        // io.netty has no meaningful parent namespace — "io" is a TLD, not a groupId prefix;
+        // emitting io.transport for netty-transport would be pure noise in the catalog
+        assertThat(PomXmlUtils.groupParentWithLastArtifactSegment("io.netty", "netty-transport"))
+            .isEmpty();
+    }
+
     // -------------------------------------------------------------------------
     // findJarByModuleName
     // -------------------------------------------------------------------------
