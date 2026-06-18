@@ -156,6 +156,17 @@ class PomXmlUtils {
     }
 
     /**
+     * Returns the first hyphen-delimited segment of a Maven artifactId.
+     * <p>
+     * Examples: {@code junit-jupiter-api} → {@code junit}, {@code assertj-core} → {@code assertj}.
+     * Returns an empty string if the artifactId contains no hyphen.
+     */
+    static String firstHyphenSegment(final String artifactId) {
+        final int idx = artifactId.indexOf('-');
+        return idx >= 0 ? artifactId.substring(0, idx) : "";
+    }
+
+    /**
      * Returns the last hyphen-delimited segment of a Maven artifactId.
      * <p>
      * Examples: {@code assertj-core} → {@code core}, {@code junit-jupiter-api} → {@code api}.
@@ -262,6 +273,10 @@ class PomXmlUtils {
     static Optional<String> groupParentWithLastArtifactSegment(final String groupId, final String artifactId) {
         final int lastDot = groupId.lastIndexOf('.');
         if (lastDot < 0) {
+            return Optional.empty();
+        }
+        // require at least 3 groupId segments so TLD-only parents like "io" or "com" are not used
+        if (groupId.indexOf('.') == lastDot) {
             return Optional.empty();
         }
         final String lastArtifactSegment = lastHyphenSegment(artifactId);

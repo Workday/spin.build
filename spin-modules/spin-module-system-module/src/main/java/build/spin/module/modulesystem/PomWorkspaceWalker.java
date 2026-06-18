@@ -267,11 +267,35 @@ final class PomWorkspaceWalker {
             // bare segment matches projects whose directory name is just the last artifact segment
             // (e.g. "processor" directory for artifact "ap-simple-processor")
             names.add(lastSegment);
-            names.add(groupId + "." + lastSegment);
+            // only fire when groupPrefixedModuleName won't, and only when the artifact's first
+            // hyphen-segment is actually part of the groupId (guards spurious steals like acme-api
+            // claiming com.example.api)
+            if (PomXmlUtils.groupPrefixedModuleName(groupId, artifactId).isEmpty()) {
+                final String firstSeg = PomXmlUtils.firstHyphenSegment(artifactId);
+                if (!firstSeg.isEmpty() && groupIdContainsSegment(groupId, firstSeg)) {
+                    names.add(groupId + "." + lastSegment);
+                }
+            }
         }
         PomXmlUtils.groupPrefixedModuleName(groupId, artifactId).ifPresent(names::add);
         PomXmlUtils.groupSuffixedModuleName(groupId, artifactId).ifPresent(names::add);
         PomXmlUtils.groupParentWithLastArtifactSegment(groupId, artifactId).ifPresent(names::add);
         return names;
+    }
+
+    private static boolean groupIdContainsSegment(final String groupId, final String segment) {
+        int start = 0;
+        while (start < groupId.length()) {
+            final int dot = groupId.indexOf('.', start);
+            final int end = dot < 0 ? groupId.length() : dot;
+            if (groupId.regionMatches(start, segment, 0, end - start) && segment.length() == end - start) {
+                return true;
+            }
+            if (dot < 0) {
+                break;
+            }
+            start = dot + 1;
+        }
+        return false;
     }
 }
