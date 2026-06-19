@@ -56,13 +56,20 @@ public final class ErrorCapture {
     }
 
     /**
-     * Returns {@code true} for JVM stderr lines that are noise rather than errors:
-     * blank lines, {@code "WARNING:"} prefixed lines, and {@code "[SpawnAgent:]"} agent output.
+     * Returns {@code true} for JVM stderr lines that are warnings rather than errors:
+     * blank lines and {@code "WARNING:"} prefixed lines.
      */
     public static boolean isJvmNoise(final String line) {
         return line.isBlank()
-            || line.startsWith("WARNING:")
-            || line.startsWith("[SpawnAgent:]");
+            || line.startsWith("WARNING:");
+    }
+
+    /**
+     * Returns {@code true} for JVM stderr lines that are spawn agent lifecycle output and should
+     * be silently discarded rather than logged at any level.
+     */
+    public static boolean isSpawnAgentOutput(final String line) {
+        return line.startsWith("[SpawnAgent:");
     }
 
     /**

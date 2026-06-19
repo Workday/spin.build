@@ -106,8 +106,18 @@ class ErrorCaptureTests {
     }
 
     @Test
-    void isJvmNoise_matchesSpawnAgentPrefix() {
-        assertThat(ErrorCapture.isJvmNoise("[SpawnAgent:] attached successfully")).isTrue();
+    void isJvmNoise_doesNotMatchSpawnAgentPrefix() {
+        assertThat(ErrorCapture.isJvmNoise("[SpawnAgent:41] Connecting to spawn://...")).isFalse();
+    }
+
+    @Test
+    void isSpawnAgentOutput_matchesSpawnAgentPrefix() {
+        assertThat(ErrorCapture.isSpawnAgentOutput("[SpawnAgent:41] Connecting to spawn://...")).isTrue();
+    }
+
+    @Test
+    void isSpawnAgentOutput_doesNotMatchOtherLines() {
+        assertThat(ErrorCapture.isSpawnAgentOutput("WARNING: something")).isFalse();
     }
 
     @Test

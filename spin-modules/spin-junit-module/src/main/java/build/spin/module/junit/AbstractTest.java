@@ -12,6 +12,7 @@ import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
+import build.spawn.application.option.StandardErrorSubscriber;
 import build.spawn.jdk.JDK;
 import build.spawn.jdk.JDKApplication;
 import build.spawn.jdk.option.AddModules;
@@ -151,7 +152,7 @@ public abstract class AbstractTest
         args.add(Executable.of(executable));
         args.add(WorkingDirectory.of(this.project.path().toString()));
         args.add(javaHome);
-        args.add(Name.of("JUnit Platform"));
+        args.add(Name.of("JUnit Platform/" + this.project.name()));
 
         this.project.findResource(TestArguments.class).ifPresent(testArgs ->
             testArgs.get(this.project)
@@ -203,6 +204,13 @@ public abstract class AbstractTest
 
             try (Stream<Path> walk = Files.walk(testClassesDir)) {
                 walk.filter(Files::isDirectory)
+                    .filter(dir -> {
+                        try (Stream<Path> children = Files.list(dir)) {
+                            return children.anyMatch(p -> p.getFileName().toString().endsWith(".class"));
+                        } catch (final IOException e) {
+                            return false;
+                        }
+                    })
                     .map(testClassesDir::relativize)
                     .map(Path::toString)
                     .filter(s -> !s.isEmpty())
@@ -237,7 +245,16 @@ public abstract class AbstractTest
         args.add(Console.ofSystem());
 
         final ErrorCapture captured = new ErrorCapture();
-        args.add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
+        args.add(StandardErrorSubscriber.of(line -> {
+            if (ErrorCapture.isSpawnAgentOutput(line)) {
+                // already visible via JUnit Platform console output
+            } else if (ErrorCapture.isJvmNoise(line)) {
+                this.recorder.warn(line);
+            } else {
+                this.recorder.error(line);
+                captured.append(line);
+            }
+        }));
 
         try (JDKApplication junit = this.machine.launch(
             JDKApplication.class,
