@@ -38,6 +38,7 @@ import java.util.stream.Stream;
  * <ul>
  *   <li>{@code <release>N</release>} → {@code --release N}</li>
  *   <li>{@code <source>N</source>} → {@code -source N} (only when {@code <release>} is absent)</li>
+ *   <li>{@code <doclint>VALUE</doclint>} → {@code -Xdoclint:VALUE}</li>
  *   <li>{@code <additionalOptions>} — accepts both shapes used in real-world poms:
  *       a list of {@code <additionalOption>} children (each child's text becomes one token), or
  *       a flat text value that is whitespace-split into tokens</li>
@@ -63,6 +64,7 @@ public class PomBasedJavadocArguments
         return Stream.of(
             config.flagIfPresent("release", "--release"),
             hasRelease ? Stream.<String>empty() : config.flagIfPresent("source", "-source"),
+            config.textChild("doclint").map(v -> "-Xdoclint:" + v).stream(),
             additionalOptions(config)
         ).flatMap(s -> s);
     }
