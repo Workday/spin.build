@@ -200,6 +200,11 @@ public abstract class AbstractCompile
                               final Path targetPath)
         throws Exception {
 
+        if (sourceCode.isEmpty()) {
+            this.recorder.diagnostic("Skipping compile for [%s]: no source files", this.project.path());
+            return emptySourceResult(targetPath);
+        }
+
         final ModulePath modulePath = ModulePath.of(resolution.modulePath().stream());
         final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
@@ -446,6 +451,11 @@ public abstract class AbstractCompile
         }
 
         return PathSetBuilder.create(path).build();
+    }
+
+    static PathSet emptySourceResult(final Path targetPath) throws IOException {
+        Files.createDirectories(targetPath);
+        return PathSetBuilder.create(targetPath).build();
     }
 
     private void flushError(final Capture<String> error, final ErrorCapture captured) {
