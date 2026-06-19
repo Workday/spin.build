@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.flow.RecordingSubscriber;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.template.TextOut;
@@ -28,6 +29,7 @@ import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
+import build.spawn.application.option.StandardOutputSubscriber;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
@@ -149,6 +151,7 @@ public abstract class AbstractJavaLinker
             .filter(jdkModuleNames::contains)  // only include modules that actually exist in this JDK
             .collect(Collectors.joining(","));
 
+        final var recordingObserver = new RecordingSubscriber<String>();
         final ErrorCapture captured = new ErrorCapture();
         try (var jlink = this.machine.launch(Application.class,
             Executable.of(jlinkPath.toString()),
@@ -161,16 +164,21 @@ public abstract class AbstractJavaLinker
             Argument.of("--no-man-pages"),
             Argument.of("--compress"), Argument.of("zip-6"),
             Argument.of("--vm"), Argument.of("server"),
+            StandardOutputSubscriber.of(recordingObserver),
             captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error))) {
-            jlink.onExit().get();
 
-            jlink.exitValue().ifPresent(value -> {
-                if (value != 0) {
-                    throw new ProcessFailedException(
-                        "Runtime Image Generation Failed (exit code: " + value + ")",
-                        captured.output());
-                }
-            });
+            try {
+                jlink.onExit().get();
+            } catch (final Exception e) {
+                throw new ProcessFailedException("jlink Execution Failed",
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
+            }
+
+            if (jlink.exitValue().orElse(0) != 0) {
+                throw new ProcessFailedException(
+                    "Runtime Image Generation Failed (exit code: " + jlink.exitValue().orElse(-1) + ")",
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+            }
 
             // -----
             // Classify application jars into --module-path (modules/) vs -cp (classpath/).
