@@ -9,9 +9,9 @@ package build.spin.module.java;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -40,16 +40,21 @@ import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import jakarta.inject.Inject;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
 
 /**
  * An abstract {@link Task} to perform Java Linking using the Java Platform
@@ -87,8 +92,7 @@ public abstract class AbstractJavaLinker
      * Execute {@code jlink} on this {@link Project}
      *
      * @param buildPath the build path for the {@link Project}
-     * @param analysis the {@link DependencyAnalysis} containing information for linking
-     *
+     * @param analysis  the {@link DependencyAnalysis} containing information for linking
      * @return the {@link Path} the path of the {@code jlink} produced Java Runtime
      * @throws Exception should the {@link Task} execution fail
      */
@@ -235,11 +239,19 @@ public abstract class AbstractJavaLinker
             }
             final Set<Path> modulePathJars = new LinkedHashSet<>(classification.modulePath());
 
+            final var nativePlatform = currentNativePlatform();
             final List<Path> classPathTargets = new ArrayList<>();
             for (final var source : candidatePaths) {
                 final var targetDir = modulePathJars.contains(source) ? modulePath : classPathDir;
                 final var target = targetDir.resolve(source.getFileName());
                 Files.copy(source, target);
+                if (nativePlatform.isPresent()) {
+                    final var p = nativePlatform.get();
+                    if (stripForeignNatives(target, p.osDir(), p.archDir())) {
+                        this.recorder.info("[jlink] stripped foreign native platforms from %s (kept %s/%s)",
+                            target.getFileName(), p.osDir(), p.archDir());
+                    }
+                }
                 if (targetDir == classPathDir) {
                     classPathTargets.add(target);
                 }
@@ -267,7 +279,7 @@ public abstract class AbstractJavaLinker
     }
 
     private static Optional<String> detectMainClass(final Path projectPath,
-                                                     final TelemetryRecorder recorder) {
+                                                    final TelemetryRecorder recorder) {
         final Path srcDir = projectPath.resolve("src/main/java");
         if (!Files.isDirectory(srcDir)) {
             return Optional.empty();
@@ -304,6 +316,119 @@ public abstract class AbstractJavaLinker
             name.append(i == rel.getNameCount() - 1 ? part.replaceAll("\\.java$", "") : part);
         }
         return name.toString();
+    }
+
+    private record NativePlatform(String osDir, String archDir) {
+    }
+
+    private static Optional<NativePlatform> currentNativePlatform() {
+        // java.lang.System is used explicitly — `System` alone resolves to the @System annotation import.
+        final var osName = java.lang.System.getProperty("os.name", "").toLowerCase();
+        final var osArch = java.lang.System.getProperty("os.arch", "").toLowerCase();
+
+        final String osDir;
+        if (osName.contains("mac")) {
+            osDir = "Mac";
+        } else if (osName.contains("linux")) {
+            osDir = "Linux";
+        } else if (osName.contains("windows")) {
+            osDir = "Windows";
+        } else if (osName.contains("freebsd")) {
+            osDir = "FreeBSD";
+        } else if (osName.contains("sunos")) {
+            osDir = "SunOS";
+        } else if (osName.contains("aix")) {
+            osDir = "AIX";
+        } else {
+            return Optional.empty();
+        }
+
+        final String archDir = switch (osArch) {
+            case "aarch64", "arm64" -> "aarch64";
+            case "x86_64", "amd64" -> "x86_64";
+            case "x86", "i386", "i486", "i586", "i686" -> "x86";
+            case "ppc64le" -> "ppc64le";
+            case "ppc64" -> "ppc64";
+            case "ppc" -> "ppc";
+            case "s390x" -> "s390x";
+            case "riscv64" -> "riscv64";
+            case "loongarch64" -> "loongarch64";
+            default -> osArch;
+        };
+
+        return Optional.of(new NativePlatform(osDir, archDir));
+    }
+
+    // Normalises the arch segment found in a jar entry path to the same canonical values
+    // produced by currentNativePlatform(), so the two can be compared directly.
+    // Handles known aliases: aarch_64 (Netty), amd64/x64 (x86_64), i*86 (x86).
+    static String normalizeEntryArch(final String entryArch) {
+        return switch (entryArch.toLowerCase()) {
+            case "x86_64", "amd64", "x64" -> "x86_64";
+            case "aarch64", "arm64", "aarch_64" -> "aarch64";
+            case "x86", "i386", "i486", "i586", "i686" -> "x86";
+            default -> entryArch.toLowerCase();
+        };
+    }
+
+    // Returns the OS/arch components from a jar entry of the form: <prefix>/native/<OS>/<arch>/<file>,
+    // or null if the entry doesn't match that structure.
+    // The search requires a leading '/' before "native", so root-level entries like "native/Linux/..." are intentionally excluded.
+    static String[] nativeOsArch(final String entryName) {
+        final int idx = entryName.indexOf("/native/");
+        if (idx < 0) {
+            return null;
+        }
+        final var after = entryName.substring(idx + 8);
+        final int first = after.indexOf('/');
+        if (first < 0) {
+            return null;
+        }
+        final int second = after.indexOf('/', first + 1);
+        if (second < 0 || after.indexOf('/', second + 1) >= 0) {
+            return null;
+        }
+        return new String[]{after.substring(0, first), after.substring(first + 1, second)};
+    }
+
+    // Returns true if any foreign-platform native entries were stripped from the jar.
+    static boolean stripForeignNatives(final Path jar, final String osDir, final String archDir)
+        throws IOException {
+        boolean hasForeignNatives = false;
+        try (var zf = new ZipFile(jar.toFile())) {
+            for (final var e = zf.entries(); e.hasMoreElements();) {
+                final var parts = nativeOsArch(e.nextElement().getName());
+                if (parts != null && (!parts[0].equals(osDir) || !normalizeEntryArch(parts[1]).equals(archDir))) {
+                    hasForeignNatives = true;
+                    break;
+                }
+            }
+            if (!hasForeignNatives) {
+                return false;
+            }
+            final var tmp = Files.createTempFile(jar.getParent(), jar.getFileName().toString(), ".tmp");
+            try {
+                try (var out = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(tmp)))) {
+                    for (final var e = zf.entries(); e.hasMoreElements();) {
+                        final var entry = e.nextElement();
+                        final var parts = nativeOsArch(entry.getName());
+                        if (parts != null && (!parts[0].equals(osDir) || !normalizeEntryArch(parts[1]).equals(archDir))) {
+                            continue;
+                        }
+                        out.putNextEntry(new ZipEntry(entry.getName()));
+                        try (var is = zf.getInputStream(entry)) {
+                            is.transferTo(out);
+                        }
+                        out.closeEntry();
+                    }
+                }
+                Files.move(tmp, jar, StandardCopyOption.REPLACE_EXISTING);
+            } catch (final IOException e) {
+                Files.deleteIfExists(tmp);
+                throw e;
+            }
+        }
+        return true;
     }
 
 }
