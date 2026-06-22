@@ -359,8 +359,21 @@ public abstract class AbstractJavaLinker
         return Optional.of(new NativePlatform(osDir, archDir));
     }
 
+    // Normalises the arch segment found in a jar entry path to the same canonical values
+    // produced by currentNativePlatform(), so the two can be compared directly.
+    // Handles known aliases: aarch_64 (Netty), amd64/x64 (x86_64), i*86 (x86).
+    static String normalizeEntryArch(final String entryArch) {
+        return switch (entryArch.toLowerCase()) {
+            case "x86_64", "amd64", "x64" -> "x86_64";
+            case "aarch64", "arm64", "aarch_64" -> "aarch64";
+            case "x86", "i386", "i486", "i586", "i686" -> "x86";
+            default -> entryArch.toLowerCase();
+        };
+    }
+
     // Returns the OS/arch components from a jar entry of the form: <prefix>/native/<OS>/<arch>/<file>,
     // or null if the entry doesn't match that structure.
+    // The search requires a leading '/' before "native", so root-level entries like "native/Linux/..." are intentionally excluded.
     static String[] nativeOsArch(final String entryName) {
         final int idx = entryName.indexOf("/native/");
         if (idx < 0) {
@@ -381,15 +394,16 @@ public abstract class AbstractJavaLinker
     // Returns true if any foreign-platform native entries were stripped from the jar.
     static boolean stripForeignNatives(final Path jar, final String osDir, final String archDir)
         throws IOException {
-        final var foreignPlatforms = new java.util.LinkedHashSet<String>();
+        boolean hasForeignNatives = false;
         try (var zf = new ZipFile(jar.toFile())) {
             for (final var e = zf.entries(); e.hasMoreElements();) {
                 final var parts = nativeOsArch(e.nextElement().getName());
-                if (parts != null && !parts[0].equals(osDir)) {
-                    foreignPlatforms.add(parts[0] + "/" + parts[1]);
+                if (parts != null && (!parts[0].equals(osDir) || !normalizeEntryArch(parts[1]).equals(archDir))) {
+                    hasForeignNatives = true;
+                    break;
                 }
             }
-            if (foreignPlatforms.isEmpty()) {
+            if (!hasForeignNatives) {
                 return false;
             }
             final var tmp = Files.createTempFile(jar.getParent(), jar.getFileName().toString(), ".tmp");
@@ -398,7 +412,7 @@ public abstract class AbstractJavaLinker
                     for (final var e = zf.entries(); e.hasMoreElements();) {
                         final var entry = e.nextElement();
                         final var parts = nativeOsArch(entry.getName());
-                        if (parts != null && !parts[0].equals(osDir)) {
+                        if (parts != null && (!parts[0].equals(osDir) || !normalizeEntryArch(parts[1]).equals(archDir))) {
                             continue;
                         }
                         out.putNextEntry(new ZipEntry(entry.getName()));

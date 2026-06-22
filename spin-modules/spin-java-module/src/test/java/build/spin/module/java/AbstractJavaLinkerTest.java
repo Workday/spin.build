@@ -77,6 +77,28 @@ class AbstractJavaLinkerTest {
         assertThat(parts).containsExactly("Windows", "x86_64");
     }
 
+    // --- normalizeEntryArch ---
+
+    @Test
+    void normalizeEntryArch_canonicalizesX86_64Aliases() {
+        assertThat(AbstractJavaLinker.normalizeEntryArch("amd64")).isEqualTo("x86_64");
+        assertThat(AbstractJavaLinker.normalizeEntryArch("x64")).isEqualTo("x86_64");
+        assertThat(AbstractJavaLinker.normalizeEntryArch("x86_64")).isEqualTo("x86_64");
+    }
+
+    @Test
+    void normalizeEntryArch_canonicalizesAarch64Aliases() {
+        assertThat(AbstractJavaLinker.normalizeEntryArch("arm64")).isEqualTo("aarch64");
+        assertThat(AbstractJavaLinker.normalizeEntryArch("aarch_64")).isEqualTo("aarch64");
+        assertThat(AbstractJavaLinker.normalizeEntryArch("aarch64")).isEqualTo("aarch64");
+    }
+
+    @Test
+    void normalizeEntryArch_passesUnknownArchThrough() {
+        assertThat(AbstractJavaLinker.normalizeEntryArch("riscv64")).isEqualTo("riscv64");
+        assertThat(AbstractJavaLinker.normalizeEntryArch("s390x")).isEqualTo("s390x");
+    }
+
     // --- stripForeignNatives ---
 
     private Path buildJar(final String... entryNames) throws Exception {
@@ -108,11 +130,10 @@ class AbstractJavaLinkerTest {
     }
 
     @Test
-    void stripForeignNatives_returnsFalseWhenAllNativesMatchOs() throws Exception {
+    void stripForeignNatives_returnsFalseWhenAllNativesMatchOsAndArch() throws Exception {
         final var jar = buildJar(
             "com/example/Foo.class",
-            "com/example/native/Linux/x86_64/libfoo.so",
-            "com/example/native/Linux/aarch64/libfoo.so");
+            "com/example/native/Linux/x86_64/libfoo.so");
         assertThat(AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64")).isFalse();
     }
 
@@ -130,15 +151,25 @@ class AbstractJavaLinkerTest {
     }
 
     @Test
-    void stripForeignNatives_keepsAllArchVariantsForMatchingOs() throws Exception {
+    void stripForeignNatives_dropsForeignArchForMatchingOs() throws Exception {
         final var jar = buildJar(
             "com/example/native/Linux/x86_64/libfoo.so",
             "com/example/native/Linux/aarch64/libfoo.so",
             "com/example/native/Mac/x86_64/libfoo.jnilib");
         AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64");
         assertThat(jarEntryNames(jar)).containsExactlyInAnyOrder(
-            "com/example/native/Linux/x86_64/libfoo.so",
-            "com/example/native/Linux/aarch64/libfoo.so");
+            "com/example/native/Linux/x86_64/libfoo.so");
+    }
+
+    @Test
+    void stripForeignNatives_normalizesEntryArchAliases() throws Exception {
+        final var jar = buildJar(
+            "com/example/native/Linux/amd64/libfoo.so",      // alias for x86_64
+            "com/example/native/Linux/aarch_64/libfoo.so",   // Netty alias for aarch64
+            "com/example/native/Mac/x86_64/libfoo.jnilib");
+        AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64");
+        assertThat(jarEntryNames(jar)).containsExactlyInAnyOrder(
+            "com/example/native/Linux/amd64/libfoo.so");
     }
 
     @Test
