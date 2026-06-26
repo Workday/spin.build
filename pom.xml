@@ -66,7 +66,6 @@
         <!-- Platform Versions -->
         <java.version>25</java.version>
         <maven.version>3.9.16</maven.version>
-        <maven-as-dep.version>4.0.0-rc-5</maven-as-dep.version>
 
         <!-- Module Dependency Versions -->
         <base.version>0.28.0</base.version>
@@ -375,25 +374,25 @@
             <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-core</artifactId>
-                <version>${maven-as-dep.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>org.apache.maven</groupId>
-                <artifactId>maven-api-settings</artifactId>
-                <version>${maven-as-dep.version}</version>
+                <version>${maven.version}</version>
             </dependency>
 
             <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-settings</artifactId>
-                <version>${maven-as-dep.version}</version>
+                <version>${maven.version}</version>
             </dependency>
 
             <dependency>
                 <groupId>org.apache.maven</groupId>
                 <artifactId>maven-resolver-provider</artifactId>
-                <version>${maven-as-dep.version}</version>
+                <version>${maven.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.maven</groupId>
+                <artifactId>maven-settings-builder</artifactId>
+                <version>${maven.version}</version>
             </dependency>
 
             <!-- Maven Resolver Dependencies -->
@@ -403,14 +402,26 @@
                 <version>${maven.resolver.version}</version>
             </dependency>
 
+            <!--pin the version. forces 2.x over 1.9.x transitively pulled in via maven-resolver-provider-->
+            <dependency>
+                <groupId>org.apache.maven.resolver</groupId>
+                <artifactId>maven-resolver-spi</artifactId>
+                <version>${maven.resolver.version}</version>
+            </dependency>
+
+            <!--pin the version. forces 2.x over 1.9.x transitively pulled in via maven-resolver-provider-->
+            <dependency>
+                <groupId>org.apache.maven.resolver</groupId>
+                <artifactId>maven-resolver-impl</artifactId>
+                <version>${maven.resolver.version}</version>
+            </dependency>
+
             <dependency>
                 <!-- In Maven Resolver 2.x the old maven-resolver-supplier artifact was split
                      into maven-resolver-supplier-mvn3 (Maven 3 model compat) and -mvn4 (Maven 4).
-                     We use -mvn4 to match maven.version 4.x; the -mvn3 variant calls a
-                     DefaultVersionRangeResolver constructor that no longer exists in the
-                     Maven 4 maven-resolver-provider. -->
+                     We use -mvn3 because maven.version stays at 3.9.x. -->
                 <groupId>org.apache.maven.resolver</groupId>
-                <artifactId>maven-resolver-supplier-mvn4</artifactId>
+                <artifactId>maven-resolver-supplier-mvn3</artifactId>
                 <version>${maven.resolver.version}</version>
             </dependency>
 
