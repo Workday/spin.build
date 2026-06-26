@@ -21,10 +21,12 @@ package build.spin.maven.exec;
  */
 
 import build.spin.module.modulesystem.ModuleGraphClassifier;
+import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
+import org.apache.maven.plugin.descriptor.PluginDescriptor;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
@@ -37,6 +39,7 @@ import java.lang.module.ModuleFinder;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -57,12 +60,15 @@ import java.util.stream.Collectors;
 @Mojo(
     name = "exec",
     defaultPhase = LifecyclePhase.PREPARE_PACKAGE,
-    requiresDependencyResolution = ResolutionScope.RUNTIME,
+    requiresDependencyResolution = ResolutionScope.TEST,
     threadSafe = true)
 public class ExecMojo extends AbstractMojo {
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
+
+    @Parameter(defaultValue = "${plugin}", readonly = true, required = true)
+    private PluginDescriptor pluginDescriptor;
 
     /**
      * Fully-qualified main class name (e.g. {@code build.spin.application.Spin}).
@@ -79,7 +85,9 @@ public class ExecMojo extends AbstractMojo {
     private String rootModule;
 
     /**
-     * Source of jar candidates: {@code compile}, {@code runtime}, or {@code test}.
+     * Source of jar candidates: {@code compile}, {@code runtime}, {@code test}, or {@code plugin}.
+     * Use {@code plugin} to classify the plugin's own class realm (for self-hosting builds where
+     * the spin jars are loaded as plugin dependencies rather than project dependencies).
      */
     @Parameter(defaultValue = "runtime")
     private String scope;
@@ -154,8 +162,13 @@ public class ExecMojo extends AbstractMojo {
             case "compile" -> toPathList(project.getCompileClasspathElements());
             case "runtime" -> toPathList(project.getRuntimeClasspathElements());
             case "test" -> toPathList(project.getTestClasspathElements());
+            case "plugin" -> pluginDescriptor.getArtifacts().stream()
+                .map(Artifact::getFile)
+                .filter(Objects::nonNull)
+                .map(File::toPath)
+                .toList();
             default -> throw new IllegalArgumentException("Unknown scope: " + scope
-                + " (expected compile, runtime, or test)");
+                + " (expected compile, runtime, test, or plugin)");
         };
     }
 
