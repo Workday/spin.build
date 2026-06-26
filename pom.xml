@@ -80,7 +80,7 @@
         <mockito.version>5.23.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
         <serve.version>0.7.0</serve.version>
-        <spawn.version>0.2.2</spawn.version>
+        <spawn.version>0.2.3</spawn.version>
 
         <!-- Plugin Dependency Versions -->
         <maven-assembly-plugin.version>3.8.0</maven-assembly-plugin.version>
