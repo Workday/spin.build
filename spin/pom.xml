@@ -188,8 +188,9 @@
             </plugin>
 
             <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
+                <groupId>build.spin</groupId>
+                <artifactId>spin-maven-plugin</artifactId>
+                <version>${revision}</version>
                 <executions>
                     <!-- Maven builds spin₁; spin₁ builds spin₂ (jlink image) -->
                     <execution>
@@ -199,24 +200,25 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
-                            <executable>java</executable>
-                            <longClasspath>true</longClasspath>
-                            <workingDirectory>${project.basedir}</workingDirectory>
+                            <mainClass>build.spin.application.Spin</mainClass>
+                            <rootModule>build.spin.application</rootModule>
+                            <scope>runtime</scope>
+                            <additionalJvmArgs>
+                                <additionalJvmArg>--enable-preview</additionalJvmArg>
+                            </additionalJvmArgs>
                             <arguments>
-                                <!-- Launcher bridges exec-maven-plugin's flat classpath into a proper
-                                     modular launch: it classifies jars via ModuleFinder + Configuration.resolve,
-                                     demotes split-package conflicts (e.g. Maven Resolver 1.x), and re-execs
-                                     the JVM with the correct -module-path + -cp + -m build.spin.application/Spin. -->
-                                <argument>--enable-preview</argument>
-                                <argument>-classpath</argument>
-                                <classpath/>
-                                <argument>build.spin.application.Launcher</argument>
                                 <argument>clean</argument>
                                 <argument>jlink</argument>
                             </arguments>
                         </configuration>
                     </execution>
+                </executions>
+            </plugin>
 
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <executions>
                     <!-- spin₂ builds spin₃, then verify spin₂ == spin₃ -->
                     <execution>
                         <id>spin2-build-spin3</id>

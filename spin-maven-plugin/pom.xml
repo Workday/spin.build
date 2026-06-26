@@ -10,11 +10,11 @@
         <version>${revision}</version>
     </parent>
 
-    <artifactId>spin-classifier-maven-plugin</artifactId>
+    <artifactId>spin-maven-plugin</artifactId>
     <packaging>maven-plugin</packaging>
 
-    <name>Spin Classifier Maven Plugin</name>
-    <description>Maven plugin that invokes ModuleGraphClassifier to produce a curated --module-path / --class-path argfile for maven-compiler-plugin and maven-surefire-plugin. Closes the gap between spin's runtime classifier and the Maven build-time classifier so modular tests can run against dependency closures that contain split packages (e.g. Maven Core's maven-settings / maven-support overlap on org.apache.maven.settings.v4).</description>
+    <name>Spin Maven Plugin</name>
+    <description>Maven plugin for spin.build: classifies a dependency closure into a curated --module-path / --class-path argfile (classify goals) and forks a properly modularised JVM for self-hosting builds (exec goal).</description>
 
     <dependencies>
         <dependency>
@@ -50,6 +50,7 @@
             <version>${maven-plugin-tools.version}</version>
             <scope>provided</scope>
         </dependency>
+
     </dependencies>
 
     <build>

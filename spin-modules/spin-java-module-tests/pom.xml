@@ -194,7 +194,7 @@
                  (this module has no source module-info.java of its own). -->
             <plugin>
                 <groupId>build.spin</groupId>
-                <artifactId>spin-classifier-maven-plugin</artifactId>
+                <artifactId>spin-maven-plugin</artifactId>
                 <version>${revision}</version>
                 <executions>
                     <execution>
@@ -222,7 +222,7 @@
                                  closure onto javac's module-path and re-trip the Maven Core
                                  split packages (maven-settings vs maven-support on
                                  org.apache.maven.settings.v4, and friends). Instead we inject
-                                 the curated path computed by spin-classifier-maven-plugin via
+                                 the curated path computed by spin-maven-plugin via
                                  project properties exposed at generate-test-sources phase. -->
                             <useModulePath>false</useModulePath>
                             <compilerArgs>
@@ -248,7 +248,7 @@
                          maven-support on org.apache.maven.settings.v4, and friends) that
                          our classifier just carefully resolved. useModulePath=false keeps
                          surefire in classpath mode; our argLine then injects the curated
-                         module-path from spin-classifier-maven-plugin. -->
+                         module-path from spin-maven-plugin. -->
                     <useModulePath>false</useModulePath>
                     <!-- argLine injects the curated module-path (same argfile the
                          test-compile execution consumes via project properties) into the

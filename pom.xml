@@ -116,7 +116,7 @@
         <module>spin-common</module>
         <module>spin-engine</module>
         <module>spin-modules</module>
-        <module>spin-classifier-maven-plugin</module>
+        <module>spin-maven-plugin</module>
         <module>spin-testing</module>
         <module>spin-collider</module>
     </modules>
