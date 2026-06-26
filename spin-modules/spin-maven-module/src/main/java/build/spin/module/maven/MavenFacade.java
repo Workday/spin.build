@@ -145,6 +145,7 @@ class MavenFacade {
             // obtain the remote repositories from the active plugins in the settings
             settings.getActiveProfiles().stream()
                 .map(name -> settings.getProfilesAsMap().get(name))
+                .filter(Objects::nonNull)
                 .flatMap(profile -> profile.getRepositories().stream())
                 .map(repository -> {
                     final RemoteRepository.Builder builder =
