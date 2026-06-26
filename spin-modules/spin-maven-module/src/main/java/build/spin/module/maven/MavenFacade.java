@@ -25,9 +25,15 @@ import build.base.foundation.Exceptional;
 import build.base.telemetry.TelemetryRecorder;
 import build.spin.module.modulesystem.UnresolvableResourceException;
 import build.spin.option.NetworkAccess;
-import org.apache.maven.api.settings.Server;
-import org.apache.maven.api.settings.Settings;
-import org.apache.maven.settings.v4.SettingsStaxReader;
+import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
+import org.apache.maven.settings.Server;
+import org.apache.maven.settings.Settings;
+import org.apache.maven.settings.building.DefaultSettingsBuilderFactory;
+import org.apache.maven.settings.building.DefaultSettingsBuildingRequest;
+import org.apache.maven.settings.building.SettingsBuilder;
+import org.apache.maven.settings.building.SettingsBuildingException;
+import org.apache.maven.settings.building.SettingsBuildingRequest;
+import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.Artifact;
@@ -46,17 +52,13 @@ import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.resolution.DependencyResult;
 import org.eclipse.aether.supplier.RepositorySystemSupplier;
-import org.eclipse.aether.supplier.SessionBuilderSupplier;
 import org.eclipse.aether.util.repository.AuthenticationBuilder;
 
-import java.io.IOException;
 import java.nio.file.FileSystems;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import javax.xml.stream.XMLStreamException;
 
 import static build.spin.option.NetworkAccess.ONLINE;
 
@@ -112,35 +114,38 @@ class MavenFacade {
         this.repositorySystem = new RepositorySystemSupplier().get();
 
         // establish the Repository System Session
-        // SessionBuilderSupplier.configureSessionBuilder already propagates System.getProperties() and env vars
-        final RepositorySystemSession.SessionBuilder sessionBuilder =
-            new SessionBuilderSupplier(this.repositorySystem).get();
+        final DefaultRepositorySystemSession session = MavenRepositorySystemUtils.newSession();
+
+        // provide system properties so Maven's profile activators (e.g. JDK version checks
+        // in parent POMs like jboss-parent) can determine the current Java version; without
+        // this, ModelBuildingException is silently swallowed and returns empty dependencies
+        session.setSystemProperties(System.getProperties());
 
         // configure network access
-        sessionBuilder.setOffline(optionsByType.getOptional(NetworkAccess.class).orElse(ONLINE) == NetworkAccess.OFFLINE);
+        session.setOffline(optionsByType.getOptional(NetworkAccess.class).orElse(ONLINE) == NetworkAccess.OFFLINE);
 
-        sessionBuilder.withLocalRepositories(new LocalRepository(localRepositoryPath));
+        final LocalRepository localRepository = new LocalRepository(localRepositoryPath);
+        session.setLocalRepositoryManager(this.repositorySystem.newLocalRepositoryManager(session, localRepository));
 
-        this.repositorySystemSession = sessionBuilder.build();
+        this.repositorySystemSession = session;
 
         // establish the RemoteRepositories
         this.remoteRepositories = new ArrayList<>();
 
         try {
             // determine the Apache Maven Settings
-            final Settings settings;
-            if (Files.exists(settingsPath)) {
-                try (var in = Files.newInputStream(settingsPath)) {
-                    settings = new SettingsStaxReader().read(in);
-                }
-            } else {
-                settings = Settings.newBuilder().build();
-            }
+            final SettingsBuilder settingsBuilder = new DefaultSettingsBuilderFactory().newInstance();
+            final SettingsBuildingRequest settingsBuilderRequest = new DefaultSettingsBuildingRequest();
 
-            // obtain the remote repositories from the active profiles in the settings
+            settingsBuilderRequest.setSystemProperties(System.getProperties());
+            settingsBuilderRequest.setUserSettingsFile(settingsPath.toFile());
+
+            final Settings settings = settingsBuilder.build(settingsBuilderRequest).getEffectiveSettings();
+
+            // obtain the remote repositories from the active plugins in the settings
             settings.getActiveProfiles().stream()
-                .flatMap(name -> settings.getProfiles().stream()
-                    .filter(profile -> name.equals(profile.getId())))
+                .map(name -> settings.getProfilesAsMap().get(name))
+                .filter(Objects::nonNull)
                 .flatMap(profile -> profile.getRepositories().stream())
                 .map(repository -> {
                     final RemoteRepository.Builder builder =
@@ -148,10 +153,7 @@ class MavenFacade {
 
                     // establish the authentication for the repository server
                     final String serverId = repository.getId();
-                    final Server server = settings.getServers().stream()
-                        .filter(s -> serverId.equals(s.getId()))
-                        .findFirst()
-                        .orElse(null);
+                    final Server server = settings.getServer(serverId);
 
                     if (server != null) {
                         final AuthenticationBuilder authenticationBuilder = new AuthenticationBuilder();
@@ -178,7 +180,7 @@ class MavenFacade {
                         "https://repo.maven.apache.org/maven2/").build());
             }
         }
-        catch (final IOException | XMLStreamException e) {
+        catch (final SettingsBuildingException e) {
             this.recorder.warn(e,
                 "Failed to establish settings for Maven.  Defaulting to Maven Central to resolve artifacts");
 

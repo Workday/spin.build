@@ -23,7 +23,8 @@ module build.spin.module.maven {
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.modulesystem;
     // Aether/Maven resolver are implementation details — not exposed in the public API
-    requires maven.api.settings;
+    requires maven.resolver.provider;
+    requires maven.settings.builder;
     requires org.apache.maven.resolver;
     requires org.apache.maven.resolver.supplier;
     requires org.apache.maven.resolver.util;
