@@ -18,15 +18,10 @@
  * #L%
  */
 module build.spin.module.console {
-    requires transitive build.spin.engine;
-
     requires build.base.foundation;
     requires build.base.telemetry;
-    requires build.codemodel.injection;
     requires build.spin;
     requires jakarta.inject;
-    requires java.security.sasl;
-    requires jdk.unsupported;
     requires build.serve.cors;
     requires build.serve.graphql;
     requires build.serve.transport.http;

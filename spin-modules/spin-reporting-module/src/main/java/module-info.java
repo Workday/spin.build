@@ -19,8 +19,6 @@
  */
 
 module build.spin.module.reporting {
-    requires transitive build.spin.engine;
-
     requires build.base.configuration;
     requires build.spin;
     requires build.spin.common;

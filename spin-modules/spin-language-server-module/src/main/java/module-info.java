@@ -19,8 +19,6 @@
  */
 
 module build.spin.module.languageserver {
-    requires transitive build.spin.engine;
-
     requires build.base.foundation;
     requires build.base.telemetry;
     requires build.spin;

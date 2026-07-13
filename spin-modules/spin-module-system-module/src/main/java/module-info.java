@@ -19,8 +19,6 @@
  */
 
 module build.spin.module.modulesystem {
-    requires transitive build.spin.engine;
-
     requires transitive build.base.version;
     requires build.base.foundation;
     requires build.base.io;

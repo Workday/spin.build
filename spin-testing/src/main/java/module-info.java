@@ -20,10 +20,6 @@
 
 module build.spin.testing {
     requires transitive build.spin.engine;
-    // build.spin.module.git is transitive as a convenience so integration tests that use
-    // WorkspaceDiscovery (which discovers git-based workspaces) can resolve git types without
-    // each test module needing its own explicit requires. Not part of the exported API.
-    requires transitive build.spin.module.git;
 
     requires build.base.configuration;
     requires build.base.foundation;
@@ -32,7 +28,6 @@ module build.spin.testing {
     requires build.codemodel.injection;
     requires build.spin;
     requires build.spin.common;
-    requires org.assertj.core;
     requires org.junit.jupiter.api;
 
     exports build.spin.testing;

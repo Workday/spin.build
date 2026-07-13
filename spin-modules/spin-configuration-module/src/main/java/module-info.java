@@ -19,8 +19,6 @@
  */
 
 module build.spin.module.configuration {
-    requires transitive build.spin.engine;
-
     requires build.base.foundation;
     requires build.base.io;
     requires build.base.telemetry;

@@ -19,7 +19,7 @@
  */
 
 module build.spin.module.maven {
-    requires transitive build.spin.engine;
+    requires build.spin.common;
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.modulesystem;
     // Aether/Maven resolver are implementation details — not exposed in the public API
@@ -47,7 +47,6 @@ module build.spin.module.maven {
     requires build.spin;
     requires build.spin.module.clean;
     requires jakarta.inject;
-    requires jakarta.el;
 
     opens build.spin.module.maven to build.codemodel.injection;
 

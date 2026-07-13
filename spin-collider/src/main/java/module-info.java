@@ -28,7 +28,6 @@ module build.spin.collider {
     requires build.spawn.platform.local;
     requires build.spin;
     requires jakarta.inject;
-    requires org.slf4j;
 
     opens build.spin.collider to build.codemodel.injection;
 

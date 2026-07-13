@@ -19,8 +19,6 @@
  */
 
 module build.spin.module.git {
-    requires transitive build.spin.engine;
-
     requires build.spin;
 
     opens build.spin.module.git to build.codemodel.injection;
