@@ -19,7 +19,6 @@
  */
 
 module build.spin.module.checkstyle {
-    requires transitive build.spin.engine;
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.modulesystem;
 

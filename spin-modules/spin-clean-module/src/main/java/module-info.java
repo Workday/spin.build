@@ -19,8 +19,6 @@
  */
 
 module build.spin.module.clean {
-    requires transitive build.spin.engine;
-
     requires build.spin;
     requires jakarta.inject;
 

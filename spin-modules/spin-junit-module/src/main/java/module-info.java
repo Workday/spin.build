@@ -19,7 +19,6 @@
  */
 
 module build.spin.module.junit {
-    requires transitive build.spin.engine;
     requires transitive build.spin.module.clean;
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.modulesystem;

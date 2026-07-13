@@ -22,10 +22,6 @@ module build.spin.application {
     requires transitive build.spin;
     requires transitive build.spin.common;
     requires transitive build.spin.engine;
-    // build.spin.testing is transitive here so that spin-collider (which uses
-    // requires transitive build.spin.application) has the testing framework on
-    // its module path at compile time, enabling self-hosted integration tests.
-    requires transitive build.spin.testing;
     requires transitive build.spin.module.checkstyle;
     requires transitive build.spin.module.clean;
     requires transitive build.spin.module.configuration;
@@ -37,14 +33,12 @@ module build.spin.application {
     requires transitive build.spin.module.maven;
     requires transitive build.spin.module.modulesystem;
     requires transitive build.spin.module.reporting;
-    requires org.slf4j.simple;
 
     requires build.base.commandline;
     requires build.base.configuration;
     requires build.base.foundation;
     requires build.base.option;
     requires build.base.table;
-    requires org.slf4j;
 
     exports build.spin.application;
 

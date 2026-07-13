@@ -20,12 +20,10 @@
 
 @build.base.template.ProcessTemplates
 module build.spin.module.java {
-    requires transitive build.spin.engine;
     requires transitive build.spin.module.clean;
     requires transitive build.spin.module.configuration;
     requires transitive build.spin.module.modulesystem;
 
-    requires build.base.expression;
     requires build.base.flow;
     requires build.base.template;
     requires build.base.foundation;
