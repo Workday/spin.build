@@ -73,7 +73,7 @@ public class ExecMojo extends AbstractMojo {
     /**
      * Fully-qualified main class name (e.g. {@code build.spin.application.Spin}).
      */
-    @Parameter(required = true)
+    @Parameter(property = "spin.exec.mainClass", required = true)
     private String mainClass;
 
     /**
@@ -81,7 +81,7 @@ public class ExecMojo extends AbstractMojo {
      * root for {@link ModuleGraphClassifier#classifyAndResolve} and as the module half of the
      * {@code -m rootModule/mainClass} argument.
      */
-    @Parameter(required = true)
+    @Parameter(property = "spin.exec.rootModule", required = true)
     private String rootModule;
 
     /**
@@ -89,31 +89,31 @@ public class ExecMojo extends AbstractMojo {
      * Use {@code plugin} to classify the plugin's own class realm (for self-hosting builds where
      * the spin jars are loaded as plugin dependencies rather than project dependencies).
      */
-    @Parameter(defaultValue = "runtime")
+    @Parameter(property = "spin.exec.scope", defaultValue = "runtime")
     private String scope;
 
     /**
      * Optional {@code -Xmx} value, e.g. {@code 512m}. Omitted when blank.
      */
-    @Parameter
+    @Parameter(property = "spin.exec.maxHeap")
     private String maxHeap;
 
     /**
      * Extra JVM flags inserted before {@code --module-path} (e.g. {@code --enable-preview}).
      */
-    @Parameter
+    @Parameter(property = "spin.exec.additionalJvmArgs")
     private List<String> additionalJvmArgs;
 
     /**
      * Arguments passed to {@code mainClass} after the {@code -m} flag.
      */
-    @Parameter
+    @Parameter(property = "spin.exec.arguments")
     private List<String> arguments;
 
     /**
      * Working directory for the forked process. Defaults to {@code ${project.basedir}}.
      */
-    @Parameter(defaultValue = "${project.basedir}", required = true)
+    @Parameter(property = "spin.exec.workingDirectory", defaultValue = "${project.basedir}", required = true)
     private File workingDirectory;
 
     @Override
