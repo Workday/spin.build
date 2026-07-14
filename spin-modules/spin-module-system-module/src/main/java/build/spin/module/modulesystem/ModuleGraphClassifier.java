@@ -242,6 +242,13 @@ public final class ModuleGraphClassifier {
                 .ifPresent(resolved::add);
         }
 
+        for (final Path jar : moduleCandidates) {
+            if (!resolved.contains(jar)) {
+                log.accept(String.format(
+                    "Unreachable from root [%s] — pruning to classpath: %s", rootModuleName, jar.getFileName()));
+            }
+        }
+
         final List<Path> modulePath = new ArrayList<>();
         final List<Path> classPath = new ArrayList<>();
         for (final Path jar : candidates) {
@@ -496,15 +503,22 @@ public final class ModuleGraphClassifier {
                 final ModuleDescriptor d = descriptorsByPath.get(p);
                 return d != null && !d.isAutomatic();
             });
+            if (!hasProperModule) {
+                // tier (c): no proper module among the owners — nothing to prefer, demote all
+                log.accept(String.format("  no proper module among owners, demoting all %s",
+                    owners.stream().map(p -> p.getFileName().toString()).toList()));
+                demoted.addAll(owners);
+                continue;
+            }
             for (final Path owner : owners) {
                 final ModuleDescriptor d = descriptorsByPath.get(owner);
                 final boolean isProper = d != null && !d.isAutomatic();
-                if (!hasProperModule || !isProper) {
+                if (!isProper) {
+                    log.accept(String.format("  proper module present, demoting automatic module [%s]",
+                        owner.getFileName()));
                     demoted.add(owner);
                 }
             }
-            // tier (c) is implicit in tier (b) when `hasProperModule == false` —
-            // every owner is demoted.
         }
 
         return new ConflictResolution(superseded, demoted);

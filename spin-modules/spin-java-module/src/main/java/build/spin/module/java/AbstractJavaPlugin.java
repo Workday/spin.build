@@ -164,8 +164,16 @@ public abstract class AbstractJavaPlugin
                                 .resolve(JDKModuleDescriptor.SOURCE_FILENAME))
                             .forEach(moduleInfoPaths::add);
                     } catch (final IOException e) {
-                        // ignored
+                        this.recorder.warn(e,
+                            "Failed to list [%s] while looking for versioned module-info.java files for [%s].",
+                            versions, this.project.name());
                     }
+                }
+
+                if (moduleInfoPaths.size() > 1) {
+                    this.recorder.info(
+                        "[%s] has %d candidate module-info.java files %s — using [%s]",
+                        this.project.name(), moduleInfoPaths.size(), moduleInfoPaths, moduleInfoPaths.get(0));
                 }
 
                 final String normalizedProjectName = this.project.name().replace("-", ".");
