@@ -36,6 +36,7 @@ import jakarta.inject.Inject;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Objects;
@@ -181,8 +182,14 @@ public class ReportingPlugin
 
                 try (BufferedWriter writer = Files.newBufferedWriter(reportPath)) {
                     writer.write(builder.toString());
-                } catch (final java.nio.file.NoSuchFileException ignored) {
+                } catch (final NoSuchFileException ignored) {
                     // build directory was concurrently removed (e.g. by a parallel clean task); skip report
+                } catch (final IOException e) {
+                    if (Files.exists(reportPath.getParent())) {
+                        throw e;
+                    }
+                    // build directory was concurrently removed mid-write, surfacing as a different
+                    // IOException subtype depending on OS/filesystem; skip report
                 }
             }
 
