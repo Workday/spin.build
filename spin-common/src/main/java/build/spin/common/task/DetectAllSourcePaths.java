@@ -24,8 +24,8 @@ import build.base.io.PathSet;
 import build.spin.Task;
 
 /**
- * A {@link Task} that merges declared and annotation-processor generated source root directories
- * into a single {@link PathSet} for use by analysis consumers.
+ * A {@link Task} that merges declared, annotation-processor generated, and externally generated
+ * source root directories into a single {@link PathSet} for use by analysis consumers.
  *
  * <p>Unlike {@link DetectSourcePaths}, this task is safe to use in analysis-only contexts because
  * it never participates in compilation.
@@ -39,12 +39,13 @@ public interface DetectAllSourcePaths
     extends Task<PathSet> {
 
     /**
-     * Creates a {@link PathSet} containing all source root directories for a project — both
-     * declared and annotation-processor generated.
+     * Creates a {@link PathSet} containing all source root directories for a project — declared,
+     * annotation-processor generated, and externally generated.
      *
      * @param declared  the {@link PathSet} of declared source root directories
      * @param generated the {@link PathSet} of annotation-processor generated source root directories
+     * @param external  the {@link PathSet} of externally generated source root directories
      * @return the merged {@link PathSet}
      */
-    PathSet detect(PathSet declared, PathSet generated);
+    PathSet detect(PathSet declared, PathSet generated, PathSet external);
 }

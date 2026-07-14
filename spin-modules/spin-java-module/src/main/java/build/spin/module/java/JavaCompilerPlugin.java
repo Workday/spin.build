@@ -103,6 +103,24 @@ public interface JavaCompilerPlugin
     }
 
     /**
+     * A {@link Task} to detect generated source paths from a prior build, for use as compilation
+     * input.
+     */
+    interface DetectExternalGeneratedSourcePaths
+        extends build.spin.common.task.DetectExternalGeneratedSourcePaths {
+
+    }
+
+    /**
+     * A {@link Task} to detect generated source files under {@link DetectExternalGeneratedSourcePaths}
+     * root directories, for use as compilation input.
+     */
+    interface DetectExternalGeneratedSourceFiles
+        extends build.spin.common.task.DetectExternalGeneratedSourceFiles {
+
+    }
+
+    /**
      * A {@link Task} that merges {@link DetectSourcePaths} and {@link DetectGeneratedSourcePaths}
      * into a single {@link PathSet} of source root directories.
      *

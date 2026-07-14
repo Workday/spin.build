@@ -105,7 +105,8 @@ public class Java25CompilerPlugin
     }
 
     /**
-     * A {@link Task} that merges declared and generated source root directories for analysis consumers.
+     * A {@link Task} that merges declared, generated, and externally generated source root
+     * directories for analysis consumers.
      */
     @Named("detect.all.source.paths")
     public static class DetectAllSourcePaths
@@ -114,8 +115,34 @@ public class Java25CompilerPlugin
 
         @Override
         public PathSet detect(@From(DetectSourcePaths.class) final PathSet declared,
-                              @From(DetectGeneratedSourcePaths.class) final PathSet generated) {
-            return super.detect(declared, generated);
+                              @From(DetectGeneratedSourcePaths.class) final PathSet generated,
+                              @From(DetectExternalGeneratedSourcePaths.class) final PathSet external) {
+            return super.detect(declared, generated, external);
+        }
+    }
+
+    /**
+     * A {@link Task} to detect generated source paths from a prior build, for use as compilation
+     * input.
+     */
+    @Named("detect.external.generated.source.paths")
+    public static class DetectExternalGeneratedSourcePaths
+        extends AbstractDetectExternalGeneratedSourcePaths
+        implements JavaCompilerPlugin.DetectExternalGeneratedSourcePaths {
+
+    }
+
+    /**
+     * A {@link Task} to detect generated source files for use as compilation input.
+     */
+    @Named("detect.external.generated.source.files")
+    public static class DetectExternalGeneratedSourceFiles
+        extends AbstractDetectSourceFiles
+        implements JavaCompilerPlugin.DetectExternalGeneratedSourceFiles {
+
+        @Override
+        public PathSet detect(@From(DetectExternalGeneratedSourcePaths.class) final PathSet pathSet) {
+            return super.detect(pathSet);
         }
     }
 
@@ -181,6 +208,7 @@ public class Java25CompilerPlugin
          * @throws Exception should compilation fail
          */
         public PathSet compile(final @From(DetectSourceFiles.class) PathSet sourceCode,
+                               final @From(DetectExternalGeneratedSourceFiles.class) PathSet externalGeneratedSources,
                                final @From(DetectCompilationResolution.class) CompilationResolution resolution,
                                final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {
@@ -188,7 +216,7 @@ public class Java25CompilerPlugin
             // the path in which to place the compiled classes
             final Path targetPath = buildPath.resolve("main/" + this.target.get());
 
-            return super.compile(sourceCode, resolution, buildPath, targetPath);
+            return super.compile(sourceCode, externalGeneratedSources, resolution, buildPath, targetPath);
         }
     }
 
