@@ -232,6 +232,8 @@ public abstract class AbstractJavaLinker
                     ModuleFinder.ofSystem(),
                     msg -> this.recorder.info("[classify] %s", msg));
             } catch (final IllegalStateException e) {
+                this.recorder.warn("[classify] classifyAndResolve failed (%s) — falling back to classify-only; "
+                    + "unreachable jars will NOT be pruned from the module-path", e.getMessage());
                 classification = ModuleGraphClassifier.classify(
                     candidatePaths,
                     Set.of(rootModule),

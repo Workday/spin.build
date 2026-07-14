@@ -442,7 +442,6 @@ public abstract class AbstractJavaDependencyAnalysis
         for (final var candidate : modulePathCandidates) {
             candidate.path().ifPresent(source -> {
                 if (resolution.superseded().contains(source)) {
-                    // older version duplicate — don't put on classpath or module-path
                     return;
                 }
                 if (resolution.demoted().contains(source)) {

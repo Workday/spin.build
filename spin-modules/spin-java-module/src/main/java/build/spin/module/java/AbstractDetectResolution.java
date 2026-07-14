@@ -185,6 +185,13 @@ public abstract class AbstractDetectResolution
 
             final Version requiredVersion;
             if (moduleVersion.isPresent()) {
+                if (requiresVersion.isPresent() && !requiresVersion.get().equals(moduleVersion.get())) {
+                    this.recorder.warn(
+                        "External require [%s] in [%s] declares version [%s] but the workspace ModuleVersioning "
+                            + "catalog resolved [%s] — using the catalog version",
+                        r.requiresModuleName().toString(), this.project.name(),
+                        requiresVersion.get(), moduleVersion.get());
+                }
                 requiredVersion = moduleVersion.get();
             }
             else if (requiresVersion.isPresent()) {

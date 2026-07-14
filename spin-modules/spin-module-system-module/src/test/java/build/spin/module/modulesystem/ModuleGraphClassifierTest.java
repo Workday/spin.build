@@ -295,6 +295,25 @@ class ModuleGraphClassifierTest {
     }
 
     @Test
+    void resolveConflicts_tierBDemotion_isLogged() throws IOException {
+        final Path proper = properModule("proper.jar", "mod.proper",
+            List.of(), "com/example/Foo.class");
+        final Path automatic = createJar(tempDir.resolve("automatic.jar"), "com/example/Bar.class");
+        final var messages = new ArrayList<String>();
+        ModuleGraphClassifier.resolveConflicts(List.of(proper, automatic), Set.of(), messages::add);
+        assertThat(messages).anyMatch(msg -> msg.contains("automatic.jar"));
+    }
+
+    @Test
+    void resolveConflicts_tierCDemotion_isLogged() throws IOException {
+        final Path jarA = createJar(tempDir.resolve("jarA-1.0.jar"), "com/example/Foo.class");
+        final Path jarB = createJar(tempDir.resolve("jarB-1.0.jar"), "com/example/Bar.class");
+        final var messages = new ArrayList<String>();
+        ModuleGraphClassifier.resolveConflicts(List.of(jarA, jarB), Set.of(), messages::add);
+        assertThat(messages).anyMatch(msg -> msg.contains("demoting all"));
+    }
+
+    @Test
     void resolveConflicts_directoryExplodedModuleParticipatesInConflict() throws IOException {
         // An exploded module (directory with module-info.class) must be recognised by
         // ModuleFinder and participate in split-package analysis.
@@ -448,6 +467,21 @@ class ModuleGraphClassifierTest {
         assertThat(result.modulePath()).containsExactly(root);
         assertThat(result.modulePath())
             .allSatisfy(p -> assertThat(p.getFileName().toString()).endsWith(".jar"));
+    }
+
+    @Test
+    void classifyAndResolve_unreachableJar_isLoggedAndPrunedToClasspath() throws IOException {
+        // "extra" has no package conflict with anything, so resolveConflicts leaves it
+        // alone — it's only pruned because the root doesn't transitively require it.
+        final Path extra = automaticModule("extra.jar", "mod.extra", "com/extra/E.class");
+        final Path root = properModule("root.jar", "my.root", List.of(), "com/root/R.class");
+        final var messages = new ArrayList<String>();
+        final var result = ModuleGraphClassifier.classifyAndResolve(
+            List.of(root, extra), Set.of("my.root"), "my.root",
+            Configuration.empty(), ModuleFinder.ofSystem(), messages::add);
+        assertThat(result.modulePath()).containsExactly(root);
+        assertThat(result.classPath()).containsExactly(extra);
+        assertThat(messages).anyMatch(msg -> msg.contains("Unreachable") && msg.contains("extra.jar"));
     }
 
     @Test
