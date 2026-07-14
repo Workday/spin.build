@@ -74,17 +74,37 @@ public abstract class AbstractDetectGeneratedSourcePaths
         // Maven splits generated sources by processor into subdirectories; each is its own source root.
         // Only fall back to Maven if spin hasn't already produced generated sources.
         if (!usedSpin) {
-            BuildOutputLocations.maven(projectPath, "generated-sources")
-                .filter(Files::isDirectory)
-                .ifPresent(dir -> {
-                    try (Stream<Path> subdirs = Files.list(dir)) {
-                        subdirs.filter(Files::isDirectory).forEach(builder::add);
-                    } catch (final IOException e) {
-                        // best-effort: skip if unreadable
-                    }
-                });
+            addMavenGeneratedSourcePaths(projectPath, builder);
         }
 
         return builder.build();
+    }
+
+    /**
+     * Scans Maven's conventional generated-source location ({@code target/generated-sources/*}), for
+     * use by {@link AbstractDetectExternalGeneratedSourcePaths}. Unlike {@link #detect(Path, String)},
+     * spin's own {@code generated-sources} directory is never included here: it is annotation-processor
+     * output from a prior spin compile, whereas this result is fed into compilation as ordinary source
+     * roots, since nothing else would (re)compile Maven-style generated content.
+     *
+     * @param projectPath the project {@link Path}
+     * @return the {@link PathSet} of generated source root directories
+     */
+    static PathSet detectExternal(final Path projectPath) {
+        final PathSetBuilder builder = PathSetBuilder.create();
+        addMavenGeneratedSourcePaths(projectPath, builder);
+        return builder.build();
+    }
+
+    private static void addMavenGeneratedSourcePaths(final Path projectPath, final PathSetBuilder builder) {
+        BuildOutputLocations.maven(projectPath, "generated-sources")
+            .filter(Files::isDirectory)
+            .ifPresent(dir -> {
+                try (Stream<Path> subdirs = Files.list(dir)) {
+                    subdirs.filter(Files::isDirectory).forEach(builder::add);
+                } catch (final IOException e) {
+                    // best-effort: skip if unreadable
+                }
+            });
     }
 }

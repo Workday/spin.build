@@ -26,8 +26,8 @@ import build.spin.common.task.DetectAllSourcePaths;
 import java.util.stream.Stream;
 
 /**
- * Merges declared and annotation-processor generated source root directories into a single
- * {@link PathSet} for analysis consumers.
+ * Merges declared, annotation-processor generated, and externally generated source root
+ * directories into a single {@link PathSet} for analysis consumers.
  *
  * @author reed.vonredwitz
  * @since May-2026
@@ -36,7 +36,9 @@ public abstract class AbstractDetectAllSourcePaths
     implements DetectAllSourcePaths {
 
     @Override
-    public PathSet detect(final PathSet declared, final PathSet generated) {
-        return Stream.concat(declared.stream(), generated.stream()).collect(PathSet.collector());
+    public PathSet detect(final PathSet declared, final PathSet generated, final PathSet external) {
+        return Stream.of(declared, generated, external)
+            .flatMap(PathSet::stream)
+            .collect(PathSet.collector());
     }
 }

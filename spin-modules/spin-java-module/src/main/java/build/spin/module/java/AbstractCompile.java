@@ -122,6 +122,24 @@ public abstract class AbstractCompile
             this.buildDirectoryName, this.targetDirectoryName);
     }
 
+    /**
+     * Determines whether an annotation processor is active for this compile.
+     *
+     * <p>Generated-source directories detected under Maven's conventional {@code generated-sources/*}
+     * layout cannot be reliably distinguished by name or location alone: they may hold output from an
+     * unrelated external tool (protobuf, ANTLR), or they may hold output from the very annotation
+     * processor active in this compile (e.g. a prior Maven build's run of the same processor). In the
+     * latter case, feeding that directory back in as an explicit source root while the processor is
+     * also active causes it to attempt to recreate a file it already owns
+     * ({@code FilerException: Attempt to recreate a file}). Merging externally-detected sources is
+     * therefore only safe when no annotation processor is active for this compile.
+     *
+     * @return {@code true} if at least one annotation processor module is on the processor path
+     */
+    protected boolean hasAnnotationProcessors() {
+        return !buildProcessorModulePath().isEmpty();
+    }
+
     @Override
     public Stream<Reference> dependencies() {
         final Workspace workspace = this.project.workspace();
@@ -200,7 +218,45 @@ public abstract class AbstractCompile
                               final Path targetPath)
         throws Exception {
 
-        if (sourceCode.isEmpty()) {
+        return compile(sourceCode, PathSet.empty(), resolution, buildPath, targetPath);
+    }
+
+    /**
+     * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path},
+     * merging in externally-generated sources (e.g. protobuf, ANTLR) from a prior build when no
+     * annotation processor is active for this compile.
+     *
+     * @param sourceCode the source code
+     * @param externalGeneratedSources generated source root directories from a prior build; merged
+     *                                 into {@code sourceCode} only when {@link #hasAnnotationProcessors()}
+     *                                 is {@code false}
+     * @param resolution the {@link CompilationResolution} (module-path and classpath)
+     * @param buildPath  the build {@link Path} (.build)
+     * @param targetPath the path in which to place the compiled classes
+     * @return the {@link PathSet} containing the compiled classes
+     * @throws Exception should compilation fail
+     */
+    protected PathSet compile(final PathSet sourceCode,
+                              final PathSet externalGeneratedSources,
+                              final CompilationResolution resolution,
+                              final Path buildPath,
+                              final Path targetPath)
+        throws Exception {
+
+        // resolved once and reused for both the merge decision below and the -processorpath arg
+        final String processorModulePath = buildProcessorModulePath();
+
+        final PathSet effectiveSourceCode;
+        if (externalGeneratedSources.isEmpty() || !processorModulePath.isEmpty()) {
+            effectiveSourceCode = sourceCode;
+        } else {
+            final PathSetBuilder mergedBuilder = PathSetBuilder.create();
+            mergedBuilder.addAll(sourceCode.stream());
+            mergedBuilder.addAll(externalGeneratedSources.stream());
+            effectiveSourceCode = mergedBuilder.build();
+        }
+
+        if (effectiveSourceCode.isEmpty()) {
             this.recorder.diagnostic("Skipping compile for [%s]: no source files", this.project.path());
             return emptySourceResult(targetPath);
         }
@@ -218,7 +274,7 @@ public abstract class AbstractCompile
             .orElse(ModuleVersioning.DEFAULT_VERSION);
 
         final Activity compilation = this.recorder
-            .commence("Compiling %d file(s) for [%s] as [%s] ", sourceCode.size(), this.project.path(), version);
+            .commence("Compiling %d file(s) for [%s] as [%s] ", effectiveSourceCode.size(), this.project.path(), version);
 
         // determine the target location for the compiles classes based on the JDKVersion
         final Path target;
@@ -283,7 +339,7 @@ public abstract class AbstractCompile
             // (e.g. test sources in build.base.foundation while base.foundation is on the module
             // path).  In that case collapse everything onto the classpath so the unnamed module can
             // see all dependencies without JPMS boundaries.
-            final boolean hasModuleInfo = sourceCode.stream()
+            final boolean hasModuleInfo = effectiveSourceCode.stream()
                 .anyMatch(p -> "module-info.java".equals(p.getFileName().toString()));
 
             if (hasModuleInfo) {
@@ -311,7 +367,6 @@ public abstract class AbstractCompile
 
             // add annotation processor modules (+ their full transitive dep closure) to the processor path
             // --processor-module-path is Java 9+; Java 8 uses -processorpath
-            final String processorModulePath = buildProcessorModulePath();
             if (!processorModulePath.isEmpty()) {
                 final String processorFlag = this.javaVersion.isModular() ? "--processor-module-path" : "-processorpath";
                 writer.println(processorFlag + " "
@@ -334,7 +389,7 @@ public abstract class AbstractCompile
                 args.get(this.project).forEach(writer::println));
 
             // lastly include the source code to compile
-            sourceCode.stream()
+            effectiveSourceCode.stream()
                 .peek(path -> this.recorder.diagnostic("Preparing [%s] for compilation", path))
                 .forEach(writer::println);
         }
