@@ -9,9 +9,9 @@ package build.spin.module.modulesystem;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,10 +20,12 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
 import build.base.version.VersionConstraint;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -91,8 +93,28 @@ public interface ModuleCatalog {
      * @param reference the {@link ModuleReference}
      * @return the {@link Optional} {@link Artifact} for the {@link ModuleReference} or
      *          {@link Optional#empty()} if the {@link ModuleReference} is unknown
+     *
+     * @see #getArtifact(ModuleReference, Optional)
      */
     default Optional<Artifact> getArtifact(final ModuleReference reference) {
+        return getArtifact(reference, Optional.empty());
+    }
+
+    /**
+     * Attempts to obtain the {@link Artifact} for a {@link ModuleReference}.
+     * <p>
+     * Should the {@link ModuleReference} match more than one distinct {@link Artifact} (i.e. more than
+     * one registered {@link Artifact.Constraint} is satisfied by the requested version, but they don't
+     * all resolve to the same {@link Artifact}), the first registered {@link Artifact} is kept and, if a
+     * {@link TelemetryRecorder} is supplied, the ambiguity is recorded as a warning.
+     *
+     * @param reference the {@link ModuleReference}
+     * @param recorder  the {@link Optional} {@link TelemetryRecorder} to warn on ambiguous matches
+     * @return the {@link Optional} {@link Artifact} for the {@link ModuleReference} or
+     * {@link Optional#empty()} if the {@link ModuleReference} is unknown
+     */
+    default Optional<Artifact> getArtifact(final ModuleReference reference,
+                                           final Optional<TelemetryRecorder> recorder) {
 
         if (reference == null || reference.version().isEmpty()) {
             return Optional.empty();
@@ -101,10 +123,28 @@ public interface ModuleCatalog {
         final Version version = reference.version()
             .orElseThrow(() -> new MissingModuleVersionException(reference));
 
-        return constraints(reference.name())
+        final List<Artifact.Constraint> matches = constraints(reference.name())
             .filter(constraint -> constraint.contains(version))
-            .findFirst()
-            .map(constraint -> constraint.createArtifact(version));
+            .toList();
+
+        if (matches.isEmpty()) {
+            return Optional.empty();
+        }
+
+        final Artifact artifact = matches.getFirst().createArtifact(version);
+
+        recorder.ifPresent(r -> {
+            final boolean ambiguous = matches.stream().skip(1)
+                .anyMatch(constraint -> !constraint.createArtifact(version).equals(artifact));
+
+            if (ambiguous) {
+                r.warn(
+                    "Module [%s] version [%s] matches multiple distinct Artifact Constraints %s — keeping [%s]",
+                    reference.name(), version, matches, artifact);
+            }
+        });
+
+        return Optional.of(artifact);
     }
 
     /**
