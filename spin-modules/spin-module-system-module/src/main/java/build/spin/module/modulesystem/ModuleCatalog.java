@@ -94,7 +94,7 @@ public interface ModuleCatalog {
      * @return the {@link Optional} {@link Artifact} for the {@link ModuleReference} or
      *          {@link Optional#empty()} if the {@link ModuleReference} is unknown
      *
-     * @see #getArtifact(ModuleReference, Optional<TelemetryRecorder>)
+     * @see #getArtifact(ModuleReference, Optional)
      */
     default Optional<Artifact> getArtifact(final ModuleReference reference) {
         return getArtifact(reference, Optional.empty());

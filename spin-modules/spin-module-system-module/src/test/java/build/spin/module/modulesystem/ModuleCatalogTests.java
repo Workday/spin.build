@@ -33,7 +33,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
- * Verifies that {@link ModuleCatalog#getArtifact(ModuleReference, Optional<TelemetryRecorder>)} keeps the
+ * Verifies that {@link ModuleCatalog#getArtifact(ModuleReference, Optional)} keeps the
  * first registered {@link Artifact}, warning only when a genuinely ambiguous registration (two
  * distinct {@link Artifact}s satisfying the same module name and version) is encountered — as
  * opposed to harmless duplicate/overlapping registrations of the same {@link Artifact}.
