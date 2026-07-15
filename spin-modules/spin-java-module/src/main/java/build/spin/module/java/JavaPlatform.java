@@ -24,6 +24,7 @@ import build.base.foundation.Strings;
 import build.base.foundation.stream.Streams;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
+import build.spawn.jdk.Architecture;
 import build.spawn.jdk.JDK;
 import build.spawn.platform.local.LocalMachine;
 import build.spawn.platform.local.jdk.JDKDetector;
@@ -33,6 +34,8 @@ import jakarta.inject.Inject;
 
 import java.nio.file.FileSystem;
 import java.nio.file.Path;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.Optional;
 import java.util.SortedSet;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -86,13 +89,31 @@ public class JavaPlatform
      * Constructs a {@link JavaPlatform}.
      */
     public JavaPlatform() {
-        // store the discovered JDKs in reverse order
-        // (this is to ensure the "first" major version is always the latest of that version)
+        // store the discovered JDKs in reverse version order
+        // (this is to ensure the "first" major version is always the latest of that version).
+        // Version alone is not a unique key — two JDKs of the same version but built for different
+        // target platforms must both be retained, so platform and home are used as tie-breakers to
+        // stop the set from treating same-version foreign-platform JDKs as duplicates.
         this.javaDevelopmentKits = new ConcurrentSkipListSet<>(
-            (jdk1, jdk2) -> jdk2.version().compareTo(jdk1.version()));
+            Comparator.<JDK, JDKVersion>comparing(JDK::version).reversed()
+                .thenComparing(JDK::operatingSystem)
+                .thenComparing(JDK::architecture)
+                .thenComparing(jdk -> jdk.home().path().toString()));
 
         // discovery of JDKs is deferred until it's actually required
         this.discovered = new AtomicBoolean(false);
+    }
+
+    /**
+     * Constructs a {@link JavaPlatform} pre-populated with the specified {@link JDK}s, bypassing real
+     * discovery. Package-private — intended for tests.
+     *
+     * @param jdks the {@link JDK}s to seed the {@link JavaPlatform} with
+     */
+    JavaPlatform(final Collection<JDK> jdks) {
+        this();
+        this.javaDevelopmentKits.addAll(jdks);
+        this.discovered.set(true);
     }
 
     /**
@@ -115,34 +136,96 @@ public class JavaPlatform
     }
 
     /**
-     * Obtains the highest available {@link JDK} with the specified major version.
+     * Obtains the highest available {@link JDK} with the specified major version, built for the current
+     * host platform.
+     * <p>
+     * Restricted to the host platform because the returned {@link JDK} is intended to be executed
+     * directly (e.g. to run {@code javac}) — a {@link JDK} built for a foreign {@link TargetPlatform}
+     * (e.g. one staged only for cross-target {@code jlink}ing) cannot run on this host at all.
      *
      * @param major the major version
      * @return {@link Optional} {@link JDK}
      */
     public Optional<JDK> getVersion(final int major) {
+        return getVersion(major, hostTarget());
+    }
+
+    /**
+     * Obtains the highest available {@link JDK} with the specified major version, built for the specified
+     * {@link TargetPlatform}.
+     *
+     * @param major  the major version
+     * @param target the required {@link TargetPlatform}
+     * @return {@link Optional} {@link JDK}
+     */
+    public Optional<JDK> getVersion(final int major, final TargetPlatform target) {
         return stream()
             .filter(jdk -> jdk.version().major() == major)
+            .filter(jdk -> matches(jdk, target))
             .findFirst();
     }
 
     /**
-     * Obtains the earliest (lowest version) {@link JDK} available.
+     * Obtains the latest (highest version) {@link JDK} available for the specified {@link TargetPlatform}.
+     *
+     * @param target the required {@link TargetPlatform}
+     * @return {@link Optional} {@link JDK}
+     */
+    public Optional<JDK> getLatest(final TargetPlatform target) {
+        return stream()
+            .filter(jdk -> matches(jdk, target))
+            .findFirst();
+    }
+
+    /**
+     * Obtains the distinct {@link TargetPlatform}s of the available {@link JDK}s, e.g. to generate one
+     * {@code jlink} runtime image per platform a {@link JDK} has been staged for.
+     *
+     * @return a {@link Stream} of {@link TargetPlatform}s
+     */
+    public Stream<TargetPlatform> targets() {
+        return stream()
+            .map(jdk -> new TargetPlatform(jdk.operatingSystem(), jdk.architecture()))
+            .distinct();
+    }
+
+    private static boolean matches(final JDK jdk, final TargetPlatform target) {
+        return jdk.operatingSystem() == target.operatingSystem() && jdk.architecture() == target.architecture();
+    }
+
+    /**
+     * Obtains the {@link TargetPlatform} of the current host, i.e. the platform of the currently
+     * executing Virtual Machine.
+     *
+     * @return the host {@link TargetPlatform}
+     */
+    public static TargetPlatform hostTarget() {
+        return new TargetPlatform(build.spawn.jdk.OperatingSystem.current(), Architecture.current());
+    }
+
+    /**
+     * Obtains the earliest (lowest version) {@link JDK} available for the current host platform.
+     * <p>
+     * Restricted to the host platform — see {@link #getVersion(int)}.
      *
      * @return {@link Optional} {@link JDK}
      */
     public Optional<JDK> getEarliest() {
+        final var host = hostTarget();
         return Streams.reverse(stream())
+            .filter(jdk -> matches(jdk, host))
             .findFirst();
     }
 
     /**
-     * Obtains the latest (highest version) {@link JDK} available.
+     * Obtains the latest (highest version) {@link JDK} available for the current host platform.
+     * <p>
+     * Restricted to the host platform — see {@link #getVersion(int)}.
      *
      * @return {@link Optional} {@link JDK}
      */
     public Optional<JDK> getLatest() {
-        return stream().findFirst();
+        return getLatest(hostTarget());
     }
 
     /**

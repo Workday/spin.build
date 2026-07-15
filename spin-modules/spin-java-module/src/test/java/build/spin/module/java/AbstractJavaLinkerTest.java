@@ -20,6 +20,8 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.spawn.jdk.Architecture;
+import build.spawn.jdk.OperatingSystem;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -36,6 +38,43 @@ class AbstractJavaLinkerTest {
 
     @TempDir
     Path tempDir;
+
+    // --- nativePlatformFor ---
+
+    @Test
+    void nativePlatformFor_mapsKnownOsAndArchToNativeLibDirNames() {
+        final var platform = AbstractJavaLinker.nativePlatformFor(
+            new TargetPlatform(OperatingSystem.LINUX, Architecture.X86_64));
+        assertThat(platform).contains(new AbstractJavaLinker.NativePlatform("Linux", "x86_64"));
+    }
+
+    @Test
+    void nativePlatformFor_mapsMacAarch64() {
+        final var platform = AbstractJavaLinker.nativePlatformFor(
+            new TargetPlatform(OperatingSystem.MAC, Architecture.AARCH64));
+        assertThat(platform).contains(new AbstractJavaLinker.NativePlatform("Mac", "aarch64"));
+    }
+
+    @Test
+    void nativePlatformFor_mapsWindowsX86_64() {
+        final var platform = AbstractJavaLinker.nativePlatformFor(
+            new TargetPlatform(OperatingSystem.WINDOWS, Architecture.X86_64));
+        assertThat(platform).contains(new AbstractJavaLinker.NativePlatform("Windows", "x86_64"));
+    }
+
+    @Test
+    void nativePlatformFor_isEmptyForUnrecognizedOperatingSystem() {
+        final var platform = AbstractJavaLinker.nativePlatformFor(
+            new TargetPlatform(OperatingSystem.OTHER, Architecture.X86_64));
+        assertThat(platform).isEmpty();
+    }
+
+    @Test
+    void nativePlatformFor_isEmptyForUnrecognizedArchitecture() {
+        final var platform = AbstractJavaLinker.nativePlatformFor(
+            new TargetPlatform(OperatingSystem.LINUX, Architecture.OTHER));
+        assertThat(platform).isEmpty();
+    }
 
     // --- nativeOsArch ---
 

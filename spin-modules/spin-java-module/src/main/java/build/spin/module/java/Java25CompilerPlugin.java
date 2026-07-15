@@ -41,6 +41,7 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -280,8 +281,8 @@ public class Java25CompilerPlugin
         extends AbstractJavaLinker {
 
         @Override
-        public Path jlink(final @From(CleanPlugin.CreateBuildPath.class) Path buildPath,
-                          final @From(JavaDependencyAnalysis.class) DependencyAnalysis analysis)
+        public Set<Path> jlink(final @From(CleanPlugin.CreateBuildPath.class) Path buildPath,
+                               final @From(JavaDependencyAnalysis.class) DependencyAnalysis analysis)
             throws Exception {
 
             return super.jlink(buildPath, analysis);

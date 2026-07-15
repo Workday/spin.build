@@ -30,6 +30,7 @@ import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
 import build.spawn.application.option.StandardOutputSubscriber;
+import build.spawn.jdk.JDK;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
@@ -67,7 +68,7 @@ import java.util.zip.ZipOutputStream;
  * @since Jan-2023
  */
 public abstract class AbstractJavaLinker
-    implements Task<Path> {
+    implements Task<Set<Path>> {
 
     @Inject
     private TelemetryRecorder recorder;
@@ -89,38 +90,79 @@ public abstract class AbstractJavaLinker
     private JDKVersion systemJavaVersion;
 
     /**
-     * Execute {@code jlink} on this {@link Project}
+     * Execute {@code jlink} on this {@link Project}, once per {@link TargetPlatform} a {@link JavaPlatform#targets()}
+     * {@link JDK} is available for, i.e. staging a foreign-platform {@link JDK} is sufficient to have a runtime
+     * image generated for it — no explicit target selection is required.
      *
      * @param buildPath the build path for the {@link Project}
      * @param analysis  the {@link DependencyAnalysis} containing information for linking
-     * @return the {@link Path} the path of the {@code jlink} produced Java Runtime
+     * @return the {@link Set} of {@link Path}s of the {@code jlink} produced Java Runtimes, one per target platform
      * @throws Exception should the {@link Task} execution fail
      */
-    public Path jlink(final Path buildPath,
-                      final DependencyAnalysis analysis)
+    public Set<Path> jlink(final Path buildPath,
+                           final DependencyAnalysis analysis)
         throws Exception {
 
         // jlink only makes sense for executable applications. Skip silently for library modules.
         final Optional<String> mainClass = detectMainClass(this.project.path(), this.recorder);
         if (mainClass.isEmpty()) {
             this.recorder.diagnostic("Skipping jlink for [%s]: no main class found", this.project.path());
-            return buildPath;
+            return Set.of();
         }
+
+        final var targets = this.platform.targets().toList();
+        if (targets.isEmpty()) {
+            throw new RuntimeException("No JDKs available for jlink");
+        }
+
+        // the host's own image always lives at the historical flat <packageName>/ path, resolved
+        // dynamically per build host (never hardcoded) — so existing tooling that assumes that path
+        // (e.g. spin's own self-hosting bootstrap) keeps working unmodified on any host platform.
+        // Only additional, non-host targets get namespaced under <packageName>/<os>-<arch>/.
+        final var hostTarget = JavaPlatform.hostTarget();
+
+        final Set<Path> images = new LinkedHashSet<>();
+        for (final var target : targets) {
+            images.add(linkForTarget(buildPath, analysis, mainClass.get(), target, !target.equals(hostTarget)));
+        }
+        return images;
+    }
+
+    private Path linkForTarget(final Path buildPath,
+                               final DependencyAnalysis analysis,
+                               final String mainClass,
+                               final TargetPlatform target,
+                               final boolean namespaceByTarget)
+        throws Exception {
 
         // establish the name of the package and script
         final var packageName = this.project.name();
         final var scriptName = packageName + ".sh";
 
-        // establish the path in which to generate the jlink runtime package
-        final var packagePath = buildPath.resolve(packageName);
+        // establish the path in which to generate the jlink runtime package; namespaced unless this is
+        // the host's own target — see the comment in jlink() above
+        final var packagePath = namespaceByTarget
+            ? buildPath.resolve(packageName).resolve(target.toString())
+            : buildPath.resolve(packageName);
 
         // ------
-        // resolve the JDK to use for linking
-        final var jdk = this.platform.getVersion(this.systemJavaVersion.major())
+        // resolve the JDK whose jmods define the *target* platform's modules.
+        final var targetJdk = this.platform.getVersion(this.systemJavaVersion.major(), target)
+            .or(() -> this.platform.getLatest(target))
+            .orElseThrow(() -> new RuntimeException("No JDK found for target " + target + " and Java "
+                + this.systemJavaVersion.major() + ", and no latest JDK available for that target"));
+        final var targetJavaHome = targetJdk.home().path();
+
+        // resolve the JDK whose jlink binary can actually be *executed* on this host — a jlink binary
+        // built for a foreign target platform (e.g. a different OS or CPU architecture) cannot run here.
+        // jlink treats .jmod files as portable data, so running the host's jlink against a foreign
+        // target's --module-path (below) is how genuine cross-target linking works.
+        final var hostJdk = this.platform.getVersion(this.systemJavaVersion.major())
             .or(this.platform::getLatest)
-            .orElseThrow(() -> new RuntimeException("No JDK found for Java " + this.systemJavaVersion.major() + " and no latest JDK available on platform"));
-        final var javaHome = jdk.home().path();
-        final var jlinkPath = javaHome.resolve("bin/jlink");
+            .orElseThrow(() -> new RuntimeException(
+                "No host-executable JDK found for Java " + this.systemJavaVersion.major()
+                    + " to run jlink with, and no latest host JDK available"));
+        final var jlinkPath = hostJdk.home().path().resolve("bin/jlink");
 
         // Derive the set of module names available in the target JDK by reading the
         // jmods/ directory.  We only need the names for --add-modules filtering; we do
@@ -128,7 +170,7 @@ public abstract class AbstractJavaLinker
         // execution time ("JMOD format not supported at execution time") — .jmod is a
         // link-time-only format.  Filename stripping is sufficient and reliable: the
         // file is always named <module-name>.jmod.
-        final var jmodsDir = javaHome.resolve("jmods");
+        final var jmodsDir = targetJavaHome.resolve("jmods");
         final Set<String> jdkModuleNames;
         if (Files.isDirectory(jmodsDir)) {
             try (var jmodPaths = Files.list(jmodsDir)) {
@@ -155,21 +197,38 @@ public abstract class AbstractJavaLinker
             .filter(jdkModuleNames::contains)  // only include modules that actually exist in this JDK
             .collect(Collectors.joining(","));
 
+        // the host's jlink no longer implicitly resolves platform modules from "itself" the way it did
+        // when jlink was always run from within the target JDK — the target's jmods must be on the
+        // module path explicitly so jlink can find platform modules like java.base for the target
+        final var jlinkModulePath = Files.isDirectory(jmodsDir)
+            ? analysis.modulePath() + java.io.File.pathSeparator + jmodsDir
+            : analysis.modulePath().toString();
+
         final var recordingObserver = new RecordingSubscriber<String>();
         final ErrorCapture captured = new ErrorCapture();
-        try (var jlink = this.machine.launch(Application.class,
+
+        // jlink's --strip-debug shells out to the host's native objcopy, which can't parse a foreign
+        // target's binaries (e.g. running x86_64 objcopy against aarch64 or Mach-O native libraries) —
+        // only strip when linking the host's own target
+        final List<build.base.configuration.Option> jlinkOptions = new ArrayList<>(List.of(
             Executable.of(jlinkPath.toString()),
             Name.of("jlink"),
-            Argument.of("--module-path"), Argument.of(analysis.modulePath()),
+            Argument.of("--module-path"), Argument.of(jlinkModulePath),
             Argument.of("--output"), Argument.of(packagePath),
-            Argument.of("--add-modules"), Argument.of(moduleNames),
-            Argument.of("--strip-debug"),
+            Argument.of("--add-modules"), Argument.of(moduleNames)));
+        if (!namespaceByTarget) {
+            jlinkOptions.add(Argument.of("--strip-debug"));
+        }
+        jlinkOptions.addAll(List.of(
             Argument.of("--no-header-files"),
             Argument.of("--no-man-pages"),
             Argument.of("--compress"), Argument.of("zip-6"),
             Argument.of("--vm"), Argument.of("server"),
             StandardOutputSubscriber.of(recordingObserver),
-            captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error))) {
+            captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)));
+
+        try (var jlink = this.machine.launch(Application.class,
+            jlinkOptions.toArray(build.base.configuration.Option[]::new))) {
 
             try {
                 jlink.onExit().get();
@@ -241,21 +300,21 @@ public abstract class AbstractJavaLinker
             }
             final Set<Path> modulePathJars = new LinkedHashSet<>(classification.modulePath());
 
-            final var nativePlatform = currentNativePlatform();
+            final var nativePlatform = nativePlatformFor(target);
             final List<Path> classPathTargets = new ArrayList<>();
             for (final var source : candidatePaths) {
                 final var targetDir = modulePathJars.contains(source) ? modulePath : classPathDir;
-                final var target = targetDir.resolve(source.getFileName());
-                Files.copy(source, target);
+                final var destination = targetDir.resolve(source.getFileName());
+                Files.copy(source, destination);
                 if (nativePlatform.isPresent()) {
                     final var p = nativePlatform.get();
-                    if (stripForeignNatives(target, p.osDir(), p.archDir())) {
+                    if (stripForeignNatives(destination, p.osDir(), p.archDir())) {
                         this.recorder.info("[jlink] stripped foreign native platforms from %s (kept %s/%s)",
-                            target.getFileName(), p.osDir(), p.archDir());
+                            destination.getFileName(), p.osDir(), p.archDir());
                     }
                 }
                 if (targetDir == classPathDir) {
-                    classPathTargets.add(target);
+                    classPathTargets.add(destination);
                 }
             }
 
@@ -270,14 +329,14 @@ public abstract class AbstractJavaLinker
                 .collect(Collectors.joining(":"));
 
             try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
-                new ScriptTemplate(classPath, rootModule, mainClass.get(), packageName).render(new TextOut(writer));
+                new ScriptTemplate(classPath, rootModule, mainClass, packageName).render(new TextOut(writer));
             }
 
             // make the script executable
             scriptPath.resolve(scriptName).toFile().setExecutable(true);
         }
 
-        return jlinkPath;
+        return packagePath;
     }
 
     private static Optional<String> detectMainClass(final Path projectPath,
@@ -320,43 +379,28 @@ public abstract class AbstractJavaLinker
         return name.toString();
     }
 
-    private record NativePlatform(String osDir, String archDir) {
+    record NativePlatform(String osDir, String archDir) {
     }
 
-    private static Optional<NativePlatform> currentNativePlatform() {
-        // java.lang.System is used explicitly — `System` alone resolves to the @System annotation import.
-        final var osName = java.lang.System.getProperty("os.name", "").toLowerCase();
-        final var osArch = java.lang.System.getProperty("os.arch", "").toLowerCase();
-
-        final String osDir;
-        if (osName.contains("mac")) {
-            osDir = "Mac";
-        } else if (osName.contains("linux")) {
-            osDir = "Linux";
-        } else if (osName.contains("windows")) {
-            osDir = "Windows";
-        } else if (osName.contains("freebsd")) {
-            osDir = "FreeBSD";
-        } else if (osName.contains("sunos")) {
-            osDir = "SunOS";
-        } else if (osName.contains("aix")) {
-            osDir = "AIX";
-        } else {
+    static Optional<NativePlatform> nativePlatformFor(final TargetPlatform target) {
+        final String osDir = switch (target.operatingSystem()) {
+            case MAC -> "Mac";
+            case LINUX -> "Linux";
+            case WINDOWS -> "Windows";
+            case OTHER -> null;
+        };
+        if (osDir == null) {
             return Optional.empty();
         }
 
-        final String archDir = switch (osArch) {
-            case "aarch64", "arm64" -> "aarch64";
-            case "x86_64", "amd64" -> "x86_64";
-            case "x86", "i386", "i486", "i586", "i686" -> "x86";
-            case "ppc64le" -> "ppc64le";
-            case "ppc64" -> "ppc64";
-            case "ppc" -> "ppc";
-            case "s390x" -> "s390x";
-            case "riscv64" -> "riscv64";
-            case "loongarch64" -> "loongarch64";
-            default -> osArch;
+        final String archDir = switch (target.architecture()) {
+            case AARCH64 -> "aarch64";
+            case X86_64 -> "x86_64";
+            case OTHER -> null;
         };
+        if (archDir == null) {
+            return Optional.empty();
+        }
 
         return Optional.of(new NativePlatform(osDir, archDir));
     }

@@ -11,3 +11,5 @@ target/
 
 .test-all-logs/
 .fixture-logs/
+
+.worktrees/
