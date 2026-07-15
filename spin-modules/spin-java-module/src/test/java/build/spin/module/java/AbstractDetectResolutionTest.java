@@ -126,7 +126,7 @@ class AbstractDetectResolutionTest {
         final Path older = repo.resolve("io/helidon/grpc/grpc-core/1.0/grpc-core-1.0.jar");
         final Path newer = repo.resolve("io/helidon/grpc/grpc-core/2.0/grpc-core-2.0.jar");
 
-        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(older, newer)))
+        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(older, newer), recorder()))
             .containsExactly(newer);
     }
 
@@ -136,7 +136,7 @@ class AbstractDetectResolutionTest {
         final Path grpc = repo.resolve("io/helidon/grpc/grpc-core/1.0/grpc-core-1.0.jar");
         final Path protobuf = repo.resolve("com/google/protobuf/protobuf-java/3.0/protobuf-java-3.0.jar");
 
-        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(grpc, protobuf)))
+        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(grpc, protobuf), recorder()))
             .containsExactly(grpc, protobuf);
     }
 
@@ -194,7 +194,7 @@ class AbstractDetectResolutionTest {
         final Path milestone = repo.resolve("io/helidon/grpc/grpc-core/1.0-milestone/grpc-core-1.0-milestone.jar");
         final Path releaseCandidate = repo.resolve("io/helidon/grpc/grpc-core/1.0-cr/grpc-core-1.0-cr.jar");
 
-        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(milestone, releaseCandidate)))
+        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(milestone, releaseCandidate), recorder()))
             .containsExactly(releaseCandidate);
     }
 

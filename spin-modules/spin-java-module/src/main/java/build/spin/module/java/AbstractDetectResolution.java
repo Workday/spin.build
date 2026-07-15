@@ -260,7 +260,8 @@ public abstract class AbstractDetectResolution
         // graphql-java/grpc/protobuf, while a Helidon dependency transitively pulls in the older
         // versions pinned by Helidon's own BOM). Without this, both versions land on the
         // classpath/module-path together and javac non-deterministically picks the wrong one.
-        final List<Path> dedupedExternalCandidates = dedupeByMavenCoordinate(versionCorrectedCandidates);
+        final List<Path> dedupedExternalCandidates =
+            dedupeByMavenCoordinate(versionCorrectedCandidates, this.recorder);
 
         // Step 3 — Classify all candidates via ModuleGraphClassifier.
         final List<Path> candidates = new ArrayList<>();
@@ -330,7 +331,7 @@ public abstract class AbstractDetectResolution
 
         while (!worklist.isEmpty()) {
             final Path path = worklist.poll();
-            final Optional<String> moduleName = moduleNameOf(path);
+            final Optional<String> moduleName = moduleNameOf(path, recorder);
 
             if (moduleName.isEmpty()) {
                 corrected.add(path);
@@ -381,6 +382,9 @@ public abstract class AbstractDetectResolution
                 corrected.add(path);
             }
             else {
+                recorder.warn(
+                    "Module [%s] on-disk version [%s] diverges from workspace pin [%s] — correcting",
+                    moduleName.get(), onDiskVersion.get(), pinnedVersion.get());
                 // re-queue the newly resolved paths so their own pins are checked too, achieving a
                 // fixed point rather than a single correction pass
                 resolved.ifPresent(worklist::addAll);
@@ -405,11 +409,12 @@ public abstract class AbstractDetectResolution
      * ranks them rather than lexicographically.
      *
      * @param paths the resolved artifact {@link Path}s to dedupe
+     * @param recorder the {@link TelemetryRecorder} for diagnostics
      *
      * @return the deduped {@link Path}s, in first-seen order
      */
     // Visible for testing.
-    static List<Path> dedupeByMavenCoordinate(final List<Path> paths) {
+    static List<Path> dedupeByMavenCoordinate(final List<Path> paths, final TelemetryRecorder recorder) {
 
         final LinkedHashMap<Path, Path> byCoordinate = new LinkedHashMap<>();
         final LinkedHashMap<Path, Version> versionByCoordinate = new LinkedHashMap<>();
@@ -433,22 +438,37 @@ public abstract class AbstractDetectResolution
             }
 
             final Version existingVersion = versionByCoordinate.get(artifactDir);
-            if (existingVersion == null || VersionOrder.MAVEN.compare(version.get(), existingVersion) > 0) {
+            if (existingVersion == null) {
                 byCoordinate.put(artifactDir, path);
                 versionByCoordinate.put(artifactDir, version.get());
+            }
+            else if (VersionOrder.MAVEN.compare(version.get(), existingVersion) > 0) {
+                recorder.warn(
+                    "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — "
+                        + "keeping [%s]",
+                    artifactDir, existingVersion, version.get(), version.get());
+                byCoordinate.put(artifactDir, path);
+                versionByCoordinate.put(artifactDir, version.get());
+            }
+            else {
+                recorder.warn(
+                    "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — "
+                        + "keeping [%s]",
+                    artifactDir, existingVersion, version.get(), existingVersion);
             }
         }
 
         return new ArrayList<>(byCoordinate.values());
     }
 
-    private static Optional<String> moduleNameOf(final Path path) {
+    private static Optional<String> moduleNameOf(final Path path, final TelemetryRecorder recorder) {
         try {
             return ModuleFinder.of(path).findAll().stream()
                 .findFirst()
                 .map(ref -> ref.descriptor().name());
         }
         catch (final RuntimeException e) {
+            recorder.warn(e, "Failed to derive a module name for candidate [%s] — treating as unnamed", path);
             return Optional.empty();
         }
     }
