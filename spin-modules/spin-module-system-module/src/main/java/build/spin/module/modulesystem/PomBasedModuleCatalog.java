@@ -118,7 +118,7 @@ public class PomBasedModuleCatalog
 
     @Override
     public Optional<Artifact> getArtifact(final ModuleReference reference) {
-        final Optional<Artifact> found = this.catalog.getArtifact(reference);
+        final Optional<Artifact> found = this.catalog.getArtifact(reference, Optional.of(this.recorder));
         if (found.isPresent() || reference.version().isEmpty()) {
             return found;
         }
