@@ -26,13 +26,23 @@ import build.codemodel.jdk.JDKCodeModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.attribute.ModuleAttribute;
+import java.lang.constant.ModuleDesc;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.jar.Attributes;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /**
  * Tests for {@link PomWorkspaceWalker}. Uses a simple collecting visitor to verify which
@@ -600,6 +610,518 @@ class PomWorkspaceWalkerTests {
     }
 
     // -------------------------------------------------------------------------
+    // ground-truth module names take priority over derived heuristics
+    // -------------------------------------------------------------------------
+
+    @Test
+    void walk_registersOnlyAutomaticModuleNameForDependencyExclusively(@TempDir final Path workspace,
+                                                                       @TempDir final Path localRepo) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>io.helidon.config</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>io.helidon.config</groupId>
+                  <artifactId>helidon-config-metadata</artifactId>
+                  <version>3.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        automaticModuleJar(
+            localRepo.resolve("io/helidon/config/helidon-config-metadata/3.0.0"
+                + "/helidon-config-metadata-3.0.0.jar"),
+            "io.helidon.config.metadata");
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        // only the manifest's Automatic-Module-Name is registered — not the groupId, and not any
+        // of the derived heuristic names that would otherwise let this artifact claim a name
+        // (e.g. io.helidon.config, which really belongs to a sibling artifact)
+        assertThat(visitor.forCoordinate("io.helidon.config", "helidon-config-metadata").names)
+            .containsExactly("io.helidon.config.metadata");
+    }
+
+    @Test
+    void walk_registersOnlyNamedModuleNameForDependencyExclusively(@TempDir final Path workspace,
+                                                                   @TempDir final Path localRepo) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>com.example</groupId>
+                  <artifactId>example-thing</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        namedModuleJar(
+            localRepo.resolve("com/example/example-thing/1.0.0/example-thing-1.0.0.jar"),
+            "com.example.totally.custom");
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.forCoordinate("com.example", "example-thing").names)
+            .containsExactly("com.example.totally.custom");
+    }
+
+    @Test
+    void walk_prefersNamedModuleNameOverAutomaticModuleNameForDependency(@TempDir final Path workspace,
+                                                                        @TempDir final Path localRepo) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>com.example</groupId>
+                  <artifactId>example-thing</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final Path jar = localRepo.resolve("com/example/example-thing/1.0.0/example-thing-1.0.0.jar");
+        Files.createDirectories(jar.getParent());
+        final Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().putValue("Automatic-Module-Name", "com.example.automatic.guess");
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            jos.putNextEntry(new JarEntry("module-info.class"));
+            jos.write(moduleInfoBytes("com.example.named.module"));
+            jos.closeEntry();
+        }
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.forCoordinate("com.example", "example-thing").names)
+            .containsExactly("com.example.named.module");
+    }
+
+    // -------------------------------------------------------------------------
+    // ${project.groupId} / ${project.version} self-reference resolution
+    // -------------------------------------------------------------------------
+
+    @Test
+    void walk_resolvesProjectSelfReferencesInSubmoduleDependency(@TempDir final Path workspace) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+            </project>
+            """);
+
+        final Path submodule = Files.createDirectory(workspace.resolve("sub"));
+        writePom(submodule.resolve("pom.xml"), """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>root</artifactId>
+                <version>1.0.0</version>
+              </parent>
+              <groupId>com.acme.sub</groupId>
+              <artifactId>sub</artifactId>
+              <version>2.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>${project.groupId}</groupId>
+                  <artifactId>sibling-artifact</artifactId>
+                  <version>${project.version}</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+
+        // ${project.groupId}/${project.version} must resolve against the submodule's OWN
+        // coordinates (com.acme.sub:2.0.0), not the parent's (com.example:1.0.0)
+        assertThat(visitor.forCoordinate("com.acme.sub", "sibling-artifact").version).isEqualTo("2.0.0");
+    }
+
+    @Test
+    void walk_mergesBomImportDeclaredInTheWorkspaceRootPomItself(@TempDir final Path workspace,
+                                                                 @TempDir final Path localRepo) throws Exception {
+        // The most common real-world case: a company aggregator root pom imports a BOM to manage
+        // versions centrally for all its submodules -- not a BOM imported by some external
+        // dependency's own pom fetched from the local repo during BFS.
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>com.example.bom</groupId>
+                    <artifactId>some-bom</artifactId>
+                    <version>1.0.0</version>
+                    <type>pom</type>
+                    <scope>import</scope>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final Path bomDir = localRepo.resolve("com/example/bom/some-bom/1.0.0");
+        Files.createDirectories(bomDir);
+        writePom(bomDir.resolve("some-bom-1.0.0.pom"), """
+            <project>
+              <groupId>com.example.bom</groupId>
+              <artifactId>some-bom</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>0.22.1</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final Path submodule = Files.createDirectory(workspace.resolve("sub"));
+        writePom(submodule.resolve("pom.xml"), """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>root</artifactId>
+                <version>1.0.0</version>
+              </parent>
+              <artifactId>sub</artifactId>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-marshalling</artifactId>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
+    }
+
+    @Test
+    void walk_neverRevisitsAWorkspaceModuleAsADependency(@TempDir final Path workspace,
+                                                         @TempDir final Path localRepo) throws Exception {
+        // A workspace module that is also depended on by a sibling must be visited exactly once,
+        // via visitSelf (current module-info.java) -- never a second time via the dependency BFS,
+        // where a stale jar left over in the local repo (e.g. from before a module rename) could
+        // otherwise register it under a name that no longer reflects its real source.
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencies>
+                <dependency>
+                  <groupId>com.example</groupId>
+                  <artifactId>b-module</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final Path bDir = Files.createDirectory(workspace.resolve("b-module"));
+        Files.createDirectories(bDir.resolve("src/main/java"));
+        writePom(bDir.resolve("pom.xml"), """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>root</artifactId>
+                <version>1.0.0</version>
+              </parent>
+              <artifactId>b-module</artifactId>
+            </project>
+            """);
+        Files.writeString(bDir.resolve("src/main/java/module-info.java"), "module com.example.b.current {\n}\n");
+
+        // simulate a stale jar for b-module already installed in the local repo from before a rename
+        namedModuleJar(
+            localRepo.resolve("com/example/b-module/1.0.0/b-module-1.0.0.jar"),
+            "com.example.b.stale.old.name");
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.visits.stream()
+            .filter(v -> v.groupId().equals("com.example") && v.artifactId().equals("b-module"))
+            .count())
+            .isEqualTo(1);
+        assertThat(visitor.forCoordinate("com.example", "b-module").names)
+            .containsExactly("com.example.b.current");
+    }
+
+    @Test
+    void walk_warnsWhenSiblingDependencyVersionDisagreesWithWorkspaceModuleVersion(
+            @TempDir final Path workspace) throws Exception {
+        // Since a workspace module's dependency edge is deliberately not walked (its own pom's
+        // version always wins), a mismatched version declared by a sibling would otherwise be
+        // completely invisible -- this must be surfaced instead.
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencies>
+                <dependency>
+                  <groupId>com.example</groupId>
+                  <artifactId>b-module</artifactId>
+                  <version>9.9.9</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        writePom(Files.createDirectory(workspace.resolve("b-module")).resolve("pom.xml"), """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>root</artifactId>
+                <version>1.0.0</version>
+              </parent>
+              <artifactId>b-module</artifactId>
+              <version>1.0.0</version>
+            </project>
+            """);
+
+        final TelemetryRecorder recorder = mock(TelemetryRecorder.class);
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), recorder, CODE_MODEL, new CollectingVisitor());
+
+        verify(recorder).warn(anyString(), eq("com.example"), eq("b-module"), eq("9.9.9"), eq("1.0.0"));
+    }
+
+    @Test
+    void walk_resolvesProjectSelfReferencesInDependencyManagementEntry(@TempDir final Path workspace) throws Exception {
+        // BOMs commonly list their own sibling modules in dependencyManagement using
+        // ${project.groupId}/${project.version} instead of naming themselves literally.
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.acme.sub</groupId>
+              <artifactId>root</artifactId>
+              <version>3.0.0</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>managed-sibling</artifactId>
+                    <version>${project.version}</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final Path submodule = Files.createDirectory(workspace.resolve("sub"));
+        writePom(submodule.resolve("pom.xml"), """
+            <project>
+              <parent>
+                <groupId>com.acme.sub</groupId>
+                <artifactId>root</artifactId>
+                <version>3.0.0</version>
+              </parent>
+              <artifactId>sub</artifactId>
+              <dependencies>
+                <dependency>
+                  <groupId>com.acme.sub</groupId>
+                  <artifactId>managed-sibling</artifactId>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.forCoordinate("com.acme.sub", "managed-sibling").version).isEqualTo("3.0.0");
+    }
+
+    // -------------------------------------------------------------------------
+    // <scope>import</scope> BOM dependencyManagement merging
+    // -------------------------------------------------------------------------
+
+    @Test
+    void walk_mergesImportedBomDependencyManagementForTransitiveDependency(@TempDir final Path workspace,
+                                                                           @TempDir final Path localRepo) throws Exception {
+        // the BOM import merge only happens when readDependencyManagement is given a localRepo, which
+        // is only true for poms fetched during the Phase 2 BFS -- so the consumer pom whose
+        // dependencyManagement imports the BOM must itself live in the local repo, not the workspace.
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.example</groupId>
+                  <artifactId>consumer</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final Path bomDir = localRepo.resolve("com/example/bom/some-bom/1.0.0");
+        Files.createDirectories(bomDir);
+        writePom(bomDir.resolve("some-bom-1.0.0.pom"), """
+            <project>
+              <groupId>com.example.bom</groupId>
+              <artifactId>some-bom</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>0.22.1</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final Path consumerDir = localRepo.resolve("build/example/consumer/1.0.0");
+        Files.createDirectories(consumerDir);
+        writePom(consumerDir.resolve("consumer-1.0.0.pom"), """
+            <project>
+              <groupId>build.example</groupId>
+              <artifactId>consumer</artifactId>
+              <version>1.0.0</version>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>com.example.bom</groupId>
+                    <artifactId>some-bom</artifactId>
+                    <version>1.0.0</version>
+                    <type>pom</type>
+                    <scope>import</scope>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-marshalling</artifactId>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        // base-marshalling has no literal version in consumer's pom -- it is only resolvable
+        // because the imported BOM's dependencyManagement entry was merged in
+        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
+    }
+
+    @Test
+    void walk_literalDependencyManagementEntryWinsOverImportedBomEntry(@TempDir final Path workspace,
+                                                                       @TempDir final Path localRepo) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.example</groupId>
+                  <artifactId>consumer</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final Path bomDir = localRepo.resolve("com/example/bom/some-bom/1.0.0");
+        Files.createDirectories(bomDir);
+        writePom(bomDir.resolve("some-bom-1.0.0.pom"), """
+            <project>
+              <groupId>com.example.bom</groupId>
+              <artifactId>some-bom</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>0.22.1</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final Path consumerDir = localRepo.resolve("build/example/consumer/1.0.0");
+        Files.createDirectories(consumerDir);
+        writePom(consumerDir.resolve("consumer-1.0.0.pom"), """
+            <project>
+              <groupId>build.example</groupId>
+              <artifactId>consumer</artifactId>
+              <version>1.0.0</version>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>0.99.0</version>
+                  </dependency>
+                  <dependency>
+                    <groupId>com.example.bom</groupId>
+                    <artifactId>some-bom</artifactId>
+                    <version>1.0.0</version>
+                    <type>pom</type>
+                    <scope>import</scope>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-marshalling</artifactId>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        // consumer's own literal entry (0.99.0) must win over the imported BOM's (0.22.1)
+        assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.99.0");
+    }
+
+    // -------------------------------------------------------------------------
     // helpers
     // -------------------------------------------------------------------------
 
@@ -608,6 +1130,30 @@ class PomWorkspaceWalkerTests {
      */
     private static Path missingRepo(final Path workspace) {
         return workspace.resolve("__no_repo__");
+    }
+
+    private static void automaticModuleJar(final Path jarPath, final String automaticModuleName) throws Exception {
+        Files.createDirectories(jarPath.getParent());
+        final Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().putValue("Automatic-Module-Name", automaticModuleName);
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jarPath), manifest)) {
+            // empty jar body — the manifest attribute alone is enough for readAutomaticModuleName
+        }
+    }
+
+    private static void namedModuleJar(final Path jarPath, final String moduleName) throws Exception {
+        Files.createDirectories(jarPath.getParent());
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jos.putNextEntry(new JarEntry("module-info.class"));
+            jos.write(moduleInfoBytes(moduleName));
+            jos.closeEntry();
+        }
+    }
+
+    private static byte[] moduleInfoBytes(final String moduleName) {
+        return ClassFile.of().buildModule(
+            ModuleAttribute.of(ModuleDesc.of(moduleName), mb -> mb.requires(ModuleDesc.of("java.base"), 0, null)));
     }
 
     private static void writePom(final Path path, final String content) throws Exception {

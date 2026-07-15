@@ -20,6 +20,7 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.telemetry.TelemetryRecorder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.w3c.dom.Element;
@@ -35,6 +36,11 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /**
  * Targeted unit tests for {@link PomXmlUtils}. Most behavior is exercised at the walker level
@@ -168,6 +174,126 @@ class PomXmlUtilsTests {
         assertThat(coord[0]).isEqualTo("build.spin.module");
         assertThat(coord[1]).isEqualTo("spin-clean-module");
         assertThat(coord[2]).isEqualTo("0.1.0");
+    }
+
+    @Test
+    void findJarByModuleName_findsJarUnderFullModuleNameWhenModuleNameEqualsGroupIdVerbatim(
+            @TempDir final Path repo) throws Exception {
+        // Helidon convention: io.helidon.config:helidon-config has module name "io.helidon.config" --
+        // identical to its own groupId, with no "extra" suffix segment. The stripped-groupId
+        // candidates from the first pass (groupId=io.helidon, extra=config) never find a jar because
+        // no such jar exists under io/helidon/ -- only under the unstripped io/helidon/config/ path.
+        final Path jarDir = repo.resolve("io/helidon/config/helidon-config/1.0.0");
+        Files.createDirectories(jarDir);
+        Files.createFile(jarDir.resolve("helidon-config-1.0.0.jar"));
+
+        final String[] coord = PomXmlUtils.findJarByModuleName("io.helidon.config", "1.0.0", repo).orElseThrow();
+        assertThat(coord[0]).isEqualTo("io.helidon.config");
+        assertThat(coord[1]).isEqualTo("helidon-config");
+        assertThat(coord[2]).isEqualTo("1.0.0");
+    }
+
+    // -------------------------------------------------------------------------
+    // readDependencyManagement — plain property-referenced version, no self-reference involved
+    // -------------------------------------------------------------------------
+
+    @Test
+    void readDependencyManagement_resolvesPlainPropertyReferencedVersion(@TempDir final Path dir) throws Exception {
+        final Path pom = dir.resolve("pom.xml");
+        Files.writeString(pom, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <properties>
+                <base.version>0.22.1</base.version>
+              </properties>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>${base.version}</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final DocumentBuilder builder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
+        final Map<String, String> properties = PomXmlUtils.readProperties(builder, pom);
+        final Map<String, String> dm = PomXmlUtils.readDependencyManagement(builder, pom, properties);
+
+        assertThat(dm).containsEntry("build.base:base-marshalling", "0.22.1");
+    }
+
+    @Test
+    void readDependencyManagement_oneFailingBomImportDoesNotAbortLaterImports(
+            @TempDir final Path dir, @TempDir final Path repo) throws Exception {
+        // a failure merging one <scope>import</scope> BOM must not prevent later imports in the
+        // same dependencyManagement from being merged -- each import is independent.
+        final Path pom = dir.resolve("pom.xml");
+        Files.writeString(pom, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>com.example.bom</groupId>
+                    <artifactId>bad-bom</artifactId>
+                    <version>1.0.0</version>
+                    <type>pom</type>
+                    <scope>import</scope>
+                  </dependency>
+                  <dependency>
+                    <groupId>com.example.bom</groupId>
+                    <artifactId>good-bom</artifactId>
+                    <version>1.0.0</version>
+                    <type>pom</type>
+                    <scope>import</scope>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final Path badBomDir = repo.resolve("com/example/bom/bad-bom/1.0.0");
+        Files.createDirectories(badBomDir);
+        // malformed XML -- readProperties/parse will throw for this import
+        Files.writeString(badBomDir.resolve("bad-bom-1.0.0.pom"), "<project><this is not valid xml");
+
+        final Path goodBomDir = repo.resolve("com/example/bom/good-bom/1.0.0");
+        Files.createDirectories(goodBomDir);
+        Files.writeString(goodBomDir.resolve("good-bom-1.0.0.pom"), """
+            <project>
+              <groupId>com.example.bom</groupId>
+              <artifactId>good-bom</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>0.22.1</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final DocumentBuilder builder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
+        final Map<String, String> properties = PomXmlUtils.readProperties(builder, pom);
+        final TelemetryRecorder recorder = mock(TelemetryRecorder.class);
+        final Map<String, String> dm =
+            PomXmlUtils.readDependencyManagement(builder, pom, properties, repo, recorder);
+
+        assertThat(dm).containsEntry("build.base:base-marshalling", "0.22.1");
+        // the failure merging bad-bom must not be entirely invisible either
+        verify(recorder).warn(any(Exception.class), anyString(),
+            eq("com.example.bom"), eq("bad-bom"), eq("1.0.0"));
     }
 
     // -------------------------------------------------------------------------
