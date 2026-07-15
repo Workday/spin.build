@@ -93,7 +93,7 @@ final class PomWorkspaceWalker {
             // common case of a company aggregator centrally managing versions -- actually resolve,
             // since dependencyManagement import-merging only fires when a localRepo is supplied.
             final Map<String, String> rootDm =
-                PomXmlUtils.readDependencyManagement(builder, rootPom, rootProperties, localRepo);
+                PomXmlUtils.readDependencyManagement(builder, rootPom, rootProperties, localRepo, recorder);
 
             // visited keyed by "groupId:artifactId" to avoid re-processing
             final Set<String> visited = new HashSet<>();
@@ -148,7 +148,8 @@ final class PomWorkspaceWalker {
                             final Map<String, String> pomProperties =
                                 PomXmlUtils.readProperties(builder, pomPath);
                             final Map<String, String> pomDm =
-                                PomXmlUtils.readDependencyManagement(builder, pomPath, pomProperties, localRepo);
+                                PomXmlUtils.readDependencyManagement(
+                                    builder, pomPath, pomProperties, localRepo, recorder);
                             PomXmlUtils.readRawDependencies(builder, pomPath, pomProperties, pomDm)
                                 .stream()
                                 .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))

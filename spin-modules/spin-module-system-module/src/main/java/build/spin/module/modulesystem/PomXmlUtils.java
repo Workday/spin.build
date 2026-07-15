@@ -20,6 +20,7 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
+import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import org.w3c.dom.Document;
@@ -558,21 +559,24 @@ class PomXmlUtils {
     static Map<String, String> readDependencyManagement(final DocumentBuilder builder,
                                                         final Path pomPath,
                                                         final Map<String, String> properties) {
-        return readDependencyManagement(builder, pomPath, properties, Optional.empty(), 0);
+        return readDependencyManagement(builder, pomPath, properties, Optional.empty(), 0, Optional.empty());
     }
 
     static Map<String, String> readDependencyManagement(final DocumentBuilder builder,
                                                         final Path pomPath,
                                                         final Map<String, String> properties,
-                                                        final Path localRepo) {
-        return readDependencyManagement(builder, pomPath, properties, Optional.of(localRepo), 0);
+                                                        final Path localRepo,
+                                                        final TelemetryRecorder recorder) {
+        return readDependencyManagement(
+            builder, pomPath, properties, Optional.of(localRepo), 0, Optional.of(recorder));
     }
 
     private static Map<String, String> readDependencyManagement(final DocumentBuilder builder,
                                                                 final Path pomPath,
                                                                 final Map<String, String> properties,
                                                                 final Optional<Path> localRepo,
-                                                                final int depth) {
+                                                                final int depth,
+                                                                final Optional<TelemetryRecorder> recorder) {
         final Map<String, String> dm = new HashMap<>();
         if (depth > 8) {
             return dm;
@@ -608,8 +612,11 @@ class PomXmlUtils {
                         localRepoPomPath(pg, pa, pv, repo).ifPresent(parentPom -> {
                             try {
                                 final Map<String, String> parentProps = readProperties(builder, parentPom);
-                                dm.putAll(readDependencyManagement(builder, parentPom, parentProps, localRepo, depth + 1));
-                            } catch (final Exception ignored) {
+                                dm.putAll(readDependencyManagement(
+                                    builder, parentPom, parentProps, localRepo, depth + 1, recorder));
+                            } catch (final Exception e) {
+                                recorder.ifPresent(r -> r.warn(e,
+                                    "Failed to merge parent dependencyManagement from [%s:%s:%s]", pg, pa, pv));
                             }
                         });
                     }
@@ -652,16 +659,21 @@ class PomXmlUtils {
             }
 
             // Merge imported BOMs - each import contributes its own (transitively resolved)
-            // dependencyManagement, which a BOM import commonly relies on for versions like Netty's
+            // dependencyManagement, which a BOM import commonly relies on for versions like Netty's.
+            // Each import is independent: a failure merging one (e.g. a malformed pom) must not
+            // abort the rest of the list, so failures are swallowed per-import rather than left to
+            // propagate out of the forEach.
             localRepo.ifPresent(repo -> imports.forEach(coord ->
                 localRepoPomPath(coord[0], coord[1], coord[2], repo).ifPresent(bomPom -> {
                     try {
                         final Map<String, String> bomProperties = readProperties(builder, bomPom);
                         final Map<String, String> imported =
-                            readDependencyManagement(builder, bomPom, bomProperties, localRepo, depth + 1);
+                            readDependencyManagement(builder, bomPom, bomProperties, localRepo, depth + 1, recorder);
                         imported.forEach(dm::putIfAbsent);
                     } catch (final Exception e) {
-                        throw new RuntimeException(e);
+                        recorder.ifPresent(r -> r.warn(e,
+                            "Failed to merge dependencyManagement from imported BOM [%s:%s:%s]",
+                            coord[0], coord[1], coord[2]));
                     }
                 })));
         } catch (final Exception ignored) {
