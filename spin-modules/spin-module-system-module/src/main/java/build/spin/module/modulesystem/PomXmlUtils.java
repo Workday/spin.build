@@ -378,13 +378,20 @@ class PomXmlUtils {
                 if (!(deps.item(i) instanceof Element dep)) {
                     continue;
                 }
-                final String groupId = textContent(dep, "groupId");
+                String groupId = textContent(dep, "groupId");
                 final String artifactId = textContent(dep, "artifactId");
                 if (groupId == null || artifactId == null) {
                     continue;
                 }
+                // Multi-module projects commonly self-reference the built-in ${project.groupId}
+                // for sibling dependencies (e.g. Netty) instead of naming the groupId literally.
+                if ("${project.groupId}".equals(groupId) && pomGroupId != null) {
+                    groupId = pomGroupId;
+                }
                 final String rawVersion = textContent(dep, "version");
-                String resolvedVersion = resolveProperty(rawVersion, properties);
+                String resolvedVersion = "${project.version}".equals(rawVersion) && resolvedPomVersion != null
+                    ? resolvedPomVersion
+                    : resolveProperty(rawVersion, properties);
                 if (resolvedVersion == null || resolvedVersion.contains("${")) {
                     resolvedVersion = rootDm.get(groupId + ":" + artifactId);
                 }
@@ -525,6 +532,20 @@ class PomXmlUtils {
                 return Optional.of(new String[]{groupId, artifactId, version});
             }
         }
+
+        // Some naming conventions (e.g. Helidon: groupId io.helidon.config, artifactId helidon-config)
+        // have no "extra" suffix beyond the groupId at all - the module name *is* the full groupId verbatim. Retry
+        // the same candidate artifactIds under the full, unstripped module name as groupId.
+        for (final String artifactId : candidates) {
+            final Path jarPath = localRepo
+                .resolve(moduleName.replace('.', '/'))
+                .resolve(artifactId)
+                .resolve(version)
+                .resolve(artifactId + "-" + version + ".jar");
+            if (Files.exists(jarPath)) {
+                return Optional.of(new String[]{moduleName, artifactId, version});
+            }
+        }
         return Optional.empty();
     }
 
@@ -559,6 +580,23 @@ class PomXmlUtils {
         try {
             final Document doc = builder.parse(pomPath.toFile());
 
+            // Determine the pom's own groupId/version to resolve self-referential
+            // ${project.groupId} / ${project.version} entries (common in BOMs whose dependencyManagement lists
+            // sibling project modules.
+            final Element selfRoot = doc.getDocumentElement();
+            String pomGroupId = directChildText(selfRoot, "groupId");
+            String pomVersion = directChildText(selfRoot, "version");
+            final NodeList selfParentNodes = doc.getElementsByTagName("parent");
+            if (selfParentNodes.getLength() > 0 && selfParentNodes.item(0) instanceof Element selfParent) {
+                if (pomGroupId == null) {
+                    pomGroupId = directChildText(selfParent, "groupId");
+                }
+                if (pomVersion == null) {
+                    pomVersion = directChildText(selfParent, "version");
+                }
+            }
+            final String resolvedPomVersion = resolveProperty(pomVersion, properties);
+
             // Merge parent DM first (lower priority than own DM)
             localRepo.ifPresent(repo -> {
                 final NodeList parentNodes = doc.getElementsByTagName("parent");
@@ -582,22 +620,50 @@ class PomXmlUtils {
             if (dmNodes.getLength() == 0) {
                 return dm;
             }
+            // Two passes: collect this pom's own literal entries first (highest priority - always wins over an
+            // imported BOM), then merge imported BOMs afterward with putIfAbsent so an earlier-listed import
+            // wins over a later one, but never overrides a literal entry.
+            final List<String[]> imports = new ArrayList<>();
             final NodeList deps = ((Element) dmNodes.item(0)).getElementsByTagName("dependency");
             for (int i = 0; i < deps.getLength(); i++) {
                 if (!(deps.item(i) instanceof Element dep)) {
                     continue;
                 }
-                final String groupId = textContent(dep, "groupId");
+                String groupId = textContent(dep, "groupId");
                 final String artifactId = textContent(dep, "artifactId");
                 final String rawVersion = textContent(dep, "version");
                 if (groupId == null || artifactId == null || rawVersion == null) {
                     continue;
                 }
-                final String resolved = resolveProperty(rawVersion, properties);
-                if (resolved != null && !resolved.contains("${")) {
+                if ("${project.groupId}".equals(groupId) && pomGroupId != null) {
+                    groupId = pomGroupId;
+                }
+                final String resolved = "${project.version}".equals(rawVersion) && resolvedPomVersion != null
+                    ? resolvedPomVersion
+                    : resolveProperty(rawVersion, properties);
+                if (resolved == null || resolved.contains("${")) {
+                    continue;
+                }
+                if ("import".equals(textContent(dep, "scope")) && "pom".equals(textContent(dep, "type"))) {
+                    imports.add(new String[]{groupId, artifactId, resolved});
+                } else {
                     dm.put(groupId + ":" + artifactId, resolved);
                 }
             }
+
+            // Merge imported BOMs - each import contributes its own (transitively resolved)
+            // dependencyManagement, which a BOM import commonly relies on for versions like Netty's
+            localRepo.ifPresent(repo -> imports.forEach(coord ->
+                localRepoPomPath(coord[0], coord[1], coord[2], repo).ifPresent(bomPom -> {
+                    try {
+                        final Map<String, String> bomProperties = readProperties(builder, bomPom);
+                        final Map<String, String> imported =
+                            readDependencyManagement(builder, bomPom, bomProperties, localRepo, depth + 1);
+                        imported.forEach(dm::putIfAbsent);
+                    } catch (final Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })));
         } catch (final Exception ignored) {
         }
         return dm;

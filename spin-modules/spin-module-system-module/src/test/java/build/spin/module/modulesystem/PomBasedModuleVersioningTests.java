@@ -106,7 +106,11 @@ class PomBasedModuleVersioningTests {
 
         final ModuleVersioning versioning = PomBasedModuleVersioning.buildFromWorkspace(workspace, RECORDER);
 
-        assertThat(versioning.getVersion("base.marshalling"))
+        // build.base.marshalling (the groupId-prefixed heuristic, matching this artifact's real
+        // module-info.java) rather than the bare "base.marshalling" guess -- when a ground-truth
+        // module name is available for this coordinate in the real local repo, it wins exclusively
+        // and the bare heuristic is not registered.
+        assertThat(versioning.getVersion("build.base.marshalling"))
             .isPresent()
             .hasValueSatisfying(v -> assertThat(v.get()).isEqualTo("0.22.1"));
     }

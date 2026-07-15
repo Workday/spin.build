@@ -34,6 +34,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -87,7 +88,12 @@ final class PomWorkspaceWalker {
         try {
             final DocumentBuilder builder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
             final Map<String, String> rootProperties = PomXmlUtils.readProperties(builder, rootPom);
-            final Map<String, String> rootDm = PomXmlUtils.readDependencyManagement(builder, rootPom, rootProperties);
+            // Passing localRepo here (rather than the no-repo overload) matters: it is what lets
+            // a <scope>import</scope> BOM declared directly in the workspace's own root pom -- the
+            // common case of a company aggregator centrally managing versions -- actually resolve,
+            // since dependencyManagement import-merging only fires when a localRepo is supplied.
+            final Map<String, String> rootDm =
+                PomXmlUtils.readDependencyManagement(builder, rootPom, rootProperties, localRepo);
 
             // visited keyed by "groupId:artifactId" to avoid re-processing
             final Set<String> visited = new HashSet<>();
@@ -116,14 +122,18 @@ final class PomWorkspaceWalker {
                 }
             });
 
+            // A workspace module's own coordinate is already visited authoritatively by visitSelf
+            // (preferring its current module-info.java). It must never also be enqueued into the
+            // dependency BFS below: a stale jar for that same coordinate sitting in the local repo
+            // (e.g. left over from before a module rename) would otherwise be re-visited a second
+            // time under whatever ground-truth name that stale jar carries, alongside — or instead
+            // of — the correct, current one.
+            final Map<String, String> workspaceCoordinates = collectWorkspaceCoordinates(builder, pomPaths);
+
             for (final Path pomPath : pomPaths) {
                 walkPom(builder, pomPath, rootProperties, rootPom, recorder, visitor);
                 PomXmlUtils.readRawDependencies(builder, pomPath, rootProperties, rootDm)
-                    .forEach(d -> {
-                        if (visited.add(d[0] + ":" + d[1])) {
-                            moduleQueue.add(d);
-                        }
-                    });
+                    .forEach(d -> enqueueIfNew(d, workspaceCoordinates, visited, moduleQueue, recorder));
             }
 
             // Phase 2: BFS transitive poms from the local repository. Each coordinate is visited
@@ -142,11 +152,7 @@ final class PomWorkspaceWalker {
                             PomXmlUtils.readRawDependencies(builder, pomPath, pomProperties, pomDm)
                                 .stream()
                                 .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))
-                                .forEach(d -> {
-                                    if (visited.add(d[0] + ":" + d[1])) {
-                                        moduleQueue.add(d);
-                                    }
-                                });
+                                .forEach(d -> enqueueIfNew(d, workspaceCoordinates, visited, moduleQueue, recorder));
                         } catch (final Exception e) {
                             recorder.warn(e, "PomWorkspaceWalker failed to read transitive pom [%s]", pomPath);
                         }
@@ -180,6 +186,71 @@ final class PomWorkspaceWalker {
             }
         } catch (final Exception e) {
             recorder.warn(e, "PomWorkspaceWalker failed to parse [%s]", pomPath);
+        }
+    }
+
+    /**
+     * Returns a map of {@code "groupId:artifactId"} → resolved version for every workspace pom,
+     * inheriting groupId/version from {@code <parent>} when not declared directly. Used to keep
+     * workspace modules out of the dependency BFS queue — see the call site in {@link #walk} — and
+     * to detect when a sibling's declared dependency version disagrees with the module's own pom.
+     */
+    private static Map<String, String> collectWorkspaceCoordinates(final DocumentBuilder builder,
+                                                                   final List<Path> pomPaths) {
+        final Map<String, String> coordinates = new HashMap<>();
+        for (final Path pomPath : pomPaths) {
+            try {
+                final Document doc = builder.parse(pomPath.toFile());
+                final Element root = doc.getDocumentElement();
+                final String artifactId = PomXmlUtils.directChildText(root, "artifactId");
+                String groupId = PomXmlUtils.directChildText(root, "groupId");
+                String version = PomXmlUtils.directChildText(root, "version");
+                final NodeList parentNodes = doc.getElementsByTagName("parent");
+                if (parentNodes.getLength() > 0 && parentNodes.item(0) instanceof Element parent) {
+                    if (groupId == null) {
+                        groupId = PomXmlUtils.directChildText(parent, "groupId");
+                    }
+                    if (version == null) {
+                        version = PomXmlUtils.directChildText(parent, "version");
+                    }
+                }
+                if (groupId != null && artifactId != null && version != null) {
+                    coordinates.put(groupId + ":" + artifactId, version);
+                }
+            } catch (final Exception ignored) {
+                // best-effort; a pom that fails to parse here also fails in walkPom, which reports it
+            }
+        }
+        return coordinates;
+    }
+
+    /**
+     * Enqueues a dependency coordinate for Phase 2 BFS unless it belongs to a workspace module
+     * (already visited authoritatively via {@link #visitSelf}) or has already been visited.
+     * <p>
+     * When a coordinate does belong to a workspace module, and the dependency declares an explicit
+     * version that disagrees with that module's own pom, this is surfaced via {@code recorder} —
+     * otherwise the mismatch would be entirely invisible, since the dependency edge is deliberately
+     * not walked (the workspace module's own version always wins).
+     */
+    private static void enqueueIfNew(final String[] coordinate,
+                                     final Map<String, String> workspaceCoordinates,
+                                     final Set<String> visited,
+                                     final Deque<String[]> moduleQueue,
+                                     final TelemetryRecorder recorder) {
+        final String key = coordinate[0] + ":" + coordinate[1];
+        final String workspaceVersion = workspaceCoordinates.get(key);
+        if (workspaceVersion != null) {
+            if (!workspaceVersion.contains("${") && !workspaceVersion.equals(coordinate[2])) {
+                recorder.warn(
+                    "Dependency on workspace module [%s:%s] declares version [%s] but the module's own pom is "
+                        + "at [%s] — the workspace's own version always wins; this dependency edge is not walked",
+                    coordinate[0], coordinate[1], coordinate[2], workspaceVersion);
+            }
+            return;
+        }
+        if (visited.add(key)) {
+            moduleQueue.add(coordinate);
         }
     }
 
@@ -230,8 +301,16 @@ final class PomWorkspaceWalker {
     }
 
     /**
-     * Visits a dependency coordinate, registering it under all derived JPMS name conventions
-     * plus the {@code Automatic-Module-Name} from the jar manifest when present.
+     * Visits a dependency coordinate, registering it under the ground-truth JPMS module name when
+     * one can be read directly from the jar ({@code module-info.class}, then {@code Automatic-Module-Name});
+     * otherwise falls back to the derived-name-heuristics.
+     * <p>
+     * The ground truth is preferred exclusively (not additively) because heuristic names are derived from the
+     * groupId/artifactId shared by every sibling artifact under that groupId (e.g. every {@code io.helidon.config:*}
+     * artifact). Registering heuristic names *alongside* a known-correct name lets an unrelated sibling's heuristic
+     * guess collide with - and, depending on visit order, shadow - the artifact that actually owns that module name
+     * (e.g. {@code io.helidon.config:helidon-config-metadata} guessing its way into {@code io.helidon.confg},
+     * which is really owned by {@code io.helidon.config:helidon-config}).
      */
     private static void visitDependency(final String groupId,
                                         final String artifactId,
@@ -241,11 +320,10 @@ final class PomWorkspaceWalker {
                                         final CodeModel codeModel,
                                         final CoordinateVisitor visitor) {
         try {
-            final List<String> names = new ArrayList<>(deriveNames(groupId, artifactId));
-            PomXmlUtils.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo)
-                .ifPresent(names::add);
-            PomXmlUtils.readNamedModuleName(groupId, artifactId, resolvedVersion, localRepo, codeModel)
-                .ifPresent(names::add);
+            final Optional<String> groundTruth = PomXmlUtils
+                .readNamedModuleName(groupId, artifactId, resolvedVersion, localRepo, codeModel)
+                    .or(() -> PomXmlUtils.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo));
+            final List<String> names = groundTruth.map(List::of).orElseGet(() -> deriveNames(groupId, artifactId));
             visitor.accept(names, groupId, artifactId, resolvedVersion);
         } catch (final Exception e) {
             recorder.warn(e, "PomWorkspaceWalker failed to visit dependency [%s:%s:%s]",

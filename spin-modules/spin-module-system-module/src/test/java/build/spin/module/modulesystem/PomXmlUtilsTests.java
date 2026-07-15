@@ -170,6 +170,57 @@ class PomXmlUtilsTests {
         assertThat(coord[2]).isEqualTo("0.1.0");
     }
 
+    @Test
+    void findJarByModuleName_findsJarUnderFullModuleNameWhenModuleNameEqualsGroupIdVerbatim(
+            @TempDir final Path repo) throws Exception {
+        // Helidon convention: io.helidon.config:helidon-config has module name "io.helidon.config" --
+        // identical to its own groupId, with no "extra" suffix segment. The stripped-groupId
+        // candidates from the first pass (groupId=io.helidon, extra=config) never find a jar because
+        // no such jar exists under io/helidon/ -- only under the unstripped io/helidon/config/ path.
+        final Path jarDir = repo.resolve("io/helidon/config/helidon-config/1.0.0");
+        Files.createDirectories(jarDir);
+        Files.createFile(jarDir.resolve("helidon-config-1.0.0.jar"));
+
+        final String[] coord = PomXmlUtils.findJarByModuleName("io.helidon.config", "1.0.0", repo).orElseThrow();
+        assertThat(coord[0]).isEqualTo("io.helidon.config");
+        assertThat(coord[1]).isEqualTo("helidon-config");
+        assertThat(coord[2]).isEqualTo("1.0.0");
+    }
+
+    // -------------------------------------------------------------------------
+    // readDependencyManagement — plain property-referenced version, no self-reference involved
+    // -------------------------------------------------------------------------
+
+    @Test
+    void readDependencyManagement_resolvesPlainPropertyReferencedVersion(@TempDir final Path dir) throws Exception {
+        final Path pom = dir.resolve("pom.xml");
+        Files.writeString(pom, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <properties>
+                <base.version>0.22.1</base.version>
+              </properties>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>build.base</groupId>
+                    <artifactId>base-marshalling</artifactId>
+                    <version>${base.version}</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """);
+
+        final DocumentBuilder builder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
+        final Map<String, String> properties = PomXmlUtils.readProperties(builder, pom);
+        final Map<String, String> dm = PomXmlUtils.readDependencyManagement(builder, pom, properties);
+
+        assertThat(dm).containsEntry("build.base:base-marshalling", "0.22.1");
+    }
+
     // -------------------------------------------------------------------------
     // isMavenWorkspaceRoot — spin-native workspaces with a pom.xml must be recognized
     // -------------------------------------------------------------------------
