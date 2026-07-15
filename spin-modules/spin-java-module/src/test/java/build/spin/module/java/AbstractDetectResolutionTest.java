@@ -20,12 +20,27 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.foundation.Exceptional;
+import build.base.foundation.UniformResource;
+import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
+import build.spin.common.telemetry.TelemetryPublisher;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.ModuleCatalog;
+import build.spin.module.modulesystem.ModuleReference;
+import build.spin.module.modulesystem.ModuleVersioning;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
+import java.util.jar.Attributes;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,6 +48,34 @@ class AbstractDetectResolutionTest {
 
     @TempDir
     Path projectRoot;
+
+    private static TelemetryRecorder recorder() {
+        return new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractDetectResolutionTest"),
+            System.out::println);
+    }
+
+    // creates a minimal jar with the given Automatic-Module-Name at <repoRoot>/<groupPath>/<artifactId>/<version>/<artifactId>-<version>.jar
+    private static Path createArtifactJar(final Path repoRoot,
+                                          final String groupPath,
+                                          final String artifactId,
+                                          final String version,
+                                          final String automaticModuleName) throws IOException {
+
+        final Path versionDir = repoRoot.resolve(groupPath).resolve(artifactId).resolve(version);
+        Files.createDirectories(versionDir);
+
+        final Path jar = versionDir.resolve(artifactId + "-" + version + ".jar");
+        final Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(new Attributes.Name("Automatic-Module-Name"), automaticModuleName);
+
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            // no entries needed — an automatic module is derived purely from the manifest/filename
+        }
+
+        return jar;
+    }
 
     @Test
     void resolveCompiledOutput_noneExists_returnsEmpty() {
@@ -75,5 +118,262 @@ class AbstractDetectResolutionTest {
 
         assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
             .contains(spinOutput);
+    }
+
+    @Test
+    void dedupeByMavenCoordinate_sameCoordinateDifferentVersions_keepsHighestVersion() {
+        final Path repo = Path.of("/repo");
+        final Path older = repo.resolve("io/helidon/grpc/grpc-core/1.0/grpc-core-1.0.jar");
+        final Path newer = repo.resolve("io/helidon/grpc/grpc-core/2.0/grpc-core-2.0.jar");
+
+        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(older, newer)))
+            .containsExactly(newer);
+    }
+
+    @Test
+    void dedupeByMavenCoordinate_differentCoordinates_keepsBoth() {
+        final Path repo = Path.of("/repo");
+        final Path grpc = repo.resolve("io/helidon/grpc/grpc-core/1.0/grpc-core-1.0.jar");
+        final Path protobuf = repo.resolve("com/google/protobuf/protobuf-java/3.0/protobuf-java-3.0.jar");
+
+        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(grpc, protobuf)))
+            .containsExactly(grpc, protobuf);
+    }
+
+    @Test
+    void correctPinnedVersions_onDiskVersionDivergesFromPin_reResolvesAtPinnedVersion() throws IOException {
+        final Path repo = projectRoot.resolve("repo");
+        final Path helidonPinned = createArtifactJar(
+            repo, "io/grpc", "grpc-core", "1.10.0", "io.grpc");
+        final Path directlyPinned = createArtifactJar(
+            repo, "io/grpc", "grpc-core", "1.60.0", "io.grpc");
+
+        final ModuleVersioning versioning = moduleName ->
+            "io.grpc".equals(moduleName) ? Optional.of(Version.parse("1.60.0")) : Optional.empty();
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("io.grpc", Artifact.create("io.grpc", "grpc-core", "1.60.0", "jar"));
+
+        final Artifact.Resolver resolver = new Artifact.Resolver() {
+            @Override
+            public Exceptional<Path> resolve(final Artifact artifact) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<ModuleReference> getModuleReference(
+                final Artifact artifact, final ModuleCatalog catalog) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<JDKModuleDescriptor> getModuleDescriptor(
+                final Artifact artifact, final ModuleCatalog catalog, final ModuleVersioning versioning) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<List<Path>> resolveTransitive(final Artifact artifact) {
+                return "1.60.0".equals(artifact.version().get())
+                    ? Exceptional.of(List.of(directlyPinned))
+                    : Exceptional.ofException(new IllegalStateException("unexpected artifact " + artifact));
+            }
+        };
+
+        final List<Path> corrected = AbstractDetectResolution.correctPinnedVersions(
+            List.of(helidonPinned), versioning, catalog, resolver, recorder());
+
+        assertThat(corrected).containsExactly(directlyPinned);
+    }
+
+    @Test
+    void dedupeByMavenCoordinate_qualifiersDisagreeWithLexicographicOrder_usesMavenRanking() {
+        final Path repo = Path.of("/repo");
+        // lexicographically "cr" < "milestone" (c < m), but Maven ranks milestone(3) below rc/cr(4) —
+        // the milestone build is the older one and should be discarded in favor of the rc build.
+        final Path milestone = repo.resolve("io/helidon/grpc/grpc-core/1.0-milestone/grpc-core-1.0-milestone.jar");
+        final Path releaseCandidate = repo.resolve("io/helidon/grpc/grpc-core/1.0-cr/grpc-core-1.0-cr.jar");
+
+        assertThat(AbstractDetectResolution.dedupeByMavenCoordinate(List.of(milestone, releaseCandidate)))
+            .containsExactly(releaseCandidate);
+    }
+
+    @Test
+    void correctPinnedVersions_pinnedModuleNotInCatalog_keepsOnDiskVersion() throws IOException {
+        final Path repo = projectRoot.resolve("repo");
+        final Path onDisk = createArtifactJar(repo, "io/grpc", "grpc-core", "1.10.0", "io.grpc");
+
+        final ModuleVersioning versioning = moduleName ->
+            "io.grpc".equals(moduleName) ? Optional.of(Version.parse("1.60.0")) : Optional.empty();
+
+        // catalog has no entry for the pinned reference
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create();
+
+        final Artifact.Resolver resolver = new Artifact.Resolver() {
+            @Override
+            public Exceptional<Path> resolve(final Artifact artifact) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<ModuleReference> getModuleReference(
+                final Artifact artifact, final ModuleCatalog catalog) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<JDKModuleDescriptor> getModuleDescriptor(
+                final Artifact artifact, final ModuleCatalog catalog, final ModuleVersioning versioning) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<List<Path>> resolveTransitive(final Artifact artifact) {
+                throw new UnsupportedOperationException("should not resolve — no catalog entry for the pin");
+            }
+        };
+
+        final List<Path> corrected = AbstractDetectResolution.correctPinnedVersions(
+            List.of(onDisk), versioning, catalog, resolver, recorder());
+
+        assertThat(corrected).containsExactly(onDisk);
+    }
+
+    @Test
+    void correctPinnedVersions_reResolutionFails_keepsOnDiskVersion() throws IOException {
+        final Path repo = projectRoot.resolve("repo");
+        final Path onDisk = createArtifactJar(repo, "io/grpc", "grpc-core", "1.10.0", "io.grpc");
+
+        final ModuleVersioning versioning = moduleName ->
+            "io.grpc".equals(moduleName) ? Optional.of(Version.parse("1.60.0")) : Optional.empty();
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("io.grpc", Artifact.create("io.grpc", "grpc-core", "1.60.0", "jar"));
+
+        final Artifact.Resolver resolver = new Artifact.Resolver() {
+            @Override
+            public Exceptional<Path> resolve(final Artifact artifact) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<ModuleReference> getModuleReference(
+                final Artifact artifact, final ModuleCatalog catalog) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<JDKModuleDescriptor> getModuleDescriptor(
+                final Artifact artifact, final ModuleCatalog catalog, final ModuleVersioning versioning) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<List<Path>> resolveTransitive(final Artifact artifact) {
+                return Exceptional.ofException(new IllegalStateException("resolution failure"));
+            }
+        };
+
+        final List<Path> corrected = AbstractDetectResolution.correctPinnedVersions(
+            List.of(onDisk), versioning, catalog, resolver, recorder());
+
+        assertThat(corrected).containsExactly(onDisk);
+    }
+
+    @Test
+    void correctPinnedVersions_transitiveCorrectionItselfDivergesFromPin_correctsToFixedPoint() throws IOException {
+        final Path repo = projectRoot.resolve("repo");
+        // grpc-core is pinned to 1.60.0; the on-disk copy (pulled in transitively by Helidon) is 1.10.0.
+        final Path grpcOnDisk = createArtifactJar(repo, "io/grpc", "grpc-core", "1.10.0", "io.grpc");
+        // re-resolving grpc-core at 1.60.0 pulls in a protobuf-java that is itself stale (2.0.0),
+        // even though protobuf-java is pinned workspace-wide to 3.0.0.
+        final Path grpcCorrected = createArtifactJar(repo, "io/grpc", "grpc-core", "1.60.0", "io.grpc");
+        final Path protobufStale = createArtifactJar(
+            repo, "com/google/protobuf", "protobuf-java", "2.0.0", "com.google.protobuf");
+        final Path protobufCorrected = createArtifactJar(
+            repo, "com/google/protobuf", "protobuf-java", "3.0.0", "com.google.protobuf");
+
+        final ModuleVersioning versioning = moduleName -> switch (moduleName) {
+            case "io.grpc" -> Optional.of(Version.parse("1.60.0"));
+            case "com.google.protobuf" -> Optional.of(Version.parse("3.0.0"));
+            default -> Optional.empty();
+        };
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("io.grpc", Artifact.create("io.grpc", "grpc-core", "1.60.0", "jar"))
+            .add("com.google.protobuf", Artifact.create("com.google.protobuf", "protobuf-java", "3.0.0", "jar"));
+
+        final Artifact.Resolver resolver = new Artifact.Resolver() {
+            @Override
+            public Exceptional<Path> resolve(final Artifact artifact) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<ModuleReference> getModuleReference(
+                final Artifact artifact, final ModuleCatalog catalog) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<JDKModuleDescriptor> getModuleDescriptor(
+                final Artifact artifact, final ModuleCatalog catalog, final ModuleVersioning versioning) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<List<Path>> resolveTransitive(final Artifact artifact) {
+                return switch (artifact.version().get()) {
+                    case "1.60.0" -> Exceptional.of(List.of(grpcCorrected, protobufStale));
+                    case "3.0.0" -> Exceptional.of(List.of(protobufCorrected));
+                    default -> Exceptional.ofException(new IllegalStateException("unexpected artifact " + artifact));
+                };
+            }
+        };
+
+        final List<Path> corrected = AbstractDetectResolution.correctPinnedVersions(
+            List.of(grpcOnDisk), versioning, catalog, resolver, recorder());
+
+        assertThat(corrected).containsExactly(grpcCorrected, protobufCorrected);
+    }
+
+    @Test
+    void correctPinnedVersions_onDiskVersionAlreadyMatchesPin_returnsUnchanged() throws IOException {
+        final Path repo = projectRoot.resolve("repo");
+        final Path jar = createArtifactJar(repo, "io/grpc", "grpc-core", "1.60.0", "io.grpc");
+
+        final ModuleVersioning versioning = moduleName ->
+            "io.grpc".equals(moduleName) ? Optional.of(Version.parse("1.60.0")) : Optional.empty();
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create();
+
+        final Artifact.Resolver resolver = new Artifact.Resolver() {
+            @Override
+            public Exceptional<Path> resolve(final Artifact artifact) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<ModuleReference> getModuleReference(
+                final Artifact artifact, final ModuleCatalog catalog) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<JDKModuleDescriptor> getModuleDescriptor(
+                final Artifact artifact, final ModuleCatalog catalog, final ModuleVersioning versioning) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Exceptional<List<Path>> resolveTransitive(final Artifact artifact) {
+                throw new UnsupportedOperationException("should not re-resolve when already pinned");
+            }
+        };
+
+        final List<Path> corrected = AbstractDetectResolution.correctPinnedVersions(
+            List.of(jar), versioning, catalog, resolver, recorder());
+
+        assertThat(corrected).containsExactly(jar);
     }
 }

@@ -22,6 +22,7 @@ package build.spin.module.java;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.base.version.VersionOrder;
 import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.Project;
@@ -36,8 +37,11 @@ import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
+import java.lang.module.ModuleFinder;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -237,10 +241,31 @@ public abstract class AbstractDetectResolution
             }
         });
 
+        // Step 2c — Correct candidates whose resolved version diverges from a project-wide pin.
+        // Each top-level `requires` in Step 2 is resolved independently via Aether, using whatever
+        // version that require's own pom pins transitively (e.g. a Helidon dependency transitively
+        // pulls in the older protobuf-java/grpc versions pinned by Helidon's own BOM) — even when
+        // this project's pom.xml pins a newer version directly, if that artifact is only ever
+        // reached transitively (never a direct `requires`), there's no Aether call scoped to this
+        // project's own pom to apply that pin. `versioning` already has the correct, workspace-wide
+        // answer (it's populated from every pom.xml and already used to correct `requires`-clause
+        // versions for jlink/jdeps); reuse it here to re-resolve any candidate that disagrees.
+        final List<Path> versionCorrectedCandidates =
+            correctPinnedVersions(externalCandidates, this.versioning, this.catalog, this.resolver, this.recorder);
+
+        // Step 2d — Dedupe external candidates by Maven coordinate, keeping the highest version.
+        // Each top-level `requires` in Step 2 is resolved independently via Aether, so two
+        // different requires can transitively pull in different versions of the same artifact
+        // with no cross-call reconciliation (e.g. this project directly requires a newer
+        // graphql-java/grpc/protobuf, while a Helidon dependency transitively pulls in the older
+        // versions pinned by Helidon's own BOM). Without this, both versions land on the
+        // classpath/module-path together and javac non-deterministically picks the wrong one.
+        final List<Path> dedupedExternalCandidates = dedupeByMavenCoordinate(versionCorrectedCandidates);
+
         // Step 3 — Classify all candidates via ModuleGraphClassifier.
         final List<Path> candidates = new ArrayList<>();
         candidates.addAll(siblingCandidates);
-        candidates.addAll(externalCandidates);
+        candidates.addAll(dedupedExternalCandidates);
 
         final Set<String> directRequireNames = this.moduleDescriptor.requiresClauses()
             .map(r -> r.requiresModuleName().toString())
@@ -262,5 +287,169 @@ public abstract class AbstractDetectResolution
         return BuildOutputLocations.spin(projectPath, buildDirectoryName, targetDirectoryName)
             .or(() -> BuildOutputLocations.maven(projectPath, "classes"))
             .or(() -> BuildOutputLocations.gradle(projectPath, "classes/java/main"));
+    }
+
+    /**
+     * Re-resolves any candidate {@link Path} whose actual (on-disk) version diverges from the
+     * project-wide pin recorded in {@code versioning}, replacing it with the {@link Path}s resolved
+     * for the pinned version instead.
+     *
+     * <p>A candidate's module name is derived directly from the jar/directory via {@link ModuleFinder}
+     * — the same JDK-native mechanism {@link ModuleGraphClassifier} uses — so this works whether the
+     * candidate is a proper module, carries an {@code Automatic-Module-Name}, or falls back to a
+     * filename-derived automatic module name. Candidates with no version pin, an unparseable on-disk
+     * version, or an already-matching version are returned unchanged.
+     *
+     * <p>Correction runs to a fixed point: paths pulled in by re-resolving a mismatched candidate are
+     * themselves checked against their own pin (e.g. re-resolving a mismatched Helidon-transitive
+     * {@code grpc-core} may pull in an old {@code protobuf-java} that is itself pinned elsewhere in the
+     * workspace). Each module name is re-resolved at most once per call — repeat occurrences of the
+     * same module (very likely, since deduping by coordinate happens in a later step) reuse that
+     * single correction rather than issuing a redundant Aether call, and this also bounds the
+     * fixed-point iteration against cycles in the transitive graph.
+     *
+     * @param paths the resolved external candidate {@link Path}s
+     * @param versioning the project-wide {@link ModuleVersioning}
+     * @param catalog the {@link ModuleCatalog}, used to recover the Maven coordinate for a module
+     *     name so the pinned version can be re-resolved
+     * @param resolver the {@link Artifact.Resolver} used to re-resolve at the pinned version
+     * @param recorder the {@link TelemetryRecorder} for diagnostics
+     *
+     * @return the version-corrected {@link Path}s
+     */
+    // Visible for testing.
+    static List<Path> correctPinnedVersions(final List<Path> paths,
+                                            final ModuleVersioning versioning,
+                                            final ModuleCatalog catalog,
+                                            final Artifact.Resolver resolver,
+                                            final TelemetryRecorder recorder) {
+
+        final Set<String> resolvedModuleNames = new HashSet<>();
+        final List<Path> corrected = new ArrayList<>();
+        final Deque<Path> worklist = new ArrayDeque<>(paths);
+
+        while (!worklist.isEmpty()) {
+            final Path path = worklist.poll();
+            final Optional<String> moduleName = moduleNameOf(path);
+
+            if (moduleName.isEmpty()) {
+                corrected.add(path);
+                continue;
+            }
+
+            final Optional<Version> pinnedVersion = versioning.getVersion(moduleName.get());
+
+            if (pinnedVersion.isEmpty()) {
+                corrected.add(path);
+                continue;
+            }
+
+            final Path versionDir = path.getParent();
+            final Optional<Version> onDiskVersion = versionDir == null
+                ? Optional.empty()
+                : Version.tryParse(versionDir.getFileName().toString());
+
+            if (onDiskVersion.isEmpty() || onDiskVersion.get().equals(pinnedVersion.get())) {
+                corrected.add(path);
+                continue;
+            }
+
+            if (!resolvedModuleNames.add(moduleName.get())) {
+                // already re-resolved this module during this call — accept as-is rather than issuing
+                // a duplicate Aether call or looping forever on a transitive-graph cycle
+                corrected.add(path);
+                continue;
+            }
+
+            final ModuleReference reference = ModuleReference.of(moduleName.get(), pinnedVersion.get());
+            final Optional<Artifact> artifact = catalog.getArtifact(reference);
+
+            if (artifact.isEmpty()) {
+                recorder.warn(
+                    "Module [%s] is pinned to [%s] but is not present in the ModuleCatalog — "
+                        + "keeping on-disk version [%s]",
+                    moduleName.get(), pinnedVersion.get(), onDiskVersion.get());
+                corrected.add(path);
+                continue;
+            }
+
+            final var resolved = resolver.resolveTransitive(artifact.get());
+            if (resolved.isException()) {
+                resolved.exception().ifPresent(e -> recorder.error(
+                    "Failed to re-resolve [%s] at pinned version [%s]: %s",
+                    moduleName.get(), pinnedVersion.get(), e.getMessage()));
+                corrected.add(path);
+            }
+            else {
+                // re-queue the newly resolved paths so their own pins are checked too, achieving a
+                // fixed point rather than a single correction pass
+                resolved.ifPresent(worklist::addAll);
+            }
+        }
+
+        return corrected;
+    }
+
+    /**
+     * Dedupes resolved artifact {@link Path}s by Maven coordinate, keeping the highest version.
+     *
+     * <p>Every path resolved via {@link Artifact.Resolver#resolveTransitive} sits in a local Maven
+     * repository under the standard {@code <groupId-path>/<artifactId>/<version>/<artifactId>-
+     * <version>[-classifier].<ext>} layout. Rather than assuming where the repository root is, this
+     * uses the artifact directory's full parent path (i.e. everything except the version and filename
+     * segments) as the coordinate key — two paths share a coordinate iff they share that parent path,
+     * which is true for the same (groupId, artifactId) and never true otherwise.
+     *
+     * <p>Versions are compared with {@link VersionOrder#MAVEN}, not {@link Version#compareTo}, so that
+     * Maven qualifiers (e.g. {@code rc}, {@code beta}, {@code snapshot}) rank the way Maven itself
+     * ranks them rather than lexicographically.
+     *
+     * @param paths the resolved artifact {@link Path}s to dedupe
+     *
+     * @return the deduped {@link Path}s, in first-seen order
+     */
+    // Visible for testing.
+    static List<Path> dedupeByMavenCoordinate(final List<Path> paths) {
+
+        final LinkedHashMap<Path, Path> byCoordinate = new LinkedHashMap<>();
+        final LinkedHashMap<Path, Version> versionByCoordinate = new LinkedHashMap<>();
+
+        for (final Path path : paths) {
+            final Path versionDir = path.getParent();
+            final Path artifactDir = versionDir == null ? null : versionDir.getParent();
+
+            if (artifactDir == null) {
+                // can't determine a coordinate — treat as its own unique entry
+                byCoordinate.put(path, path);
+                continue;
+            }
+
+            final Optional<Version> version = Version.tryParse(versionDir.getFileName().toString());
+
+            if (version.isEmpty()) {
+                // can't parse a version — treat as its own unique entry
+                byCoordinate.put(path, path);
+                continue;
+            }
+
+            final Version existingVersion = versionByCoordinate.get(artifactDir);
+            if (existingVersion == null || VersionOrder.MAVEN.compare(version.get(), existingVersion) > 0) {
+                byCoordinate.put(artifactDir, path);
+                versionByCoordinate.put(artifactDir, version.get());
+            }
+        }
+
+        return new ArrayList<>(byCoordinate.values());
+    }
+
+    private static Optional<String> moduleNameOf(final Path path) {
+        try {
+            return ModuleFinder.of(path).findAll().stream()
+                .findFirst()
+                .map(ref -> ref.descriptor().name());
+        }
+        catch (final RuntimeException e) {
+            return Optional.empty();
+        }
     }
 }
