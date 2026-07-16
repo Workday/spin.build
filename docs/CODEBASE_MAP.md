@@ -264,8 +264,8 @@ Engine root Context
 - Also forwards all JVM input arguments from `ManagementFactory.getRuntimeMXBean().getInputArguments()`.
 
 **Self-hosting build** (`spin/pom.xml`, `prepare-package` phase):
-1. `spin1-build-spin2`: Maven (spin₁) → `Launcher` → modular spin → `clean jlink` → spin₂ in `.build/spin/`
-2. `spin2-build-spin3`: spin₂ → `clean jlink` → spin₃ in `.build/spin/`; launcher script + module-set diffed for structural equivalence.
+1. `spin1-build-spin2`: Maven (spin₁) → `Launcher` → modular spin → `clean jlink` → spin₂ in `.build/spin-<os>-<arch>/` (host's own target)
+2. `spin2-build-spin3`: spin₂ → `clean jlink` → spin₃ in `.build/spin-<os>-<arch>/`; launcher script + module-set diffed for structural equivalence.
 
 **Module `requires` note:** `spin/module-info.java` declares `requires transitive build.spin.testing` so that `spin-collider` (which does `requires transitive build.spin.application`) gets the testing framework transitively.
 

@@ -78,8 +78,8 @@
         <junit.version>6.0.3</junit.version>
         <maven.resolver.version>2.0.16</maven.resolver.version>
         <mockito.version>5.23.0</mockito.version>
-        <serve.version>0.8.0</serve.version>
-        <spawn.version>0.2.4</spawn.version>
+        <serve.version>0.8.1</serve.version>
+        <spawn.version>0.3.0</spawn.version>
 
         <!-- Plugin Dependency Versions -->
         <maven-assembly-plugin.version>3.8.0</maven-assembly-plugin.version>

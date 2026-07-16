@@ -166,8 +166,15 @@ public interface Invocable<T> {
             .filter(type -> type.getRawType().equals(Task.class))
             .filter(type -> type.getActualTypeArguments().length == 1)
             .map(type -> type.getActualTypeArguments()[0])
-            .filter(Class.class::isInstance)
-            .map(Class.class::cast)
+            // the type argument is a plain Class for a simple result type (e.g. Task<Path>), or a
+            // ParameterizedType for a generic result type (e.g. Task<Set<Path>>) — generics are erased
+            // at runtime, so either way the raw Class is what a task's declared return type resolves to
+            .map(type -> switch (type) {
+                case Class<?> c -> c;
+                case ParameterizedType pt when pt.getRawType() instanceof Class<?> c -> c;
+                default -> null;
+            })
+            .filter(java.util.Objects::nonNull)
             .findFirst()
             .map(c -> (Class<T>) c);
 

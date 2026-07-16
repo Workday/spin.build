@@ -33,10 +33,11 @@
             </includes>
         </fileSet>
         <fileSet>
-            <directory>${project.basedir}/.build/spin/</directory>
+            <directory>${project.basedir}/.build/</directory>
             <outputDirectory></outputDirectory>
             <includes>
-                <include>**/*</include>
+                <!-- one spin-<os>-<arch>/ directory per target platform, host included -->
+                <include>spin-*/**</include>
             </includes>
         </fileSet>
     </fileSets>

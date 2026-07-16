@@ -218,14 +218,17 @@
                             <arguments>
                                 <argument>-c</argument>
                                 <argument>
+                                    case "$(uname -s)" in Darwin) HOST_OS=mac ;; Linux) HOST_OS=linux ;; *) HOST_OS=other ;; esac
+                                    case "$(uname -m)" in arm64|aarch64) HOST_ARCH=aarch64 ;; x86_64|amd64) HOST_ARCH=x86_64 ;; *) HOST_ARCH=other ;; esac
+                                    HOST_DIR=".build/spin-${HOST_OS}-${HOST_ARCH}"
                                     rm -rf /tmp/spin2 /tmp/spin2-modules.txt /tmp/spin3-modules.txt &amp;&amp;
-                                    # move spin₂ aside: both spin₂ and spin₃ write to .build/spin, so spin₂ must vacate before spin₃ can be built
-                                    cp -r .build/spin /tmp/spin2 &amp;&amp;
+                                    # move spin₂ aside: both spin₂ and spin₃ write to the host's own target directory, so spin₂ must vacate before spin₃ can be built
+                                    cp -r "$HOST_DIR" /tmp/spin2 &amp;&amp;
                                     /tmp/spin2/bin/spin.sh clean jlink &amp;&amp;
                                     # structural equivalence check (launcher + module set); jar contents are not diffed as jars embed build timestamps
-                                    diff /tmp/spin2/bin/spin.sh .build/spin/bin/spin.sh &amp;&amp;
+                                    diff /tmp/spin2/bin/spin.sh "$HOST_DIR"/bin/spin.sh &amp;&amp;
                                     ls /tmp/spin2/modules | sort &gt; /tmp/spin2-modules.txt &amp;&amp;
-                                    ls .build/spin/modules | sort &gt; /tmp/spin3-modules.txt &amp;&amp;
+                                    ls "$HOST_DIR"/modules | sort &gt; /tmp/spin3-modules.txt &amp;&amp;
                                     diff /tmp/spin2-modules.txt /tmp/spin3-modules.txt &amp;&amp;
                                     rm -rf /tmp/spin2 /tmp/spin2-modules.txt /tmp/spin3-modules.txt
                                 </argument>
