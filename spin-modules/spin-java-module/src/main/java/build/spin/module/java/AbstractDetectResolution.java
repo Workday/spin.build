@@ -209,7 +209,7 @@ public abstract class AbstractDetectResolution
             }
 
             final ModuleReference moduleReference = ModuleReference.of(r.requiresModuleName().toString(), requiredVersion);
-            final Optional<Artifact> artifact = this.catalog.getArtifact(moduleReference);
+            final Optional<Artifact> artifact = this.catalog.getArtifact(moduleReference, Optional.of(this.recorder));
 
             if (artifact.isEmpty()) {
                 this.recorder.warn(
@@ -363,7 +363,7 @@ public abstract class AbstractDetectResolution
             }
 
             final ModuleReference reference = ModuleReference.of(moduleName.get(), pinnedVersion.get());
-            final Optional<Artifact> artifact = catalog.getArtifact(reference);
+            final Optional<Artifact> artifact = catalog.getArtifact(reference, Optional.of(recorder));
 
             if (artifact.isEmpty()) {
                 recorder.warn(
@@ -379,6 +379,9 @@ public abstract class AbstractDetectResolution
                 resolved.exception().ifPresent(e -> recorder.error(
                     "Failed to re-resolve [%s] at pinned version [%s]: %s",
                     moduleName.get(), pinnedVersion.get(), e.getMessage()));
+                recorder.warn(
+                    "Module [%s] failed to re-resolve at pinned version [%s] — keeping on-disk version [%s]",
+                    moduleName.get(), pinnedVersion.get(), onDiskVersion.get());
                 corrected.add(path);
             }
             else {
@@ -442,19 +445,22 @@ public abstract class AbstractDetectResolution
                 byCoordinate.put(artifactDir, path);
                 versionByCoordinate.put(artifactDir, version.get());
             }
-            else if (VersionOrder.MAVEN.compare(version.get(), existingVersion) > 0) {
-                recorder.warn(
-                    "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — "
-                        + "keeping [%s]",
-                    artifactDir, existingVersion, version.get(), version.get());
-                byCoordinate.put(artifactDir, path);
-                versionByCoordinate.put(artifactDir, version.get());
-            }
             else {
-                recorder.warn(
-                    "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — "
-                        + "keeping [%s]",
-                    artifactDir, existingVersion, version.get(), existingVersion);
+                final int comparison = VersionOrder.MAVEN.compare(version.get(), existingVersion);
+                if (comparison > 0) {
+                    recorder.warn(
+                        "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — "
+                            + "keeping [%s]",
+                        artifactDir, existingVersion, version.get(), version.get());
+                    byCoordinate.put(artifactDir, path);
+                    versionByCoordinate.put(artifactDir, version.get());
+                } else if (comparison < 0) {
+                    recorder.warn(
+                        "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — "
+                            + "keeping [%s]",
+                        artifactDir, existingVersion, version.get(), existingVersion);
+                }
+                // else: same version resolved via a different transitive path - not a real ambiguity
             }
         }
 

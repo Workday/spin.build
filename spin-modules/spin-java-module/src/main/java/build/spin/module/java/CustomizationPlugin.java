@@ -223,7 +223,7 @@ public class CustomizationPlugin
                     build.spin.module.modulesystem.ModuleReference.of(
                         requires.requiresModuleName().toString(),
                         JDKModuleDescriptor.requiresVersion(requires));
-                final Optional<Artifact> optional = this.catalog.getArtifact(requiresRef);
+                final Optional<Artifact> optional = this.catalog.getArtifact(requiresRef, Optional.of(this.recorder));
 
                 if (optional.isPresent()) {
                     final Artifact artifact = optional.get();
