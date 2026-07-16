@@ -44,7 +44,15 @@ jobs:
           TMP=$(mktemp -d)
           unzip -q "$ZIP" -d "$TMP"
           EXTRACTED=$(find "$TMP" -maxdepth 1 -mindepth 1 -type d | head -1)
-          tar -czf "${{ matrix.artifact }}.tar.gz" -C "$(dirname "$EXTRACTED")" "$(basename "$EXTRACTED")"
+          
+          # the zip bundles one spin-<os>-<arch>/ image per target platform; each CI runner only has
+          # its own native JDK, so only this host's own image is released, keeping the tarball's
+          # historical flat structure (bin/, lib/, modules/ at the top)
+          case "$(uname -s)" in Darwin) HOST_OS=mac ;; Linux) HOST_OS=linux ;; *) HOST_OS=other ;; esac
+          case "$(uname -m)" in arm64|aarch64) HOST_ARCH=aarch64 ;; x86_64|amd64) HOST_ARCH=x86_64 ;; *) HOST_ARCH=other ;; esac
+          HOST_IMAGE="$EXTRACTED/spin-${HOST_OS}-${HOST_ARCH}"
+
+          tar -czf "${{ matrix.artifact }}.tar.gz" -C "$(dirname "$HOST_IMAGE")" "$(basename "$HOST_IMAGE")"
 
       - uses: actions/upload-artifact@v7
         with:

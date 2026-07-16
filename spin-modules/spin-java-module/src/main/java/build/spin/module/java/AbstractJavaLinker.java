@@ -115,15 +115,13 @@ public abstract class AbstractJavaLinker
             throw new RuntimeException("No JDKs available for jlink");
         }
 
-        // the host's own image always lives at the historical flat <packageName>/ path, resolved
-        // dynamically per build host (never hardcoded) — so existing tooling that assumes that path
-        // (e.g. spin's own self-hosting bootstrap) keeps working unmodified on any host platform.
-        // Only additional, non-host targets get namespaced under <packageName>/<os>-<arch>/.
+        // every target gets its own <packageName>/<os>-<arch>/ sibling path, including the host's own
+        // - no special-cased flat path, so targets never collide or nest inside one another
         final var hostTarget = JavaPlatform.hostTarget();
 
         final Set<Path> images = new LinkedHashSet<>();
         for (final var target : targets) {
-            images.add(linkForTarget(buildPath, analysis, mainClass.get(), target, !target.equals(hostTarget)));
+            images.add(linkForTarget(buildPath, analysis, mainClass.get(), target, target.equals(hostTarget)));
         }
         return images;
     }
@@ -132,18 +130,15 @@ public abstract class AbstractJavaLinker
                                final DependencyAnalysis analysis,
                                final String mainClass,
                                final TargetPlatform target,
-                               final boolean namespaceByTarget)
+                               final boolean isHostTarget)
         throws Exception {
 
         // establish the name of the package and script
         final var packageName = this.project.name();
         final var scriptName = packageName + ".sh";
 
-        // establish the path in which to generate the jlink runtime package; namespaced unless this is
-        // the host's own target — see the comment in jlink() above
-        final var packagePath = namespaceByTarget
-            ? buildPath.resolve(packageName).resolve(target.toString())
-            : buildPath.resolve(packageName);
+        // establish the path in which to generate the jlink runtime package
+        final var packagePath = buildPath.resolve(packageName + "-" + target);
 
         // ------
         // resolve the JDK whose jmods define the *target* platform's modules.
@@ -216,7 +211,7 @@ public abstract class AbstractJavaLinker
             Argument.of("--module-path"), Argument.of(jlinkModulePath),
             Argument.of("--output"), Argument.of(packagePath),
             Argument.of("--add-modules"), Argument.of(moduleNames)));
-        if (!namespaceByTarget) {
+        if (isHostTarget) {
             jlinkOptions.add(Argument.of("--strip-debug"));
         }
         jlinkOptions.addAll(List.of(

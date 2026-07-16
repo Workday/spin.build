@@ -40,8 +40,19 @@ trap 'rm -rf "$TMP"' EXIT
 unzip -q "$ZIP" -d "$TMP"
 EXTRACTED=$(find "$TMP" -maxdepth 1 -mindepth 1 -type d | head -1)
 
+# the zip bundles one spin-<os>-<arch>/ image per target platform; only this host's own is
+# installed locally - the others exist for distributing to those platforms, not for running here
+case "$(uname -s)" in Darwin) HOST_OS=mac ;; Linux) HOST_OS=linux ;; *) HOST_OS=other ;; esac
+case "$(uname -m)" in arm64|aarch64) HOST_ARCH=aarch64 ;; x86_64|amd64) HOST_ARCH=x86_64 ;; *) HOST_ARCH=other ;; esac
+HOST_IMAGE="$EXTRACTED/spin-${HOST_OS}-${HOST_ARCH}"
+
+if [ ! -d "$HOST_IMAGE" ]; then
+    echo "Error: no spin-${HOST_OS}-${HOST_ARCH} image found in $ZIP" >&2
+    exit 1
+fi
+
 rm -rf "$SPIN_HOME"
-mv "$EXTRACTED" "$SPIN_HOME"
+mv "$HOST_IMAGE" "$SPIN_HOME"
 
 # -----------------------------------------------------------
 # Symlink spin.sh as 'spin' on PATH

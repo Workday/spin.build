@@ -78,23 +78,23 @@ wrong is the most common mistake — if detection silently skips a staged JDK, c
 Run `spin` with diagnostics on and look for one `Discovered Java Development Kit ...` line per JDK:
 
 ```bash
-./.build/spin/bin/spin.sh --verbose clean jlink   # or your own spin binary
+spin --verbose clean jlink   # or your own already-installed spin binary
 ```
 
-Or just run the real build and inspect the output — you should see the host's image at the usual
-flat path, plus one namespaced subdirectory per additional platform:
+Or just run the real build and inspect the output — every target, including the host's own, gets
+its own `<packageName>-<os>-<arch>/` sibling directory (no flat, un-suffixed directory at all):
 
 ```
-.build/spin/                 # host's own image (flat, unchanged — same as before this feature)
-.build/spin/linux-aarch64/   # only appears if you staged a linux/aarch64 JDK
-.build/spin/mac-aarch64/     # only appears if you staged a mac/aarch64 JDK
+.build/spin-linux-x86_64/    # the host's own image, if building on a linux / intel box
+.build/spin-linux-aarch64/   # only appears if you staged a linux/aarch64 JDK
+.build/spin-mac-aarch64/     # only appears if you staged a mac/aarch64 JDK
 ```
 
 Confirm a foreign image is genuinely cross-linked, not just copied, with `file`:
 
 ```bash
-file .build/spin/mac-aarch64/bin/java
+file .build/spin-mac-aarch64/bin/java
 # -> Mach-O 64-bit arm64 executable
-file .build/spin/linux-aarch64/bin/java
+file .build/spin-linux-aarch64/bin/java
 # -> ELF 64-bit LSB pie executable, ARM aarch64
 ```
