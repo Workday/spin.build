@@ -220,7 +220,7 @@ public abstract class AbstractJavaDependencyAnalysis
                     .findFirst()
                     .map(ArtifactDescriptor::artifact)
                     .orElseGet(() -> this.catalog
-                        .getArtifact(reference)
+                        .getArtifact(reference, Optional.of(this.recorder))
                         .orElseThrow(() -> new RuntimeException("Failed to determine Artifact for " + module)));
 
                 // include the Artifact iff it satisfies the inclusion predicate
