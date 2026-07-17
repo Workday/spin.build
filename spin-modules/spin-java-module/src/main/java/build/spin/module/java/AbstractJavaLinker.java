@@ -377,6 +377,16 @@ public abstract class AbstractJavaLinker
     record NativePlatform(String osDir, String archDir) {
     }
 
+    // The raw (un-normalized) OS/arch pair extracted from a jar entry path by nativeOsArch().
+    record NativeJarEntry(String os, String arch) {
+
+        // True if this entry's (normalized) platform differs from the given canonical osDir/archDir,
+        // i.e. it's a native library built for some other platform than the one being linked for.
+        boolean isForeignTo(final String osDir, final String archDir) {
+            return !normalizeEntryOs(os).equals(osDir) || !normalizeEntryArch(arch).equals(archDir);
+        }
+    }
+
     static Optional<NativePlatform> nativePlatformFor(final TargetPlatform target) {
         final String osDir = switch (target.operatingSystem()) {
             case MAC -> "Mac";
@@ -412,24 +422,58 @@ public abstract class AbstractJavaLinker
         };
     }
 
-    // Returns the OS/arch components from a jar entry of the form: <prefix>/native/<OS>/<arch>/<file>,
-    // or null if the entry doesn't match that structure.
-    // The search requires a leading '/' before "native", so root-level entries like "native/Linux/..." are intentionally excluded.
-    static String[] nativeOsArch(final String entryName) {
+    // Normalizes the OS segment found in a jar entry path to the same canonical values
+    // produced by nativePlatformFor(), so the two can be compared directly.
+    // Handles the root-native-layout aliases (e.g. zstd-jni: "linux", "darwin", "win").
+    static String normalizeEntryOs(final String entryOs) {
+        return switch (entryOs.toLowerCase()) {
+            case "mac", "darwin", "macos", "osx" -> "Mac";
+            case "linux" -> "Linux";
+            case "windows", "win" -> "Windows";
+            default -> entryOs.toLowerCase();
+        };
+    }
+
+    // OS tokens recognized by the root-native-layout convention (see nativeOsArch below).
+    // Kept narrow so arbitrary two-segment class/resource paths (e.g. "org/example/Foo.class")
+    // are never mistaken for a native library entry.
+    private static final Set<String> ROOT_NATIVE_OS_TOKENS =
+        Set.of("mac", "darwin", "macos", "osx", "linux", "windows", "win", "aix", "freebsd", "sunos", "openbsd");
+
+    // Returns the OS/arch components from a jar entry, recognizing two conventions:
+    //   1. <prefix>/native/<OS>/<arch>/<file>  (requires a leading '/' before "native", so
+    //      root-level entries like "native/Linux/..." are intentionally excluded from this form)
+    //   2. <os>/<arch>/<file> at the jar root, where <os> is a known OS token
+    //      (e.g. zstd-jni: "linux/amd64/libzstd-jni-....so")
+    // Returns Optional.empty() if the entry matches neither structure.
+    static Optional<NativeJarEntry> nativeOsArch(final String entryName) {
         final int idx = entryName.indexOf("/native/");
-        if (idx < 0) {
-            return null;
+        if (idx >= 0) {
+            final var after = entryName.substring(idx + 8);
+            final int first = after.indexOf('/');
+            if (first < 0) {
+                return Optional.empty();
+            }
+            final int second = after.indexOf('/', first + 1);
+            if (second < 0 || after.indexOf('/', second + 1) >= 0) {
+                return Optional.empty();
+            }
+            return Optional.of(new NativeJarEntry(after.substring(0, first), after.substring(first + 1, second)));
         }
-        final var after = entryName.substring(idx + 8);
-        final int first = after.indexOf('/');
+
+        final int first = entryName.indexOf('/');
         if (first < 0) {
-            return null;
+            return Optional.empty();
         }
-        final int second = after.indexOf('/', first + 1);
-        if (second < 0 || after.indexOf('/', second + 1) >= 0) {
-            return null;
+        final int second = entryName.indexOf('/', first + 1);
+        if (second < 0 || entryName.indexOf('/', second + 1) >= 0) {
+            return Optional.empty();
         }
-        return new String[]{after.substring(0, first), after.substring(first + 1, second)};
+        final var os = entryName.substring(0, first);
+        if (!ROOT_NATIVE_OS_TOKENS.contains(os.toLowerCase())) {
+            return Optional.empty();
+        }
+        return Optional.of(new NativeJarEntry(os, entryName.substring(first + 1, second)));
     }
 
     // Returns true if any foreign-platform native entries were stripped from the jar.
@@ -438,8 +482,7 @@ public abstract class AbstractJavaLinker
         boolean hasForeignNatives = false;
         try (var zf = new ZipFile(jar.toFile())) {
             for (final var e = zf.entries(); e.hasMoreElements();) {
-                final var parts = nativeOsArch(e.nextElement().getName());
-                if (parts != null && (!parts[0].equals(osDir) || !normalizeEntryArch(parts[1]).equals(archDir))) {
+                if (nativeOsArch(e.nextElement().getName()).filter(p -> p.isForeignTo(osDir, archDir)).isPresent()) {
                     hasForeignNatives = true;
                     break;
                 }
@@ -452,8 +495,7 @@ public abstract class AbstractJavaLinker
                 try (var out = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(tmp)))) {
                     for (final var e = zf.entries(); e.hasMoreElements();) {
                         final var entry = e.nextElement();
-                        final var parts = nativeOsArch(entry.getName());
-                        if (parts != null && (!parts[0].equals(osDir) || !normalizeEntryArch(parts[1]).equals(archDir))) {
+                        if (nativeOsArch(entry.getName()).filter(p -> p.isForeignTo(osDir, archDir)).isPresent()) {
                             continue;
                         }
                         out.putNextEntry(new ZipEntry(entry.getName()));
