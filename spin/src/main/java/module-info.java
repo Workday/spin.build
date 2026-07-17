@@ -25,7 +25,6 @@ module build.spin.application {
     requires transitive build.spin.module.checkstyle;
     requires transitive build.spin.module.clean;
     requires transitive build.spin.module.configuration;
-    requires transitive build.spin.module.console;
     requires transitive build.spin.module.git;
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.junit;

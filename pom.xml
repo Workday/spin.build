@@ -250,12 +250,6 @@
 
             <dependency>
                 <groupId>build.serve</groupId>
-                <artifactId>serve-graphql</artifactId>
-                <version>${serve.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>build.serve</groupId>
                 <artifactId>serve-cors</artifactId>
                 <version>${serve.version}</version>
             </dependency>
