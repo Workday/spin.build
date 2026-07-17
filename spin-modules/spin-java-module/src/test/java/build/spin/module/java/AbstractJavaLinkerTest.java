@@ -79,41 +79,111 @@ class AbstractJavaLinkerTest {
     // --- nativeOsArch ---
 
     @Test
-    void nativeOsArch_returnsNullForEntryWithNoNativeSegment() {
-        assertThat(AbstractJavaLinker.nativeOsArch("com/example/Foo.class")).isNull();
+    void nativeOsArch_returnsEmptyForEntryWithNoNativeSegment() {
+        assertThat(AbstractJavaLinker.nativeOsArch("com/example/Foo.class")).isEmpty();
     }
 
     @Test
-    void nativeOsArch_returnsNullWhenNativeIsAtRoot() {
-        assertThat(AbstractJavaLinker.nativeOsArch("native/Linux/x86_64/libfoo.so")).isNull();
+    void nativeOsArch_returnsEmptyWhenNativeIsAtRoot() {
+        assertThat(AbstractJavaLinker.nativeOsArch("native/Linux/x86_64/libfoo.so")).isEmpty();
     }
 
     @Test
-    void nativeOsArch_returnsNullWhenTooShallow() {
-        assertThat(AbstractJavaLinker.nativeOsArch("com/example/native/Linux/libfoo.so")).isNull();
+    void nativeOsArch_returnsEmptyWhenTooShallow() {
+        assertThat(AbstractJavaLinker.nativeOsArch("com/example/native/Linux/libfoo.so")).isEmpty();
     }
 
     @Test
-    void nativeOsArch_returnsNullWhenTooDeep() {
-        assertThat(AbstractJavaLinker.nativeOsArch("com/example/native/Linux/x86_64/extra/libfoo.so")).isNull();
+    void nativeOsArch_returnsEmptyWhenTooDeep() {
+        assertThat(AbstractJavaLinker.nativeOsArch("com/example/native/Linux/x86_64/extra/libfoo.so")).isEmpty();
     }
 
     @Test
     void nativeOsArch_parsesStandardEntry() {
         final var parts = AbstractJavaLinker.nativeOsArch("com/example/native/Linux/x86_64/libfoo.so");
-        assertThat(parts).containsExactly("Linux", "x86_64");
+        assertThat(parts).contains(new AbstractJavaLinker.NativeJarEntry("Linux", "x86_64"));
     }
 
     @Test
     void nativeOsArch_parsesMetaInfEntry() {
         final var parts = AbstractJavaLinker.nativeOsArch("META-INF/native/Mac/aarch64/libbar.jnilib");
-        assertThat(parts).containsExactly("Mac", "aarch64");
+        assertThat(parts).contains(new AbstractJavaLinker.NativeJarEntry("Mac", "aarch64"));
     }
 
     @Test
     void nativeOsArch_parsesWindowsEntry() {
         final var parts = AbstractJavaLinker.nativeOsArch("org/sqlite/native/Windows/x86_64/sqlite.dll");
-        assertThat(parts).containsExactly("Windows", "x86_64");
+        assertThat(parts).contains(new AbstractJavaLinker.NativeJarEntry("Windows", "x86_64"));
+    }
+
+    // --- nativeOsArch: root-level convention (e.g. zstd-jni) ---
+
+    @Test
+    void nativeOsArch_parsesRootLevelLinuxEntry() {
+        final var parts = AbstractJavaLinker.nativeOsArch("linux/amd64/libzstd-jni-1.5.7-6.so");
+        assertThat(parts).contains(new AbstractJavaLinker.NativeJarEntry("linux", "amd64"));
+    }
+
+    @Test
+    void nativeOsArch_parsesRootLevelDarwinEntry() {
+        final var parts = AbstractJavaLinker.nativeOsArch("darwin/aarch64/libzstd-jni-1.5.7-6.dylib");
+        assertThat(parts).contains(new AbstractJavaLinker.NativeJarEntry("darwin", "aarch64"));
+    }
+
+    @Test
+    void nativeOsArch_parsesRootLevelWinEntry() {
+        final var parts = AbstractJavaLinker.nativeOsArch("win/amd64/libzstd-jni-1.5.7-6.dll");
+        assertThat(parts).contains(new AbstractJavaLinker.NativeJarEntry("win", "amd64"));
+    }
+
+    @Test
+    void nativeOsArch_parsesRootLevelUnsupportedOsEntry() {
+        // aix/freebsd have no canonical NativePlatform mapping, but still parse as native entries
+        // so they're correctly treated as foreign (and stripped) rather than ignored.
+        assertThat(AbstractJavaLinker.nativeOsArch("aix/ppc64/libzstd-jni-1.5.7-6.so"))
+            .contains(new AbstractJavaLinker.NativeJarEntry("aix", "ppc64"));
+        assertThat(AbstractJavaLinker.nativeOsArch("freebsd/amd64/libzstd-jni-1.5.7-6.so"))
+            .contains(new AbstractJavaLinker.NativeJarEntry("freebsd", "amd64"));
+    }
+
+    @Test
+    void nativeOsArch_doesNotMatchTwoSegmentPathsWithUnknownOsToken() {
+        // exactly two segments, but "org" isn't a recognized OS token — must not false-positive
+        // on ordinary two-directory-deep class/resource paths.
+        assertThat(AbstractJavaLinker.nativeOsArch("org/example/Foo.class")).isEmpty();
+        assertThat(AbstractJavaLinker.nativeOsArch("com/foo/Bar.class")).isEmpty();
+    }
+
+    @Test
+    void nativeOsArch_preferNativeSlashConventionOverRootConvention() {
+        // an entry containing "/native/" is always parsed via that convention, even if it would
+        // also happen to look like a root-level two-segment path further down the string
+        final var parts = AbstractJavaLinker.nativeOsArch("some/prefix/native/Linux/x86_64/lib.so");
+        assertThat(parts).contains(new AbstractJavaLinker.NativeJarEntry("Linux", "x86_64"));
+    }
+
+    // --- normalizeEntryOs ---
+
+    @Test
+    void normalizeEntryOs_canonicalizesMacAliases() {
+        assertThat(AbstractJavaLinker.normalizeEntryOs("darwin")).isEqualTo("Mac");
+        assertThat(AbstractJavaLinker.normalizeEntryOs("macos")).isEqualTo("Mac");
+        assertThat(AbstractJavaLinker.normalizeEntryOs("osx")).isEqualTo("Mac");
+        assertThat(AbstractJavaLinker.normalizeEntryOs("Mac")).isEqualTo("Mac");
+    }
+
+    @Test
+    void normalizeEntryOs_canonicalizesLinuxAndWindowsAliases() {
+        assertThat(AbstractJavaLinker.normalizeEntryOs("linux")).isEqualTo("Linux");
+        assertThat(AbstractJavaLinker.normalizeEntryOs("Linux")).isEqualTo("Linux");
+        assertThat(AbstractJavaLinker.normalizeEntryOs("win")).isEqualTo("Windows");
+        assertThat(AbstractJavaLinker.normalizeEntryOs("windows")).isEqualTo("Windows");
+    }
+
+    @Test
+    void normalizeEntryOs_passesUnknownOsThrough() {
+        assertThat(AbstractJavaLinker.normalizeEntryOs("aix")).isEqualTo("aix");
+        assertThat(AbstractJavaLinker.normalizeEntryOs("freebsd")).isEqualTo("freebsd");
     }
 
     // --- normalizeEntryArch ---
@@ -217,5 +287,39 @@ class AbstractJavaLinkerTest {
         final var sizeBefore = Files.size(jar);
         AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64");
         assertThat(Files.size(jar)).isEqualTo(sizeBefore);
+    }
+
+    // --- stripForeignNatives: root-level convention (e.g. zstd-jni) ---
+
+    @Test
+    void stripForeignNatives_stripsForeignPlatformsFromZstdJniStyleJar() throws Exception {
+        final var jar = buildJar(
+            "linux/amd64/libzstd-jni-1.5.7-6.so",
+            "linux/aarch64/libzstd-jni-1.5.7-6.so",
+            "darwin/aarch64/libzstd-jni-1.5.7-6.dylib",
+            "darwin/x86_64/libzstd-jni-1.5.7-6.dylib",
+            "win/amd64/libzstd-jni-1.5.7-6.dll",
+            "aix/ppc64/libzstd-jni-1.5.7-6.so");
+        assertThat(AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64")).isTrue();
+        assertThat(jarEntryNames(jar)).containsExactly("linux/amd64/libzstd-jni-1.5.7-6.so");
+    }
+
+    @Test
+    void stripForeignNatives_keepsMatchingZstdJniEntryForMacTarget() throws Exception {
+        final var jar = buildJar(
+            "linux/amd64/libzstd-jni-1.5.7-6.so",
+            "darwin/aarch64/libzstd-jni-1.5.7-6.dylib",
+            "win/amd64/libzstd-jni-1.5.7-6.dll");
+        assertThat(AbstractJavaLinker.stripForeignNatives(jar, "Mac", "aarch64")).isTrue();
+        assertThat(jarEntryNames(jar)).containsExactly("darwin/aarch64/libzstd-jni-1.5.7-6.dylib");
+    }
+
+    @Test
+    void stripForeignNatives_doesNotStripOrdinaryTwoSegmentClasspathEntries() throws Exception {
+        // regression guard: ordinary two-directory-deep resource/class paths must never be
+        // mistaken for the root-level native convention just because they have two segments
+        final var jar = buildJar("org/example/Foo.class", "com/foo/Bar.class");
+        assertThat(AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64")).isFalse();
+        assertThat(jarEntryNames(jar)).containsExactlyInAnyOrder("org/example/Foo.class", "com/foo/Bar.class");
     }
 }
