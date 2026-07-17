@@ -60,12 +60,6 @@
 
         <dependency>
             <groupId>build.spin.module</groupId>
-            <artifactId>spin-console-module</artifactId>
-            <version>${revision}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>build.spin.module</groupId>
             <artifactId>spin-git-module</artifactId>
             <version>${revision}</version>
         </dependency>
@@ -161,7 +155,6 @@
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-checkstyle-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-clean-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-configuration-module</ignoredUnusedDeclaredDependency>
-                        <ignoredUnusedDeclaredDependency>build.spin.module:spin-console-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-git-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-java-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-junit-module</ignoredUnusedDeclaredDependency>

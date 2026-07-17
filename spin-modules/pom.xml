@@ -53,7 +53,6 @@
         <module>spin-clean-module</module>
         <module>spin-checkstyle-module</module>
         <module>spin-configuration-module</module>
-        <module>spin-console-module</module>
         <module>spin-git-module</module>
         <module>spin-java-module</module>
         <module>spin-engine-tests</module>
