@@ -78,12 +78,6 @@
 
         <dependency>
             <groupId>build.spin.module</groupId>
-            <artifactId>spin-language-server-module</artifactId>
-            <version>${revision}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>build.spin.module</groupId>
             <artifactId>spin-maven-module</artifactId>
             <version>${revision}</version>
         </dependency>
@@ -158,7 +152,6 @@
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-git-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-java-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-junit-module</ignoredUnusedDeclaredDependency>
-                        <ignoredUnusedDeclaredDependency>build.spin.module:spin-language-server-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-maven-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-module-system-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-reporting-module</ignoredUnusedDeclaredDependency>
