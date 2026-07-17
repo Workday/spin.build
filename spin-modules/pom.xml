@@ -60,7 +60,6 @@
         <module>spin-junit-module</module>
         <module>spin-maven-module</module>
         <module>spin-module-system-module</module>
-        <module>spin-language-server-module</module>
         <module>spin-reporting-module</module>
     </modules>
 </project>

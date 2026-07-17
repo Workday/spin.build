@@ -28,7 +28,6 @@ module build.spin.application {
     requires transitive build.spin.module.git;
     requires transitive build.spin.module.java;
     requires transitive build.spin.module.junit;
-    requires transitive build.spin.module.languageserver;
     requires transitive build.spin.module.maven;
     requires transitive build.spin.module.modulesystem;
     requires transitive build.spin.module.reporting;
