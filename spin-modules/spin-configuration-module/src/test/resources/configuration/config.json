@@ -1,3 +1,7 @@
 {
-  "message": "hello world"
+  "message": "hello world",
+  "server": {
+    "port": 8080,
+    "verbose": true
+  }
 }

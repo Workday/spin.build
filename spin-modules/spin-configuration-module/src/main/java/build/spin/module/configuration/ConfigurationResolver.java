@@ -20,12 +20,17 @@ package build.spin.module.configuration;
  * #L%
  */
 
+import build.base.foundation.Strings;
+import build.base.foundation.memoizer.Memoizer;
 import build.base.foundation.stream.Streamable;
 import build.base.io.PathSet;
 import build.base.json.Json;
+import build.base.json.JsonBoolean;
+import build.base.json.JsonNumber;
+import build.base.json.JsonObject;
 import build.base.json.JsonParseException;
+import build.base.json.JsonString;
 import build.base.json.JsonValue;
-import build.base.telemetry.Activity;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.foundation.usage.AnnotationTypeUsage;
 import build.codemodel.injection.Binding;
@@ -33,20 +38,19 @@ import build.codemodel.injection.Dependency;
 import build.codemodel.injection.Resolver;
 import build.codemodel.injection.ValueBinding;
 import build.codemodel.jdk.TypeUsages;
+import build.spin.common.util.AnnotationValues;
+import jakarta.inject.Named;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -77,13 +81,20 @@ public class ConfigurationResolver
     private final Function<? super Dependency, String> baseFileNameFactory;
 
     /**
-     * A {@link Map} from {@link Configuration} file types (module) to {@link BiFunction}s that produce an
-     * {@link Object} of a required {@link Class} from a {@link Configuration} file located at a {@link Path}.
+     * A {@link Map} from {@link Configuration} file types (extension) to the {@link FileTypeResolver} describing
+     * how to read/parse and resolve values from files of that type.
      * <p>
      * Common file types (extensions) are ".properties", ".json", ".xml" and ".yaml"
      * </p>
      */
-    private final LinkedHashMap<String, BiFunction<Path, Class<?>, Object>> resolvers;
+    private final LinkedHashMap<String, FileTypeResolver<?>> resolvers;
+
+    /**
+     * A {@link Memoizer} of previously parsed {@link Configuration} files (a {@link JsonValue} or {@link Properties},
+     * depending on file type), keyed by {@link Path} (which are always unique), so that multiple {@code @Named} (or
+     * other) values sourced from the same file don't cause it to be re-read/re-parsed.
+     */
+    private final Memoizer<Path, Object> configurationsByPath;
 
     /**
      * Constructs a {@link ConfigurationResolver} for the specified {@link FileSystem}.
@@ -103,41 +114,209 @@ public class ConfigurationResolver
         this.baseFileNameFactory = Objects.requireNonNull(baseFileNameFactory,
             "The File Name Factory must not be null");
 
+        // establish the memo of previously parsed Configuration files
+        this.configurationsByPath = Memoizer.of(this::parse).concurrent().build();
+
         // establish the supported file type resolvers
         this.resolvers = new LinkedHashMap<>();
+        this.resolvers.put(".json", FileTypeResolver.json(this.recorder));
+        this.resolvers.put(".properties", FileTypeResolver.properties(this.recorder));
+    }
 
-        // include .json support
-        this.resolvers.put(".json", (path, requiredClass) -> {
-            if (!requiredClass.equals(JsonValue.class)) {
-                return null;
-            }
-            try (Activity activity = this.recorder.commence("Reading Configuration File [%s]", path)) {
-                try (BufferedReader reader = Files.newBufferedReader(path)) {
-                    return Json.parse(reader);
-                } catch (final IOException | JsonParseException e) {
-                    activity.completeExceptionally(e);
-                    return null;
+    /**
+     * Coerces the raw {@link String} value to the required {@link Class}.
+     *
+     * @param raw           the raw {@link String} value
+     * @param requiredClass the required {@link Class} to coerce the value to
+     * @return the coerced {@link Object}
+     */
+    private static Object coerce(final String raw, final Class<?> requiredClass) {
+        return raw == null ? null : Strings.convert(raw, requiredClass);
+    }
+
+    /**
+     * Resolves a single, specifically named value from a parsed {@link Configuration} value, coerced to a
+     * required {@link Class}.
+     *
+     * @param <A> the type of the parsed {@link Configuration} value
+     * @param <B> the required {@link Class}
+     * @param <C> the type of the name
+     * @param <R> the type of the resolved result
+     */
+    @FunctionalInterface
+    private interface NamedValueResolver<A, B, C, R> {
+
+        R resolve(A a, B b, C c);
+    }
+
+    /**
+     * Reads/parses a {@link Configuration} file located at a {@link Path} into a value of type {@code T}.
+     *
+     * @param <T> the type of value produced when the file is read/parsed
+     */
+    @FunctionalInterface
+    private interface Reader<T> {
+
+        T read(Path path);
+    }
+
+    /**
+     * Describes how to resolve {@link Configuration} values from a particular type of file: how to read/parse the
+     * file into a value of type {@code T} (eg: a {@link JsonValue} or {@link Properties}), and how to resolve a
+     * single, specifically named (and possibly nested, {@code "/"}-separated) value, coerced to a required
+     * {@link Class}, from that parsed value.
+     *
+     * @param <T> the type of value produced when a file of this type is read/parsed
+     */
+    private interface FileTypeResolver<T> {
+
+        /**
+         * The {@link Reader} to read/parse a file located at a {@link Path} into a value of type {@code T}.
+         *
+         * @return the {@link Reader}
+         */
+        Reader<T> reader();
+
+        /**
+         * The {@link NamedValueResolver} to resolve a single, specifically named (and possibly nested, {@code "/"}
+         * -separated) value, coerced to the required {@link Class}, from a parsed value of type {@code T}.
+         *
+         * @return the {@link NamedValueResolver}
+         */
+        NamedValueResolver<T, Class<?>, String, Object> resolver();
+
+        /**
+         * Creates the {@link FileTypeResolver} for {@code .json} {@link Configuration} files.
+         *
+         * @param recorder the {@link TelemetryRecorder} to use when reading/parsing files
+         * @return the {@code .json} {@link FileTypeResolver}
+         */
+        static FileTypeResolver<JsonValue> json(final TelemetryRecorder recorder) {
+            return new FileTypeResolver<JsonValue>() {
+                @Override
+                public Reader<JsonValue> reader() {
+                    return path -> {
+                        try (var activity = recorder.commence("Reading Configuration File [%s]", path)) {
+                            try (var reader = Files.newBufferedReader(path)) {
+                                return Json.parse(reader);
+                            } catch (final IOException | JsonParseException e) {
+                                activity.completeExceptionally(e);
+                                return null;
+                            }
+                        }
+                    };
                 }
-            }
-        });
 
-        // include .properties support
-        this.resolvers.put(".properties", (path, requiredClass) -> {
-            if (requiredClass.equals(Properties.class)) {
-                try (Activity activity = this.recorder.commence("Reading Configuration File [%s]", path)) {
-                    try (BufferedReader reader = Files.newBufferedReader(path)) {
-                        final Properties properties = new Properties();
-                        properties.load(reader);
-                        return properties;
-                    } catch (final IOException e) {
-                        activity.completeExceptionally(e);
-                        return null;
+                @Override
+                public NamedValueResolver<JsonValue, Class<?>, String, Object> resolver() {
+                    return (json, requiredClass, name) -> coerce(navigateJson(json, name.split("/")), requiredClass);
+                }
+
+                /**
+                 * Navigates a {@link JsonValue} tree, following the specified path segments, returning the raw
+                 * {@link String} representation of the scalar value found at the end of the path.
+                 *
+                 * @param root     the root {@link JsonValue}
+                 * @param segments the path segments to navigate
+                 * @return the raw {@link String} value, or {@code null} if the path can't be navigated or resolves
+                 *         to a non-scalar value
+                 */
+                private static String navigateJson(final JsonValue root, final String[] segments) {
+                    var current = root;
+
+                    for (final String segment : segments) {
+                        if (!(current instanceof JsonObject object) || !object.has(segment)) {
+                            return null;
+                        }
+                        current = object.get(segment);
                     }
+
+                    return switch (current) {
+                        case JsonString string -> string.value();
+                        case JsonNumber number -> number.toNumber().toString();
+                        case JsonBoolean bool -> String.valueOf(bool.value());
+                        default -> null;
+                    };
                 }
-            } else {
-                return null;
-            }
-        });
+            };
+        }
+
+        /**
+         * Creates the {@link FileTypeResolver} for {@code .properties} {@link Configuration} files.
+         *
+         * @param recorder the {@link TelemetryRecorder} to use when reading/parsing files
+         * @return the {@code .properties} {@link FileTypeResolver}
+         */
+        static FileTypeResolver<Properties> properties(final TelemetryRecorder recorder) {
+            return new FileTypeResolver<Properties>() {
+                @Override
+                public Reader<Properties> reader() {
+                    return path -> {
+                        try (var activity = recorder.commence("Reading Configuration File [%s]", path)) {
+                            try (var reader = Files.newBufferedReader(path)) {
+                                final var properties = new Properties();
+                                properties.load(reader);
+                                return properties;
+                            } catch (final IOException e) {
+                                activity.completeExceptionally(e);
+                                return null;
+                            }
+                        }
+                    };
+                }
+
+                @Override
+                public NamedValueResolver<Properties, Class<?>, String, Object> resolver() {
+                    return (properties, requiredClass, name) ->
+                        coerce(properties.getProperty(name.replace('/', '.')), requiredClass);
+                }
+            };
+        }
+    }
+
+    /**
+     * Resolves the value for the {@link Configuration} file located at the specified {@link Path}, using the
+     * specified {@link FileTypeResolver}, either the single specifically named value within it (when {@code name}
+     * is present), or the whole parsed value itself (when it's an instance of the required {@link Class}).
+     *
+     * @param fileTypeResolver the {@link FileTypeResolver} for the type of file located at the {@link Path}
+     * @param path             the {@link Path} to the {@link Configuration} file
+     * @param requiredClass    the required {@link Class}
+     * @param name             the (possibly {@code "/"}-separated) name of a single value to resolve, if any
+     * @param <T>              the type of value produced when the file is read/parsed
+     * @return the resolved {@link Object}, or {@code null} if it can't be resolved
+     */
+    private <T> Object resolveValue(final FileTypeResolver<T> fileTypeResolver,
+                                    final Path path,
+                                    final Class<?> requiredClass,
+                                    final Optional<String> name) {
+
+        @SuppressWarnings("unchecked")
+        final var value = (T) this.configurationsByPath.compute(path);
+
+        if (value == null) {
+            return null;
+        }
+
+        return name
+            .map(named -> fileTypeResolver.resolver().resolve(value, requiredClass, named))
+            .orElseGet(() -> requiredClass.isInstance(value) ? value : null);
+    }
+
+    /**
+     * Parses the {@link Configuration} file located at the specified {@link Path}, based on its file type
+     * (extension), producing either a {@link JsonValue} or {@link Properties} (or {@code null}, if the file type
+     * isn't supported, or it can't be read/parsed).
+     *
+     * @param path the {@link Path} to the {@link Configuration} file
+     * @return the parsed {@link JsonValue} or {@link Properties}, or {@code null}
+     */
+    private Object parse(final Path path) {
+        final var fileName = path.toString();
+        final var extension = fileName.substring(fileName.lastIndexOf("."));
+
+        final var fileTypeResolver = this.resolvers.get(extension);
+        return fileTypeResolver == null ? null : fileTypeResolver.reader().read(path);
     }
 
     private static Class<?> getRequiredClass(final Dependency dependency) {
@@ -156,7 +335,7 @@ public class ConfigurationResolver
     public Optional<? extends Binding<Object>> resolve(final Dependency dependency) {
 
         // only a @Configuration dependency may be resolved
-        final boolean hasConfiguration = dependency.typeUsage()
+        final var hasConfiguration = dependency.typeUsage()
             .traits(AnnotationTypeUsage.class)
             .anyMatch(a -> a.typeName().canonicalName().equals(Configuration.class.getCanonicalName()));
 
@@ -164,8 +343,15 @@ public class ConfigurationResolver
             return Optional.empty();
         }
 
+        // determine whether a specific (possibly nested, "/"-separated) named value is required
+        final var name = dependency.typeUsage()
+            .traits(AnnotationTypeUsage.class)
+            .filter(a -> a.typeName().canonicalName().equals(Named.class.getCanonicalName()))
+            .findFirst()
+            .flatMap(a -> AnnotationValues.firstLiteral(a, String.class));
+
         // ie: Handle if Optional<T>, Streamable<T>, Iterable<T> was specified
-        final Class<?> requiredClass = getRequiredClass(dependency);
+        final var requiredClass = getRequiredClass(dependency);
         if (requiredClass == null) {
             return Optional.empty();
         }
@@ -173,12 +359,12 @@ public class ConfigurationResolver
         if (requiredClass.equals(Optional.class)) {
             // obtain the Optional<T> configuration to be injected
             return firstTypeArg(dependency)
-                .map(type -> getValues(dependency, type).stream().findFirst())
+                .map(type -> getValues(dependency, type, name).stream().findFirst())
                 .map(val -> bind(dependency, (Object) val));
         } else if (requiredClass.equals(Hierarchical.class)) {
             // obtain the list of values in the hierarchy
-            final List<Object> values = firstTypeArg(dependency)
-                .map(type -> getValues(dependency, type).stream())
+            final var values = firstTypeArg(dependency)
+                .map(type -> getValues(dependency, type, name).stream())
                 .orElse(Stream.empty())
                 .collect(Collectors.toList());
 
@@ -197,26 +383,34 @@ public class ConfigurationResolver
 
             return Optional.of(bind(dependency, hierarchical));
         } else {
-            // obtain the T configuration to be injected
-            return getValues(dependency, requiredClass).stream()
+            // obtain the T configuration (or specifically named value) to be injected
+            return getValues(dependency, requiredClass, name).stream()
                 .findFirst()
                 .map(val -> bind(dependency, val));
         }
     }
 
     /**
-     * Obtains the {@link Object}s of the specified {@link Class} for the provided {@link Dependency},
-     * produced by deserializing {@link Configuration} files.
+     * Obtains the {@link Object}s of the specified {@link Class} for the provided {@link Dependency}, produced by
+     * deserializing {@link Configuration} files, or, when {@code name} is present, the single, specifically named
+     * (and possibly nested, {@code "/"}-separated) value located within them, coerced to the required {@link Class}.
+     * <p>
+     * When the underlying {@link Configuration} is JSON, the segments of the name are used to navigate the JSON
+     * structure, resolving the value found at the end of the path. When the underlying {@link Configuration} is a
+     * {@code .properties} file, the {@code "/"} separators are replaced with {@code "."} and the resulting flat key
+     * is used to resolve the value.
      *
      * @param dependency    the {@link Dependency}
      * @param requiredClass the required {@link Class}
+     * @param name          the (possibly {@code "/"}-separated) name of a single value to resolve, if any
      * @return a {@link Streamable} of {@link Object}s
      */
     private Streamable<Object> getValues(final Dependency dependency,
-                                         final Class<?> requiredClass) {
+                                         final Class<?> requiredClass,
+                                         final Optional<String> name) {
 
         // obtain the base file name we can use to locate configuration files
-        final String baseFileName = this.baseFileNameFactory.apply(dependency);
+        final var baseFileName = this.baseFileNameFactory.apply(dependency);
 
         return Streamable.of(this.configurationPaths.stream()
             .filter(Files::exists)
@@ -238,11 +432,11 @@ public class ConfigurationResolver
                     // is only the Path required?
                     return path;
                 } else {
-                    // attempt to use resolver for each type of file to parse the File
-                    final String fileName = path.toString();
-                    final String extension = fileName.substring(fileName.lastIndexOf("."));
-                    final BiFunction<Path, Class<?>, Object> resolver = this.resolvers.get(extension);
-                    return resolver == null ? null : resolver.apply(path, requiredClass);
+                    // attempt to use the FileTypeResolver for the file's type to resolve the value
+                    final var fileName = path.toString();
+                    final var extension = fileName.substring(fileName.lastIndexOf("."));
+                    final var fileTypeResolver = this.resolvers.get(extension);
+                    return fileTypeResolver == null ? null : resolveValue(fileTypeResolver, path, requiredClass, name);
                 }
             })
             .filter(Objects::nonNull));
