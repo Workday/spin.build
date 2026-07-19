@@ -45,14 +45,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 /**
- * Tests for {@link PomWorkspaceWalker}. Uses a simple collecting visitor to verify which
+ * Tests for {@link PomDependencyGraphWalker}. Uses a simple collecting visitor to verify which
  * (module-name list, coordinate) tuples the walker emits for a given workspace layout.
  * <p>
  * These tests exercise the shared walking algorithm that backs both {@link PomBasedModuleCatalog}
  * and {@link PomBasedModuleVersioning} — the Catalog/Versioning-specific test files only verify
  * their visitor wiring, not the walker behavior.
  */
-class PomWorkspaceWalkerTests {
+class PomDependencyGraphWalkerTests {
 
     private static final TelemetryRecorder RECORDER = mock(TelemetryRecorder.class);
     private static final JDKCodeModel CODE_MODEL = new JDKCodeModel(new NonCachingNameProvider());
@@ -64,7 +64,7 @@ class PomWorkspaceWalkerTests {
     @Test
     void walk_emitsNothingWhenNoPomExists(@TempDir final Path workspace) {
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
         assertThat(visitor.visits).isEmpty();
     }
 
@@ -86,7 +86,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         final Visit v = visitor.forCoordinate("org.junit.jupiter", "junit-jupiter-api");
         assertThat(v.version).isEqualTo("5.10.0");
@@ -114,7 +114,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("org.assertj", "assertj-core").version).isEqualTo("3.25.0");
     }
@@ -160,7 +160,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
     }
@@ -187,7 +187,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // org.junit.jupiter + last segment "api" -> org.junit.jupiter.api
         assertThat(visitor.forCoordinate("org.junit.jupiter", "junit-jupiter-api").names)
@@ -212,7 +212,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // build.base + artifactId-minus-groupId-prefix -> build.base.telemetry.foundation
         assertThat(visitor.forCoordinate("build.base", "base-telemetry-foundation").names)
@@ -237,7 +237,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // build.codemodel + artifactId-minus-groupId-suffix -> build.codemodel.jdk
         assertThat(visitor.forCoordinate("build.codemodel", "jdk-codemodel").names)
@@ -262,7 +262,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // parent groupId + last artifact segment -> com.fasterxml.jackson.databind
         assertThat(visitor.forCoordinate("com.fasterxml.jackson.core", "jackson-databind").names)
@@ -292,7 +292,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final var visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // base-transport-json must NOT claim build.base.json -- that belongs to base-json
         assertThat(visitor.forCoordinate("build.base", "base-transport-json").names)
@@ -330,7 +330,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final var visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // example-api is the rightful owner of com.example.api via groupPrefixedModuleName
         assertThat(visitor.forCoordinate("com.example", "example-api").names)
@@ -361,7 +361,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final var visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("io.netty", "netty-transport").names)
             .doesNotContain("io.transport");
@@ -383,7 +383,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // root pom has no deps and its own artifact is deliberately NOT visited
         assertThat(visitor.visits).isEmpty();
@@ -413,7 +413,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // child's groupId/version inherited from <parent>; names come from derivation
         final Visit v = visitor.forCoordinate("com.example", "child-module");
@@ -447,7 +447,7 @@ class PomWorkspaceWalkerTests {
             "module com.example.totally.custom {\n}\n");
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // when module-info.java is present, its declared name is the ONLY name the walker emits
         final Visit v = visitor.forCoordinate("com.example", "child-module");
@@ -494,7 +494,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("build.codemodel", "codemodel-expression").version)
             .isEqualTo("0.19.0");
@@ -537,7 +537,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.coordinateVisited("org.only.in.external.test", "external-test-only")).isFalse();
     }
@@ -580,7 +580,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         // base-retryable is only reachable through the test-scoped workspace dep chain
         assertThat(visitor.forCoordinate("build.base", "base-retryable").names)
@@ -604,7 +604,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("com.example", "sibling").version).isEqualTo("2.0.0");
     }
@@ -637,7 +637,7 @@ class PomWorkspaceWalkerTests {
             "io.helidon.config.metadata");
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         // only the manifest's Automatic-Module-Name is registered — not the groupId, and not any
         // of the derived heuristic names that would otherwise let this artifact claim a name
@@ -669,7 +669,7 @@ class PomWorkspaceWalkerTests {
             "com.example.totally.custom");
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("com.example", "example-thing").names)
             .containsExactly("com.example.totally.custom");
@@ -705,7 +705,7 @@ class PomWorkspaceWalkerTests {
         }
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("com.example", "example-thing").names)
             .containsExactly("com.example.named.module");
@@ -748,7 +748,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // ${project.groupId}/${project.version} must resolve against the submodule's OWN
         // coordinates (com.acme.sub:2.0.0), not the parent's (com.example:1.0.0)
@@ -820,7 +820,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.22.1");
     }
@@ -868,7 +868,7 @@ class PomWorkspaceWalkerTests {
             "com.example.b.stale.old.name");
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.visits.stream()
             .filter(v -> v.groupId().equals("com.example") && v.artifactId().equals("b-module"))
@@ -913,7 +913,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final TelemetryRecorder recorder = mock(TelemetryRecorder.class);
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), recorder, CODE_MODEL, new CollectingVisitor());
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), recorder, CODE_MODEL, new CollectingVisitor());
 
         verify(recorder).warn(anyString(), eq("com.example"), eq("b-module"), eq("9.9.9"), eq("1.0.0"));
     }
@@ -959,7 +959,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         assertThat(visitor.forCoordinate("com.acme.sub", "managed-sibling").version).isEqualTo("3.0.0");
     }
@@ -1037,7 +1037,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         // base-marshalling has no literal version in consumer's pom -- it is only resolvable
         // because the imported BOM's dependencyManagement entry was merged in
@@ -1115,7 +1115,7 @@ class PomWorkspaceWalkerTests {
             """);
 
         final CollectingVisitor visitor = new CollectingVisitor();
-        PomWorkspaceWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
 
         // consumer's own literal entry (0.99.0) must win over the imported BOM's (0.22.1)
         assertThat(visitor.forCoordinate("build.base", "base-marshalling").version).isEqualTo("0.99.0");
@@ -1163,7 +1163,7 @@ class PomWorkspaceWalkerTests {
     /**
      * Simple visitor that captures every visit made by the walker for later inspection.
      */
-    private static final class CollectingVisitor implements PomWorkspaceWalker.CoordinateVisitor {
+    private static final class CollectingVisitor implements PomDependencyGraphWalker.CoordinateVisitor {
 
         final List<Visit> visits = new ArrayList<>();
 

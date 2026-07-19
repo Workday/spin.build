@@ -84,12 +84,12 @@ public class PomBasedCompilerArguments
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return PomXmlUtils.isMavenWorkspaceRoot(path);
+            return PomWorkspaces.isMavenWorkspaceRoot(path);
         }
 
         @Override
         public boolean isDetectedIn(final Project project) {
-            return PomXmlUtils.isMavenWorkspaceProject(project);
+            return PomWorkspaces.isMavenWorkspaceProject(project);
         }
     }
 }

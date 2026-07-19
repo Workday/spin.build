@@ -33,6 +33,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -45,26 +46,41 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 /**
  * Reads a {@code pom.xml} into an effective {@link Pom} model: parent inheritance applied,
- * {@code <dependencyManagement>} and {@code <pluginManagement>} merged into dependencies and
- * plugins, and {@code ${...}} property references interpolated against the effective property
- * map plus a small set of Maven built-ins.
+ * {@code <dependencyManagement>} (including {@code <scope>import</scope>} BOM merging) and
+ * {@code <pluginManagement>} merged into dependencies and plugins, active {@code <profiles>}
+ * (jdk/os/property/file/activeByDefault activation) folded in, {@code <exclusions>} preserved on
+ * each dependency, and {@code ${...}} property references interpolated against the effective
+ * property map plus a small set of Maven built-ins.
  * <p>
- * Parent resolution tries {@code <relativePath>} first (default {@code ../pom.xml}) and falls
- * back to the local repository at
- * {@code <localRepo>/<groupId-as-path>/<artifactId>/<version>/<artifactId>-<version>.pom}.
- * Cycles in the parent chain are guarded against.
+ * Parent and BOM-import POMs are located via a {@link PomLocator}. The default locator (used by
+ * the two-arg constructor) only looks in the local repository and never downloads; a caller that
+ * needs to fetch missing POMs over the network (e.g. an artifact resolver) supplies its own.
+ * <p>
+ * Parent resolution tries {@code <relativePath>} first (default {@code ../pom.xml}) when
+ * {@code allowRelativePath} is enabled, and falls back to the {@link PomLocator} otherwise.
+ * Cycles in the parent/BOM-import chain are guarded against.
  * <p>
  * Coords of the form {@code ${groupId:artifactId:type[:classifier]}} (output of the
  * {@code maven-dependency-plugin:properties} goal) are <strong>not</strong> interpolated here —
  * they require a resolved test classpath, which lives outside the pom.
  * <p>
- * Reads are cached by absolute path per {@code PomReader} instance so parent chains and sibling
- * sub-projects share parsed parents.
+ * Reads are cached by absolute path per {@code PomReader} instance so parent chains, BOM imports,
+ * and sibling sub-projects share parsed POMs.
  *
  * @author reed.vonredwitz
  * @since Apr-2026
  */
 public final class PomReader {
+
+    /**
+     * Locates the local file for a POM given its coordinates. Implementations may download the
+     * POM first if it isn't already present; {@link #locate} returning empty means the POM could
+     * not be made available (e.g. offline and not cached).
+     */
+    @FunctionalInterface
+    public interface PomLocator {
+        Optional<Path> locate(String groupId, String artifactId, String version);
+    }
 
     private static final Pattern PROPERTY_REF = Pattern.compile("\\$\\{([^}]+)}");
 
@@ -76,12 +92,35 @@ public final class PomReader {
 
     private final Path localRepository;
     private final TelemetryRecorder recorder;
+    private final boolean allowRelativePath;
+    private final PomLocator locator;
     private final Map<Path, Pom> cache = new HashMap<>();
 
+    /**
+     * Reads POMs already present on disk: parent resolution tries {@code <relativePath>} first,
+     * then falls back to the local repository, never downloading.
+     */
     public PomReader(final Path localRepository,
                      final TelemetryRecorder recorder) {
+        this(localRepository, recorder, true,
+            (groupId, artifactId, version) -> localRepoPomPath(localRepository, groupId, artifactId, version));
+    }
+
+    /**
+     * @param allowRelativePath whether parent resolution should try {@code <relativePath>} first.
+     *     Only meaningful for workspace poms with sibling reactor modules on disk; a reader that
+     *     only ever resolves downloaded repository artifacts should pass {@code false}.
+     * @param locator resolves a POM's local file for both parent and BOM-import lookups,
+     *     downloading it first if the implementation wants to
+     */
+    public PomReader(final Path localRepository,
+                     final TelemetryRecorder recorder,
+                     final boolean allowRelativePath,
+                     final PomLocator locator) {
         this.localRepository = localRepository;
         this.recorder = recorder;
+        this.allowRelativePath = allowRelativePath;
+        this.locator = locator;
     }
 
     /**
@@ -95,6 +134,21 @@ public final class PomReader {
         return Optional.ofNullable(readEffective(pomXml.toAbsolutePath().normalize(), new HashSet<>()));
     }
 
+    /**
+     * Returns {@code true} if the pom at the given path declares a direct {@code <parent>}
+     * element, without resolving or reading that parent. Unlike {@link #read}, this is a cheap
+     * structural check: it doesn't matter whether the declared parent is actually reachable
+     * (e.g. a corporate parent that lives only in a remote repository).
+     */
+    public static boolean hasDeclaredParent(final Path pomXml) {
+        try {
+            final Document doc = newDocumentBuilderFactory().newDocumentBuilder().parse(pomXml.toFile());
+            return !directChildren(doc.getDocumentElement(), "parent").isEmpty();
+        } catch (final Exception e) {
+            return false;
+        }
+    }
+
     private Pom readEffective(final Path pomPath,
                               final Set<Path> visited) {
         final Pom cached = this.cache.get(pomPath);
@@ -102,45 +156,70 @@ public final class PomReader {
             return cached;
         }
         if (!visited.add(pomPath)) {
-            // cycle in parent chain — log and treat as no-parent terminus
-            this.recorder.warn("Cycle detected in pom parent chain at [%s]", pomPath);
+            // cycle in parent/BOM-import chain — log and treat as no-parent terminus
+            this.recorder.warn("Cycle detected in pom parent/import chain at [%s]", pomPath);
             return null;
         }
 
         final Raw raw = parseRaw(pomPath);
         if (raw == null) {
+            visited.remove(pomPath);
             return null;
         }
 
         final Optional<Pom> parent = resolveParent(pomPath, raw, visited);
 
-        final String groupId = raw.groupId != null ? raw.groupId
-            : parent.map(Pom::groupId).orElse("");
-        final String version = raw.version != null ? raw.version
-            : parent.map(Pom::version).orElse("");
-
-        // effective properties: parent ⊕ own (own wins), plus built-ins for self-referential interpolation
+        // effective properties: parent ⊕ own (own wins), computed BEFORE this pom's own
+        // groupId/version so a ${revision}-style placeholder in <version> can be interpolated
+        // against a property (e.g. `revision`) declared only in the parent's <properties>.
         final Map<String, String> effectiveProps = new LinkedHashMap<>();
         parent.ifPresent(p -> effectiveProps.putAll(p.properties()));
         effectiveProps.putAll(raw.properties);
+
+        final String groupId = interpolate(
+            raw.self.groupId() != null ? raw.self.groupId() : parent.map(Pom::groupId).orElse(""), effectiveProps);
+        final String artifactId = interpolate(raw.self.artifactId(), effectiveProps);
+        final String version = interpolate(
+            raw.self.version() != null ? raw.self.version() : parent.map(Pom::version).orElse(""), effectiveProps);
+
         effectiveProps.put("project.groupId", groupId);
-        effectiveProps.put("project.artifactId", raw.artifactId);
+        effectiveProps.put("project.artifactId", artifactId);
         effectiveProps.put("project.version", version);
         effectiveProps.put("project.basedir", pomPath.getParent().toString());
         effectiveProps.put("settings.localRepository", this.localRepository.toString());
 
-        // effective depMgmt: parent ⊕ own (own wins per GA)
-        final Map<GA, Dependency> effectiveDepMgmt = new LinkedHashMap<>();
-        parent.ifPresent(p -> effectiveDepMgmt.putAll(p.dependencyManagement()));
-        for (final RawDependency rd : raw.dependencyManagement) {
-            final Dependency interpolated = toDependency(rd, effectiveProps);
-            effectiveDepMgmt.put(interpolated.ga(), interpolated);
+        // active profiles: their <properties> apply at lower precedence than the pom's own
+        final List<RawProfile> activeProfiles = evaluateActiveProfiles(raw.profiles);
+        for (final RawProfile prof : activeProfiles) {
+            prof.properties().forEach(effectiveProps::putIfAbsent);
         }
 
-        // effective dependencies: own with version/scope/type/classifier filled from effective depMgmt
+        // this pom's own dependencyManagement (+ active profiles'): literal entries always take
+        // precedence over BOM imports, which are merged afterward and never override an entry
+        // already present (own-literal or an earlier-listed import)
+        final Map<GA, Dependency> ownDepMgmt = new LinkedHashMap<>();
+        mergeOwnManagedDeps(raw.dependencyManagement, effectiveProps, ownDepMgmt, visited);
+        for (final RawProfile prof : activeProfiles) {
+            mergeOwnManagedDeps(prof.dependencyManagement(), effectiveProps, ownDepMgmt, visited);
+        }
+
+        // effective depMgmt: parent ⊕ own — own always wins over whatever the parent declared,
+        // regardless of how many ancestor levels are involved (each level's own recursively
+        // resolved the same way, so this single overlay is sufficient).
+        final Map<GA, Dependency> effectiveDepMgmt = new LinkedHashMap<>();
+        parent.ifPresent(p -> effectiveDepMgmt.putAll(p.dependencyManagement()));
+        effectiveDepMgmt.putAll(ownDepMgmt);
+
+        // effective dependencies: own (+ active profiles') with version/scope/type/classifier
+        // filled from effective depMgmt
         final List<Dependency> effectiveDependencies = new ArrayList<>(raw.dependencies.size());
         for (final RawDependency rd : raw.dependencies) {
-            effectiveDependencies.add(fillFromMgmt(toDependency(rd, effectiveProps), effectiveDepMgmt));
+            effectiveDependencies.add(toEffectiveDependency(rd, effectiveProps, effectiveDepMgmt));
+        }
+        for (final RawProfile prof : activeProfiles) {
+            for (final RawDependency rd : prof.dependencies()) {
+                effectiveDependencies.add(toEffectiveDependency(rd, effectiveProps, effectiveDepMgmt));
+            }
         }
 
         // effective pluginMgmt: parent ⊕ own (own wins per GA, configurations deep-merged)
@@ -169,8 +248,9 @@ public final class PomReader {
 
         final Pom pom = new DefaultPom(
             groupId,
-            raw.artifactId,
+            artifactId,
             version,
+            orDefault(raw.packaging, "jar"),
             parent,
             Collections.unmodifiableMap(effectiveProps),
             Collections.unmodifiableMap(effectiveDepMgmt),
@@ -183,71 +263,117 @@ public final class PomReader {
         return pom;
     }
 
+    /**
+     * Merges one level's own {@code <dependencyManagement>} entries into {@code out}: literal
+     * entries are applied directly (in document order, last one for a given GA wins), then BOM
+     * imports are resolved via the {@link #locator} and merged with {@code putIfAbsent} so an
+     * import never overrides a literal entry or an earlier-listed import.
+     */
+    private void mergeOwnManagedDeps(final List<RawDependency> rawManagedDeps,
+                                     final Map<String, String> props,
+                                     final Map<GA, Dependency> out,
+                                     final Set<Path> visited) {
+        final List<RawDependency> imports = new ArrayList<>();
+        for (final RawDependency rd : rawManagedDeps) {
+            if ("pom".equals(rd.type()) && "import".equals(rd.scope())) {
+                imports.add(rd);
+            } else {
+                final Dependency dep = toEffectiveDependency(rd, props, Map.of());
+                out.put(dep.ga(), dep);
+            }
+        }
+        for (final RawDependency rd : imports) {
+            final String bomGroupId = interpolate(rd.gav().groupId(), props);
+            final String bomArtifactId = interpolate(rd.gav().artifactId(), props);
+            final String bomVersion = interpolate(rd.gav().version(), props);
+            if (bomVersion == null || bomVersion.contains("${")) {
+                this.recorder.warn("Could not resolve BOM import version for [%s:%s]",
+                    bomGroupId, bomArtifactId);
+                continue;
+            }
+            this.locator.locate(bomGroupId, bomArtifactId, bomVersion).ifPresentOrElse(bomPath -> {
+                final Pom bom = readEffective(bomPath.toAbsolutePath().normalize(), visited);
+                if (bom != null) {
+                    bom.dependencyManagement().forEach(out::putIfAbsent);
+                }
+            }, () -> this.recorder.warn("Could not locate BOM import [%s:%s:%s]",
+                bomGroupId, bomArtifactId, bomVersion));
+        }
+    }
+
     private Optional<Pom> resolveParent(final Path pomPath,
                                         final Raw raw,
                                         final Set<Path> visited) {
-        if (raw.parentArtifactId == null) {
+        if (raw.parent == null) {
             return Optional.empty();
         }
-        // try relativePath first (default ../pom.xml)
-        final String relativePath = raw.parentRelativePath != null ? raw.parentRelativePath : "../pom.xml";
-        if (!relativePath.isEmpty()) {
-            Path candidate = pomPath.getParent().resolve(relativePath).normalize();
-            if (Files.isDirectory(candidate)) {
-                candidate = candidate.resolve("pom.xml");
-            }
-            if (Files.exists(candidate)) {
-                final Pom parent = readEffective(candidate.toAbsolutePath().normalize(), visited);
-                if (parent != null) {
-                    return Optional.of(parent);
+        if (this.allowRelativePath) {
+            // try relativePath first (default ../pom.xml)
+            final String relativePath = raw.parentRelativePath != null ? raw.parentRelativePath : "../pom.xml";
+            if (!relativePath.isEmpty()) {
+                Path candidate = pomPath.getParent().resolve(relativePath).normalize();
+                if (Files.isDirectory(candidate)) {
+                    candidate = candidate.resolve("pom.xml");
+                }
+                if (Files.exists(candidate)) {
+                    final Pom parent = readEffective(candidate.toAbsolutePath().normalize(), visited);
+                    if (parent != null) {
+                        return Optional.of(parent);
+                    }
                 }
             }
         }
-        // fall back to local repository (requires a resolved version; ${...} unresolved → skip)
-        if (raw.parentVersion == null || raw.parentVersion.contains("${")) {
+        // fall back to the locator (requires a resolved version; ${...} unresolved → skip)
+        if (raw.parent.version() == null || raw.parent.version().contains("${")) {
             return Optional.empty();
         }
-        final Path repoPath = this.localRepository
-            .resolve(raw.parentGroupId.replace('.', '/'))
-            .resolve(raw.parentArtifactId)
-            .resolve(raw.parentVersion)
-            .resolve(raw.parentArtifactId + "-" + raw.parentVersion + ".pom");
-        if (!Files.exists(repoPath)) {
-            return Optional.empty();
-        }
-        final Pom parent = readEffective(repoPath.toAbsolutePath().normalize(), visited);
-        return Optional.ofNullable(parent);
+        return this.locator.locate(raw.parent.groupId(), raw.parent.artifactId(), raw.parent.version())
+            .map(repoPath -> readEffective(repoPath.toAbsolutePath().normalize(), visited));
     }
 
     // ----- raw parsing -------------------------------------------------------
 
     private static final class Raw {
-        String groupId;
-        String artifactId;
-        String version;
-        String parentGroupId;
-        String parentArtifactId;
-        String parentVersion;
+        Gav self;
+        String packaging;
+        Gav parent;
         String parentRelativePath;
         Map<String, String> properties = Map.of();
         List<RawDependency> dependencies = List.of();
         List<RawDependency> dependencyManagement = List.of();
         List<RawPlugin> plugins = List.of();
         List<RawPlugin> pluginManagement = List.of();
+        List<RawProfile> profiles = List.of();
     }
 
-    private record RawDependency(String groupId,
-                                 String artifactId,
-                                 String version,
+    private record RawDependency(Gav gav,
                                  String scope,
                                  String type,
-                                 String classifier) {
+                                 String classifier,
+                                 boolean optional,
+                                 Set<String> exclusions) {
     }
 
     private record RawPlugin(String groupId,
                              String artifactId,
                              String version,
                              ConfigNode configuration) {
+    }
+
+    private record RawProfile(
+        boolean activeByDefault,
+        String jdkActivation,
+        String activationPropertyName,
+        String activationPropertyValue,
+        String osName,
+        String osFamily,
+        String osArch,
+        String fileExists,
+        String fileMissing,
+        Map<String, String> properties,
+        List<RawDependency> dependencyManagement,
+        List<RawDependency> dependencies
+    ) {
     }
 
     private Raw parseRaw(final Path pomPath) {
@@ -257,61 +383,49 @@ public final class PomReader {
             final Element root = doc.getDocumentElement();
             final Raw raw = new Raw();
 
-            raw.groupId = directChildText(root, "groupId");
-            raw.artifactId = directChildText(root, "artifactId");
-            raw.version = directChildText(root, "version");
+            raw.self = new Gav(
+                directChildText(root, "groupId"),
+                directChildText(root, "artifactId"),
+                directChildText(root, "version"));
+            raw.packaging = directChildText(root, "packaging");
 
-            for (final Element parentEl : directChildren(root, "parent")) {
-                raw.parentGroupId = directChildText(parentEl, "groupId");
-                raw.parentArtifactId = directChildText(parentEl, "artifactId");
-                raw.parentVersion = directChildText(parentEl, "version");
+            directChild(root, "parent").ifPresent(parentEl -> {
+                raw.parent = new Gav(
+                    directChildText(parentEl, "groupId"),
+                    directChildText(parentEl, "artifactId"),
+                    directChildText(parentEl, "version"));
                 raw.parentRelativePath = directChildText(parentEl, "relativePath");
-                break;
-            }
+            });
 
-            for (final Element propsEl : directChildren(root, "properties")) {
-                final Map<String, String> props = new LinkedHashMap<>();
-                for (final Element child : directChildElements(propsEl)) {
-                    final String text = child.getTextContent();
-                    props.put(child.getTagName(), text == null ? "" : text.trim());
-                }
-                raw.properties = props;
-                break;
-            }
+            directChild(root, "properties").ifPresent(propsEl -> raw.properties = readProperties(propsEl));
 
-            for (final Element depsEl : directChildren(root, "dependencies")) {
-                raw.dependencies = readDependencies(depsEl);
-                break;
-            }
+            directChild(root, "dependencies").ifPresent(depsEl -> raw.dependencies = readDependencies(depsEl));
 
-            for (final Element dmEl : directChildren(root, "dependencyManagement")) {
-                for (final Element depsEl : directChildren(dmEl, "dependencies")) {
-                    raw.dependencyManagement = readDependencies(depsEl);
-                    break;
-                }
-                break;
-            }
+            directChild(root, "dependencyManagement").flatMap(dmEl -> directChild(dmEl, "dependencies"))
+                .ifPresent(depsEl -> raw.dependencyManagement = readDependencies(depsEl));
 
-            for (final Element buildEl : directChildren(root, "build")) {
-                for (final Element pluginsEl : directChildren(buildEl, "plugins")) {
-                    raw.plugins = readPlugins(pluginsEl);
-                    break;
-                }
-                for (final Element pmEl : directChildren(buildEl, "pluginManagement")) {
-                    for (final Element pluginsEl : directChildren(pmEl, "plugins")) {
-                        raw.pluginManagement = readPlugins(pluginsEl);
-                        break;
-                    }
-                    break;
-                }
-                break;
-            }
+            directChild(root, "build").ifPresent(buildEl -> {
+                directChild(buildEl, "plugins").ifPresent(pluginsEl -> raw.plugins = readPlugins(pluginsEl));
+                directChild(buildEl, "pluginManagement").flatMap(pmEl -> directChild(pmEl, "plugins"))
+                    .ifPresent(pluginsEl -> raw.pluginManagement = readPlugins(pluginsEl));
+            });
+
+            raw.profiles = readProfiles(root);
 
             return raw;
         } catch (final Exception e) {
             this.recorder.warn(e, "PomReader failed to parse [%s]", pomPath);
             return null;
         }
+    }
+
+    private static Map<String, String> readProperties(final Element propsEl) {
+        final Map<String, String> props = new LinkedHashMap<>();
+        for (final Element child : directChildElements(propsEl)) {
+            final String text = child.getTextContent();
+            props.put(child.getTagName(), text == null ? "" : text.trim());
+        }
+        return props;
     }
 
     private static List<RawDependency> readDependencies(final Element parent) {
@@ -322,14 +436,86 @@ public final class PomReader {
             if (groupId == null || artifactId == null) {
                 continue;
             }
+            final boolean optional = "true".equals(directChildText(dep, "optional"));
+            final Set<String> exclusions = new LinkedHashSet<>();
+            for (final Element exclusionsEl : directChildren(dep, "exclusions")) {
+                for (final Element exclusionEl : directChildren(exclusionsEl, "exclusion")) {
+                    final String eg = directChildText(exclusionEl, "groupId");
+                    final String ea = directChildText(exclusionEl, "artifactId");
+                    if (eg != null && ea != null) {
+                        exclusions.add(eg + ":" + ea);
+                    }
+                }
+            }
             out.add(new RawDependency(
-                groupId, artifactId,
-                directChildText(dep, "version"),
+                new Gav(groupId, artifactId, directChildText(dep, "version")),
                 directChildText(dep, "scope"),
                 directChildText(dep, "type"),
-                directChildText(dep, "classifier")));
+                directChildText(dep, "classifier"),
+                optional,
+                exclusions));
         }
         return out;
+    }
+
+    private static List<RawProfile> readProfiles(final Element root) {
+        final List<RawProfile> out = new ArrayList<>();
+        for (final Element profilesEl : directChildren(root, "profiles")) {
+            for (final Element profileEl : directChildren(profilesEl, "profile")) {
+                out.add(readProfile(profileEl));
+            }
+        }
+        return out;
+    }
+
+    private static RawProfile readProfile(final Element profileEl) {
+        boolean activeByDefault = false;
+        String jdk = null;
+        String propName = null;
+        String propValue = null;
+        String osName = null;
+        String osFamily = null;
+        String osArch = null;
+        String fileExists = null;
+        String fileMissing = null;
+
+        for (final Element activationEl : directChildren(profileEl, "activation")) {
+            activeByDefault = "true".equals(directChildText(activationEl, "activeByDefault"));
+            jdk = directChildText(activationEl, "jdk");
+            for (final Element propEl : directChildren(activationEl, "property")) {
+                propName = directChildText(propEl, "name");
+                propValue = directChildText(propEl, "value");
+            }
+            for (final Element osEl : directChildren(activationEl, "os")) {
+                osName = directChildText(osEl, "name");
+                osFamily = directChildText(osEl, "family");
+                osArch = directChildText(osEl, "arch");
+            }
+            for (final Element fileEl : directChildren(activationEl, "file")) {
+                fileExists = directChildText(fileEl, "exists");
+                fileMissing = directChildText(fileEl, "missing");
+            }
+        }
+
+        Map<String, String> properties = Map.of();
+        for (final Element propsEl : directChildren(profileEl, "properties")) {
+            properties = readProperties(propsEl);
+        }
+
+        List<RawDependency> deps = List.of();
+        for (final Element depsEl : directChildren(profileEl, "dependencies")) {
+            deps = readDependencies(depsEl);
+        }
+
+        List<RawDependency> depMgmt = List.of();
+        for (final Element dmEl : directChildren(profileEl, "dependencyManagement")) {
+            for (final Element depsEl : directChildren(dmEl, "dependencies")) {
+                depMgmt = readDependencies(depsEl);
+            }
+        }
+
+        return new RawProfile(activeByDefault, jdk, propName, propValue,
+            osName, osFamily, osArch, fileExists, fileMissing, properties, depMgmt, deps);
     }
 
     private static List<RawPlugin> readPlugins(final Element parent) {
@@ -378,31 +564,39 @@ public final class PomReader {
 
     // ----- effective construction --------------------------------------------
 
-    private static Dependency toDependency(final RawDependency rd,
-                                           final Map<String, String> props) {
-        final String groupId = interpolate(rd.groupId(), props);
-        final String artifactId = interpolate(rd.artifactId(), props);
-        final Optional<String> version = optInterpolated(rd.version(), props);
-        final String scope = orDefault(interpolate(rd.scope(), props), "compile");
-        final String type = orDefault(interpolate(rd.type(), props), "jar");
-        final Optional<String> classifier = optInterpolated(rd.classifier(), props);
-        return new DefaultDependency(groupId, artifactId, version, scope, type, classifier);
-    }
+    /**
+     * Builds the effective dependency for one {@code <dependency>} entry, filling version/scope/
+     * type/classifier from the matching {@code dependencyManagement} entry (by GA, if any) wherever
+     * the raw XML left that field unset. Pass {@link Map#of()} for {@code mgmt} to build a literal
+     * dependencyManagement entry itself, with nothing to fall back to.
+     * <p>
+     * This checks the <em>raw, pre-default</em> scope/type text for {@code null} rather than
+     * comparing an already-defaulted value to {@code "compile"}/{@code "jar"} — so a dependency
+     * that explicitly declares {@code <scope>compile</scope>} (or {@code <type>jar</type>})
+     * correctly keeps that explicit value instead of being overridden by a differing managed
+     * scope/type, matching real Maven's "explicit on the dependency always wins over
+     * dependencyManagement" semantics.
+     */
+    private static Dependency toEffectiveDependency(final RawDependency rd,
+                                                     final Map<String, String> props,
+                                                     final Map<GA, Dependency> mgmt) {
+        final String groupId = interpolate(rd.gav().groupId(), props);
+        final String artifactId = interpolate(rd.gav().artifactId(), props);
+        final Dependency managed = mgmt.get(new GA(groupId, artifactId));
 
-    private static Dependency fillFromMgmt(final Dependency dep,
-                                           final Map<GA, Dependency> mgmt) {
-        final Dependency managed = mgmt.get(dep.ga());
-        if (managed == null) {
-            return dep;
-        }
-        return new DefaultDependency(
-            dep.groupId(),
-            dep.artifactId(),
-            dep.version().or(managed::version),
-            // own scope/type win iff non-default; absent original defaults are filled by toDependency
-            "compile".equals(dep.scope()) ? managed.scope() : dep.scope(),
-            "jar".equals(dep.type()) ? managed.type() : dep.type(),
-            dep.classifier().or(managed::classifier));
+        final Optional<String> version = optInterpolated(rd.gav().version(), props)
+            .or(() -> managed == null ? Optional.empty() : managed.version());
+        final String scope = rd.scope() != null
+            ? orDefault(interpolate(rd.scope(), props), "compile")
+            : orDefault(managed == null ? null : managed.scope(), "compile");
+        final String type = rd.type() != null
+            ? orDefault(interpolate(rd.type(), props), "jar")
+            : orDefault(managed == null ? null : managed.type(), "jar");
+        final Optional<String> classifier = optInterpolated(rd.classifier(), props)
+            .or(() -> managed == null ? Optional.empty() : managed.classifier());
+
+        return new DefaultDependency(groupId, artifactId, version, scope, type, classifier,
+            rd.optional(), rd.exclusions());
     }
 
     private static Plugin toPlugin(final RawPlugin rp,
@@ -458,18 +652,144 @@ public final class PomReader {
         return new DefaultConfigNode(own.name(), attrs, text, List.copyOf(byName.values()));
     }
 
+    // ----- profile activation --------------------------------------------------
+
+    private static List<RawProfile> evaluateActiveProfiles(final List<RawProfile> profiles) {
+        final List<RawProfile> explicit = profiles.stream()
+            .filter(p -> !p.activeByDefault() && isProfileActivated(p))
+            .toList();
+        if (!explicit.isEmpty()) {
+            return explicit;
+        }
+        return profiles.stream().filter(RawProfile::activeByDefault).toList();
+    }
+
+    private static boolean isProfileActivated(final RawProfile p) {
+        boolean hasCondition = false;
+        if (p.jdkActivation() != null) {
+            hasCondition = true;
+            if (!matchesJdk(p.jdkActivation())) {
+                return false;
+            }
+        }
+        if (p.activationPropertyName() != null) {
+            hasCondition = true;
+            final String val = System.getProperty(p.activationPropertyName());
+            if (p.activationPropertyValue() != null
+                ? !p.activationPropertyValue().equals(val) : val == null) {
+                return false;
+            }
+        }
+        if (p.osName() != null) {
+            hasCondition = true;
+            if (!System.getProperty("os.name", "").toLowerCase()
+                .contains(p.osName().toLowerCase())) {
+                return false;
+            }
+        }
+        if (p.osFamily() != null) {
+            hasCondition = true;
+            if (!matchesOsFamily(p.osFamily())) {
+                return false;
+            }
+        }
+        if (p.osArch() != null) {
+            hasCondition = true;
+            if (!System.getProperty("os.arch", "").toLowerCase()
+                .contains(p.osArch().toLowerCase())) {
+                return false;
+            }
+        }
+        if (p.fileExists() != null) {
+            hasCondition = true;
+            if (!Files.exists(Path.of(p.fileExists()))) {
+                return false;
+            }
+        }
+        if (p.fileMissing() != null) {
+            hasCondition = true;
+            if (Files.exists(Path.of(p.fileMissing()))) {
+                return false;
+            }
+        }
+        return hasCondition;
+    }
+
+    private static boolean matchesJdk(final String spec) {
+        final String javaVersion = System.getProperty("java.version", "");
+        if (spec.startsWith("!")) {
+            return !matchesJdkPositive(spec.substring(1), javaVersion);
+        }
+        if (spec.startsWith("[") || spec.startsWith("(")) {
+            return matchesVersionRange(spec, javaVersion.split("[.\\-+]")[0]);
+        }
+        return matchesJdkPositive(spec, javaVersion);
+    }
+
+    private static boolean matchesJdkPositive(final String spec, final String javaVersion) {
+        final String major = javaVersion.split("[.\\-+]")[0];
+        return javaVersion.startsWith(spec) || major.equals(spec);
+    }
+
+    private static boolean matchesVersionRange(final String range, final String version) {
+        try {
+            final boolean lowerInclusive = range.startsWith("[");
+            final boolean upperInclusive = range.endsWith("]");
+            final String inner = range.substring(1, range.length() - 1);
+            final String[] bounds = inner.split(",", 2);
+            final int v = Integer.parseInt(version);
+            final int lower = bounds[0].trim().isEmpty()
+                ? Integer.MIN_VALUE : Integer.parseInt(bounds[0].trim());
+            final int upper = bounds.length < 2 || bounds[1].trim().isEmpty()
+                ? Integer.MAX_VALUE : Integer.parseInt(bounds[1].trim());
+            return (lowerInclusive ? v >= lower : v > lower)
+                && (upperInclusive ? v <= upper : v < upper);
+        } catch (final NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private static boolean matchesOsFamily(final String family) {
+        final String osName = System.getProperty("os.name", "").toLowerCase();
+        return switch (family.toLowerCase()) {
+            case "windows" -> osName.contains("win");
+            case "mac" -> osName.contains("mac");
+            case "unix", "linux" -> osName.contains("nux") || osName.contains("nix") || osName.contains("mac");
+            default -> osName.contains(family.toLowerCase());
+        };
+    }
+
     // ----- interpolation -----------------------------------------------------
 
     /**
      * Replaces {@code ${prop}} references with their resolved values. Coord-style references
      * matching {@link #COORD_REF} are passed through unchanged. Unresolved property references
      * are also passed through unchanged.
+     * <p>
+     * Properties commonly reference other properties (e.g. a BOM's
+     * {@code <jackson.version.annotations>${jackson.version}</jackson.version.annotations>}), so a
+     * single pass can leave a nested reference unresolved even though every property in the chain is
+     * individually known. This re-scans its own output up to 5 times, stopping as soon as a pass
+     * makes no further change.
      */
     static String interpolate(final String value,
                               final Map<String, String> props) {
         if (value == null || value.indexOf('$') < 0) {
             return value;
         }
+        String result = value;
+        for (int i = 0; i < 5 && result.indexOf('$') >= 0; i++) {
+            final String next = interpolateOnce(result, props);
+            if (next.equals(result)) {
+                break;
+            }
+            result = next;
+        }
+        return result;
+    }
+
+    private static String interpolateOnce(final String value,
+                                          final Map<String, String> props) {
         final Matcher m = PROPERTY_REF.matcher(value);
         final StringBuilder out = new StringBuilder();
         while (m.find()) {
@@ -532,6 +852,17 @@ public final class PomReader {
         return out;
     }
 
+    /**
+     * Returns the first direct child element with the given tag name, if any. Per the Maven POM
+     * schema each of these container elements (e.g. {@code <parent>}, {@code <properties>},
+     * {@code <dependencyManagement>}) can appear at most once, so callers only ever want the first.
+     */
+    private static Optional<Element> directChild(final Element parent,
+                                                  final String tagName) {
+        final List<Element> children = directChildren(parent, tagName);
+        return children.isEmpty() ? Optional.empty() : Optional.of(children.get(0));
+    }
+
     private static List<Element> directChildElements(final Element parent) {
         final List<Element> out = new ArrayList<>();
         final NodeList children = parent.getChildNodes();
@@ -555,5 +886,21 @@ public final class PomReader {
     private static String orDefault(final String value,
                                     final String defaultValue) {
         return (value == null || value.isEmpty()) ? defaultValue : value;
+    }
+
+    /**
+     * The standard Maven local repo layout:
+     * {@code <localRepo>/<groupId-as-path>/<artifactId>/<version>/<artifactId>-<version>.pom}
+     */
+    public static Optional<Path> localRepoPomPath(final Path localRepository,
+                                                   final String groupId,
+                                                   final String artifactId,
+                                                   final String version) {
+        final Path pomPath = localRepository
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version)
+            .resolve(artifactId + "-" + version + ".pom");
+        return Files.exists(pomPath) ? Optional.of(pomPath) : Optional.empty();
     }
 }

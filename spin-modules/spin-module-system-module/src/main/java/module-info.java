@@ -34,6 +34,7 @@ module build.spin.module.modulesystem {
     opens build.spin.module.modulesystem to build.codemodel.injection;
 
     exports build.spin.module.modulesystem;
+    exports build.spin.module.modulesystem.pom;
 
     provides build.spin.Extension.MetaClass with
         build.spin.module.modulesystem.DefaultModuleCatalog.MetaClass,
