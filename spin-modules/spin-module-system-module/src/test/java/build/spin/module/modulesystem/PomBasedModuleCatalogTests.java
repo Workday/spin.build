@@ -34,7 +34,7 @@ import static org.mockito.Mockito.mock;
 /**
  * Verifies that {@link PomBasedModuleCatalog}'s visitor wires the walker output into an
  * {@link Artifact.Constraint} correctly. The walker's own behavior (derivation, BFS, scope
- * filtering) is tested in {@link PomWorkspaceWalkerTests}.
+ * filtering) is tested in {@link PomDependencyGraphWalkerTests}.
  */
 class PomBasedModuleCatalogTests {
 
@@ -62,7 +62,7 @@ class PomBasedModuleCatalogTests {
         final ModuleCatalog catalog = PomBasedModuleCatalog.buildFromWorkspace(workspace, RECORDER);
 
         // constraint is present under the groupId (and every other derived name, but those
-        // are a walker concern — see PomWorkspaceWalkerTests)
+        // are a walker concern — see PomDependencyGraphWalkerTests)
         assertThat(catalog.constraints("org.assertj"))
             .isNotEmpty()
             .anyMatch(c -> c.contains(Version.parse("3.25.0")));

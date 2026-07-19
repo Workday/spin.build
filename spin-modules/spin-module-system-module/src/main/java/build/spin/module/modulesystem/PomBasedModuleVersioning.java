@@ -42,7 +42,7 @@ import java.util.Optional;
  * {@code pom.xml} files present in a Maven workspace, for use when no {@code version.properties}
  * is available.
  * <p>
- * Workspace-walking and transitive-dependency traversal is delegated to {@link PomWorkspaceWalker};
+ * Workspace-walking and transitive-dependency traversal is delegated to {@link PomDependencyGraphWalker};
  * this class only provides the visitor that records each discovered coordinate's version under
  * every JPMS module-name candidate.
  *
@@ -91,7 +91,7 @@ public class PomBasedModuleVersioning
                                                final TelemetryRecorder recorder) {
         final Map<String, Version> versions = new LinkedHashMap<>();
 
-        PomWorkspaceWalker.walk(workspacePath, localRepo, recorder, codeModel,
+        PomDependencyGraphWalker.walk(workspacePath, localRepo, recorder, codeModel,
             (names, groupId, artifactId, rawVersion) -> {
                 try {
                     final Version version = Version.parse(rawVersion);
@@ -120,7 +120,7 @@ public class PomBasedModuleVersioning
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return PomXmlUtils.isMavenWorkspaceRoot(path)
+            return PomWorkspaces.isMavenWorkspaceRoot(path)
                 && !Files.exists(path.resolve(VERSION_PROPERTIES_FILENAME));
         }
 

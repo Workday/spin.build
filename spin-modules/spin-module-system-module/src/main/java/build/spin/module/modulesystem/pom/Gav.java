@@ -20,22 +20,18 @@ package build.spin.module.modulesystem.pom;
  * #L%
  */
 
-import java.util.Optional;
-import java.util.Set;
-
 /**
- * Record implementation of {@link Dependency}.
+ * A {@code (groupId, artifactId, version)} key identifying a specific Maven artifact.
  *
  * @author reed.vonredwitz
  * @since Apr-2026
  */
-public record DefaultDependency(String groupId,
-                                String artifactId,
-                                Optional<String> version,
-                                String scope,
-                                String type,
-                                Optional<String> classifier,
-                                boolean optional,
-                                Set<String> exclusions
-) implements Dependency {
+public record Gav(String groupId, String artifactId, String version) {
+
+    /**
+     * The version-less {@link GA} for this coordinate.
+     */
+    public GA ga() {
+        return new GA(this.groupId, this.artifactId);
+    }
 }

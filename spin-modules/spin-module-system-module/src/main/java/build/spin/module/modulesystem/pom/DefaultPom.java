@@ -33,6 +33,7 @@ import java.util.Optional;
 public record DefaultPom(String groupId,
                          String artifactId,
                          String version,
+                         String packaging,
                          Optional<Pom> parent,
                          Map<String, String> properties,
                          Map<GA, Dependency> dependencyManagement,

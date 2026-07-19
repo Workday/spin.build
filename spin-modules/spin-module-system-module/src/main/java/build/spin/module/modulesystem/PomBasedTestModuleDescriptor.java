@@ -30,14 +30,14 @@ import build.codemodel.jdk.descriptor.OpenModule;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Workspace;
+import build.spin.module.modulesystem.pom.Dependency;
+import build.spin.module.modulesystem.pom.Pom;
+import build.spin.module.modulesystem.pom.PomReader;
 import jakarta.inject.Inject;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import javax.xml.parsers.DocumentBuilder;
+import java.util.Optional;
 
 /**
  * A {@link TestModuleDescriptor} {@link Resource} that derives test module requirements from
@@ -45,7 +45,10 @@ import javax.xml.parsers.DocumentBuilder;
  * {@code src/test/java/module-info.java} is present.
  * <p>
  * This resource is workspace-level. The {@link #get(Project)} method reads the specific
- * sub-project's {@code pom.xml} on each call. Dependencies without an explicit version are still
+ * sub-project's effective pom on each call via {@link PomReader} — parent inheritance,
+ * {@code <dependencyManagement>}, and active-profile evaluation all apply, so only dependencies
+ * that are actually part of the project's dependency graph contribute a {@code requires}.
+ * Dependencies without an explicit (or dependency-management-filled) version are still
  * registered; their versions are resolved later via {@code ModuleVersioning}.
  *
  * @author reed.vonredwitz
@@ -74,11 +77,11 @@ public class PomBasedTestModuleDescriptor
         descriptor.addTrait(ModuleModifier.AUTOMATIC);
 
         try {
-            final DocumentBuilder xmlBuilder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
-
             final Path projectPom = project.path().resolve(POM_FILENAME);
             if (Files.exists(projectPom)) {
-                registerTestRequires(xmlBuilder, projectPom, descriptor);
+                final Path localRepo = Path.of(System.getProperty("user.home"), ".m2", "repository");
+                final PomReader pomReader = new PomReader(localRepo, this.recorder);
+                registerTestRequires(pomReader, projectPom, descriptor);
             }
 
         } catch (final Exception e) {
@@ -88,42 +91,36 @@ public class PomBasedTestModuleDescriptor
         return descriptor;
     }
 
-    private void registerTestRequires(final DocumentBuilder builder,
+    private void registerTestRequires(final PomReader pomReader,
                                       final Path pomPath,
                                       final JDKModuleDescriptor descriptor) {
         try {
-            final Document doc = builder.parse(pomPath.toFile());
-            final NodeList deps = doc.getElementsByTagName("dependency");
+            final Optional<Pom> pom = pomReader.read(pomPath);
+            if (pom.isEmpty()) {
+                return;
+            }
 
-            for (int i = 0; i < deps.getLength(); i++) {
-                if (!(deps.item(i) instanceof Element dep)) {
-                    continue;
-                }
-
+            for (final Dependency dep : pom.get().dependencies()) {
                 // exclude provided and system deps; include compile, runtime, and test
-                final String scope = PomXmlUtils.textContent(dep, "scope");
+                final String scope = dep.scope();
                 if ("provided".equals(scope) || "system".equals(scope)) {
                     continue;
                 }
 
-                final String groupId = PomXmlUtils.textContent(dep, "groupId");
-                final String artifactId = PomXmlUtils.textContent(dep, "artifactId");
-
-                if (groupId == null || artifactId == null) {
-                    continue;
-                }
+                final String groupId = dep.groupId();
+                final String artifactId = dep.artifactId();
 
                 // register under the same three key conventions used by PomBasedModuleCatalog
                 final ModuleName groupIdName =
                     this.codeModel.getNameProvider().getModuleName(groupId).orElseThrow();
                 descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, groupIdName));
 
-                final String derivedName = PomXmlUtils.derivedModuleName(artifactId);
+                final String derivedName = MavenModuleNaming.derivedModuleName(artifactId);
                 final ModuleName derivedModuleName =
                     this.codeModel.getNameProvider().getModuleName(derivedName).orElseThrow();
                 descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, derivedModuleName));
 
-                final String lastSegment = PomXmlUtils.lastHyphenSegment(artifactId);
+                final String lastSegment = MavenModuleNaming.lastHyphenSegment(artifactId);
                 if (!lastSegment.isEmpty()) {
                     final String combinedName = groupId + "." + lastSegment;
                     final ModuleName combinedModuleName =
@@ -144,7 +141,7 @@ public class PomBasedTestModuleDescriptor
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return PomXmlUtils.isMavenWorkspaceRoot(path);
+            return PomWorkspaces.isMavenWorkspaceRoot(path);
         }
 
         @Override

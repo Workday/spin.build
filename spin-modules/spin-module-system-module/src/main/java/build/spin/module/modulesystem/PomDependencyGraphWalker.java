@@ -22,9 +22,9 @@ package build.spin.module.modulesystem;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.foundation.CodeModel;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
+import build.spin.module.modulesystem.pom.Dependency;
+import build.spin.module.modulesystem.pom.Pom;
+import build.spin.module.modulesystem.pom.PomReader;
 
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -40,12 +40,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.xml.parsers.DocumentBuilder;
 
 /**
  * Walks a Maven workspace's {@code pom.xml} files and their transitive dependencies from the
  * local repository, invoking a {@link CoordinateVisitor} for every (module-name list, coordinate)
  * pair that can be derived from the poms.
+ * <p>
+ * Effective-POM computation (parent chains, {@code dependencyManagement} including BOM imports,
+ * property interpolation) is delegated entirely to a single {@link PomReader} instance shared
+ * across the whole walk, so each pom's own real parent chain is honored — including through
+ * intermediate aggregator poms — rather than a single workspace-root fallback.
  * <p>
  * Shared by {@link PomBasedModuleCatalog} and {@link PomBasedModuleVersioning} — the only thing
  * that differs between those two is what they store per visit, which lives in the visitor.
@@ -53,11 +57,11 @@ import javax.xml.parsers.DocumentBuilder;
  * @author reed.vonredwitz
  * @since Apr-2026
  */
-final class PomWorkspaceWalker {
+final class PomDependencyGraphWalker {
 
     private static final String POM_FILENAME = "pom.xml";
 
-    private PomWorkspaceWalker() {
+    private PomDependencyGraphWalker() {
     }
 
     /**
@@ -86,14 +90,7 @@ final class PomWorkspaceWalker {
         }
 
         try {
-            final DocumentBuilder builder = PomXmlUtils.newDocumentBuilderFactory().newDocumentBuilder();
-            final Map<String, String> rootProperties = PomXmlUtils.readProperties(builder, rootPom);
-            // Passing localRepo here (rather than the no-repo overload) matters: it is what lets
-            // a <scope>import</scope> BOM declared directly in the workspace's own root pom -- the
-            // common case of a company aggregator centrally managing versions -- actually resolve,
-            // since dependencyManagement import-merging only fires when a localRepo is supplied.
-            final Map<String, String> rootDm =
-                PomXmlUtils.readDependencyManagement(builder, rootPom, rootProperties, localRepo, recorder);
+            final PomReader pomReader = new PomReader(localRepo, recorder);
 
             // visited keyed by "groupId:artifactId" to avoid re-processing
             final Set<String> visited = new HashSet<>();
@@ -128,11 +125,11 @@ final class PomWorkspaceWalker {
             // (e.g. left over from before a module rename) would otherwise be re-visited a second
             // time under whatever ground-truth name that stale jar carries, alongside — or instead
             // of — the correct, current one.
-            final Map<String, String> workspaceCoordinates = collectWorkspaceCoordinates(builder, pomPaths);
+            final Map<String, String> workspaceCoordinates = collectWorkspaceCoordinates(pomReader, pomPaths);
 
             for (final Path pomPath : pomPaths) {
-                walkPom(builder, pomPath, rootProperties, rootPom, recorder, visitor);
-                PomXmlUtils.readRawDependencies(builder, pomPath, rootProperties, rootDm)
+                walkPom(pomReader, pomPath, rootPom, recorder, visitor);
+                effectiveDependencyCoordinates(pomReader, pomPath)
                     .forEach(d -> enqueueIfNew(d, workspaceCoordinates, visited, moduleQueue, recorder));
             }
 
@@ -142,85 +139,88 @@ final class PomWorkspaceWalker {
             while (!moduleQueue.isEmpty()) {
                 final String[] coord = moduleQueue.poll();
                 visitDependency(coord[0], coord[1], coord[2], localRepo, recorder, codeModel, visitor);
-                PomXmlUtils.localRepoPomPath(coord[0], coord[1], coord[2], localRepo)
-                    .ifPresent(pomPath -> {
-                        try {
-                            final Map<String, String> pomProperties =
-                                PomXmlUtils.readProperties(builder, pomPath);
-                            final Map<String, String> pomDm =
-                                PomXmlUtils.readDependencyManagement(
-                                    builder, pomPath, pomProperties, localRepo, recorder);
-                            PomXmlUtils.readRawDependencies(builder, pomPath, pomProperties, pomDm)
-                                .stream()
-                                .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))
-                                .forEach(d -> enqueueIfNew(d, workspaceCoordinates, visited, moduleQueue, recorder));
-                        } catch (final Exception e) {
-                            recorder.warn(e, "PomWorkspaceWalker failed to read transitive pom [%s]", pomPath);
-                        }
-                    });
+                PomReader.localRepoPomPath(localRepo, coord[0], coord[1], coord[2])
+                    .ifPresent(pomPath -> effectiveDependencyCoordinates(pomReader, pomPath).stream()
+                        .filter(d -> !"test".equals(d[3]) && !"provided".equals(d[3]))
+                        .forEach(d -> enqueueIfNew(d, workspaceCoordinates, visited, moduleQueue, recorder)));
             }
 
         } catch (final Exception e) {
-            recorder.warn(e, "PomWorkspaceWalker failed to walk workspace [%s]", workspacePath);
+            recorder.warn(e, "PomDependencyGraphWalker failed to walk workspace [%s]", workspacePath);
         }
+    }
+
+    /**
+     * Reads a pom's effective direct dependencies via {@link PomReader} and converts them to
+     * {@code [groupId, artifactId, resolvedVersion, scope]} arrays, omitting entries whose version
+     * cannot be resolved.
+     * <p>
+     * One heuristic on top of real Maven semantics: a same-groupId dependency declared with no
+     * version at all (a common reactor-workspace shorthand for "the sibling at my own version")
+     * defaults to this pom's own resolved version — real Maven has no such default, but this
+     * codebase's workspace poms rely on it.
+     */
+    private static List<String[]> effectiveDependencyCoordinates(final PomReader pomReader, final Path pomPath) {
+        final Optional<Pom> pom = pomReader.read(pomPath);
+        if (pom.isEmpty()) {
+            return List.of();
+        }
+        final String selfGroupId = pom.get().groupId();
+        final String selfVersion = pom.get().version();
+
+        final List<String[]> out = new ArrayList<>();
+        for (final Dependency d : pom.get().dependencies()) {
+            final String resolvedVersion = d.version()
+                .or(() -> d.groupId().equals(selfGroupId) && !selfVersion.isEmpty()
+                    ? Optional.of(selfVersion) : Optional.empty())
+                .orElse(null);
+            if (resolvedVersion == null || resolvedVersion.contains("${")) {
+                continue;
+            }
+            out.add(new String[]{d.groupId(), d.artifactId(), resolvedVersion, d.scope()});
+        }
+        return out;
     }
 
     /**
      * Visits the self-artifact of a single workspace pom (unless it is the root aggregator pom).
      * Direct dependencies are seeded into the BFS queue by the caller; they are visited in Phase 2.
      */
-    private static void walkPom(final DocumentBuilder builder,
+    private static void walkPom(final PomReader pomReader,
                                 final Path pomPath,
-                                final Map<String, String> properties,
                                 final Path rootPomPath,
                                 final TelemetryRecorder recorder,
                                 final CoordinateVisitor visitor) {
         try {
-            final Document doc = builder.parse(pomPath.toFile());
             // Skip self-registration only for root aggregator poms (packaging=pom).
             // Single-module root poms (packaging=jar or absent) must be registered so
             // their own version is in the map.
             final boolean isRootAggregator = pomPath.equals(rootPomPath)
-                && "pom".equals(PomXmlUtils.directChildText(doc.getDocumentElement(), "packaging"));
+                && pomReader.read(pomPath).map(Pom::packaging).map("pom"::equals).orElse(false);
             if (!isRootAggregator) {
-                visitSelf(doc, pomPath, properties, recorder, visitor);
+                visitSelf(pomReader, pomPath, recorder, visitor);
             }
         } catch (final Exception e) {
-            recorder.warn(e, "PomWorkspaceWalker failed to parse [%s]", pomPath);
+            recorder.warn(e, "PomDependencyGraphWalker failed to parse [%s]", pomPath);
         }
     }
 
     /**
-     * Returns a map of {@code "groupId:artifactId"} → resolved version for every workspace pom,
-     * inheriting groupId/version from {@code <parent>} when not declared directly. Used to keep
-     * workspace modules out of the dependency BFS queue — see the call site in {@link #walk} — and
-     * to detect when a sibling's declared dependency version disagrees with the module's own pom.
+     * Returns a map of {@code "groupId:artifactId"} → resolved version for every workspace pom.
+     * Used to keep workspace modules out of the dependency BFS queue — see the call site in
+     * {@link #walk} — and to detect when a sibling's declared dependency version disagrees with
+     * the module's own pom.
      */
-    private static Map<String, String> collectWorkspaceCoordinates(final DocumentBuilder builder,
+    private static Map<String, String> collectWorkspaceCoordinates(final PomReader pomReader,
                                                                    final List<Path> pomPaths) {
         final Map<String, String> coordinates = new HashMap<>();
         for (final Path pomPath : pomPaths) {
-            try {
-                final Document doc = builder.parse(pomPath.toFile());
-                final Element root = doc.getDocumentElement();
-                final String artifactId = PomXmlUtils.directChildText(root, "artifactId");
-                String groupId = PomXmlUtils.directChildText(root, "groupId");
-                String version = PomXmlUtils.directChildText(root, "version");
-                final NodeList parentNodes = doc.getElementsByTagName("parent");
-                if (parentNodes.getLength() > 0 && parentNodes.item(0) instanceof Element parent) {
-                    if (groupId == null) {
-                        groupId = PomXmlUtils.directChildText(parent, "groupId");
-                    }
-                    if (version == null) {
-                        version = PomXmlUtils.directChildText(parent, "version");
-                    }
+            pomReader.read(pomPath).ifPresent(pom -> {
+                if (!pom.groupId().isEmpty() && pom.artifactId() != null && !pom.version().isEmpty()
+                    && !pom.version().contains("${")) {
+                    coordinates.put(pom.groupId() + ":" + pom.artifactId(), pom.version());
                 }
-                if (groupId != null && artifactId != null && version != null) {
-                    coordinates.put(groupId + ":" + artifactId, version);
-                }
-            } catch (final Exception ignored) {
-                // best-effort; a pom that fails to parse here also fails in walkPom, which reports it
-            }
+            });
         }
         return coordinates;
     }
@@ -256,48 +256,37 @@ final class PomWorkspaceWalker {
     }
 
     /**
-     * Visits the {@code <artifactId>} of a workspace pom itself, inheriting groupId/version from
-     * {@code <parent>} when not declared directly. Prefers the JPMS module name from
-     * {@code module-info.java} when present; otherwise falls back to the derived-name heuristics.
+     * Visits the {@code <artifactId>} of a workspace pom itself, using its {@link PomReader}
+     * effective model (parent-inherited groupId/version already resolved). Prefers the JPMS
+     * module name from {@code module-info.java} when present; otherwise falls back to the
+     * derived-name heuristics.
      */
-    private static void visitSelf(final Document doc,
+    private static void visitSelf(final PomReader pomReader,
                                   final Path pomPath,
-                                  final Map<String, String> properties,
                                   final TelemetryRecorder recorder,
                                   final CoordinateVisitor visitor) {
         try {
-            final Element root = doc.getDocumentElement();
-            final String artifactId = PomXmlUtils.directChildText(root, "artifactId");
-            String groupId = PomXmlUtils.directChildText(root, "groupId");
-            String rawVersion = PomXmlUtils.directChildText(root, "version");
-
-            final NodeList parentNodes = doc.getElementsByTagName("parent");
-            if (parentNodes.getLength() > 0 && parentNodes.item(0) instanceof Element parent) {
-                if (groupId == null) {
-                    groupId = PomXmlUtils.directChildText(parent, "groupId");
-                }
-                if (rawVersion == null) {
-                    rawVersion = PomXmlUtils.directChildText(parent, "version");
-                }
+            final Optional<Pom> pom = pomReader.read(pomPath);
+            if (pom.isEmpty()) {
+                return;
             }
+            final String groupId = pom.get().groupId();
+            final String artifactId = pom.get().artifactId();
+            final String resolvedVersion = pom.get().version();
 
-            if (groupId == null || artifactId == null || rawVersion == null) {
+            if (groupId.isEmpty() || artifactId == null
+                || resolvedVersion.isEmpty() || resolvedVersion.contains("${")) {
                 return;
             }
 
-            final String resolvedVersion = PomXmlUtils.resolveProperty(rawVersion, properties);
-            if (resolvedVersion == null || resolvedVersion.contains("${")) {
-                return;
-            }
-
-            final Optional<String> preferred = PomXmlUtils.readModuleName(pomPath);
+            final Optional<String> preferred = MavenModuleNaming.readModuleName(pomPath);
             final List<String> names = preferred.isPresent()
                 ? List.of(preferred.get())
                 : deriveNames(groupId, artifactId);
 
             visitor.accept(names, groupId, artifactId, resolvedVersion);
         } catch (final Exception e) {
-            recorder.warn(e, "PomWorkspaceWalker failed to visit self-artifact for [%s]", pomPath);
+            recorder.warn(e, "PomDependencyGraphWalker failed to visit self-artifact for [%s]", pomPath);
         }
     }
 
@@ -321,13 +310,13 @@ final class PomWorkspaceWalker {
                                         final CodeModel codeModel,
                                         final CoordinateVisitor visitor) {
         try {
-            final Optional<String> groundTruth = PomXmlUtils
+            final Optional<String> groundTruth = MavenModuleNaming
                 .readNamedModuleName(groupId, artifactId, resolvedVersion, localRepo, codeModel)
-                    .or(() -> PomXmlUtils.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo));
+                    .or(() -> MavenModuleNaming.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo));
             final List<String> names = groundTruth.map(List::of).orElseGet(() -> deriveNames(groupId, artifactId));
             visitor.accept(names, groupId, artifactId, resolvedVersion);
         } catch (final Exception e) {
-            recorder.warn(e, "PomWorkspaceWalker failed to visit dependency [%s:%s:%s]",
+            recorder.warn(e, "PomDependencyGraphWalker failed to visit dependency [%s:%s:%s]",
                 groupId, artifactId, resolvedVersion);
         }
     }
@@ -335,13 +324,13 @@ final class PomWorkspaceWalker {
     /**
      * Returns the derived JPMS module name candidates for a (groupId, artifactId) pair.
      * The list always includes the groupId and the derived artifactId name; additional candidates
-     * are included when the heuristics in {@link PomXmlUtils} produce them.
+     * are included when the heuristics in {@link MavenModuleNaming} produce them.
      */
     private static List<String> deriveNames(final String groupId, final String artifactId) {
         final List<String> names = new ArrayList<>(6);
         names.add(groupId);
-        names.add(PomXmlUtils.derivedModuleName(artifactId));
-        final String lastSegment = PomXmlUtils.lastHyphenSegment(artifactId);
+        names.add(MavenModuleNaming.derivedModuleName(artifactId));
+        final String lastSegment = MavenModuleNaming.lastHyphenSegment(artifactId);
         if (!lastSegment.isEmpty()) {
             // bare segment matches projects whose directory name is just the last artifact segment
             // (e.g. "processor" directory for artifact "ap-simple-processor")
@@ -349,16 +338,16 @@ final class PomWorkspaceWalker {
             // only fire when groupPrefixedModuleName won't, and only when the artifact's first
             // hyphen-segment is actually part of the groupId (guards spurious steals like acme-api
             // claiming com.example.api)
-            if (PomXmlUtils.groupPrefixedModuleName(groupId, artifactId).isEmpty()) {
-                final String firstSeg = PomXmlUtils.firstHyphenSegment(artifactId);
+            if (MavenModuleNaming.groupPrefixedModuleName(groupId, artifactId).isEmpty()) {
+                final String firstSeg = MavenModuleNaming.firstHyphenSegment(artifactId);
                 if (!firstSeg.isEmpty() && groupIdContainsSegment(groupId, firstSeg)) {
                     names.add(groupId + "." + lastSegment);
                 }
             }
         }
-        PomXmlUtils.groupPrefixedModuleName(groupId, artifactId).ifPresent(names::add);
-        PomXmlUtils.groupSuffixedModuleName(groupId, artifactId).ifPresent(names::add);
-        PomXmlUtils.groupParentWithLastArtifactSegment(groupId, artifactId).ifPresent(names::add);
+        MavenModuleNaming.groupPrefixedModuleName(groupId, artifactId).ifPresent(names::add);
+        MavenModuleNaming.groupSuffixedModuleName(groupId, artifactId).ifPresent(names::add);
+        MavenModuleNaming.groupParentWithLastArtifactSegment(groupId, artifactId).ifPresent(names::add);
         return names;
     }
 

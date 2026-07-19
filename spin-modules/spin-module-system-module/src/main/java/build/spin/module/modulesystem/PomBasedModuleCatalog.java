@@ -40,7 +40,7 @@ import java.util.stream.Stream;
  * the {@code pom.xml} files present in a Maven workspace, for use when no
  * {@code module-catalog.properties} is available.
  * <p>
- * Workspace-walking and transitive-dependency traversal is delegated to {@link PomWorkspaceWalker};
+ * Workspace-walking and transitive-dependency traversal is delegated to {@link PomDependencyGraphWalker};
  * this class only provides the visitor that turns each discovered coordinate into an
  * {@link Artifact.Constraint} registered under every JPMS module-name candidate.
  *
@@ -90,7 +90,7 @@ public class PomBasedModuleCatalog
                                             final TelemetryRecorder recorder) {
         final ModuleCatalog result = ModuleCatalog.HeapBased.create();
 
-        PomWorkspaceWalker.walk(workspacePath, localRepo, recorder, codeModel,
+        PomDependencyGraphWalker.walk(workspacePath, localRepo, recorder, codeModel,
             (names, groupId, artifactId, version) -> {
                 try {
                     final Artifact.Constraint constraint = Artifact.Constraint.of(
@@ -124,7 +124,7 @@ public class PomBasedModuleCatalog
         }
         // Fallback: infer groupId/artifactId from the module name convention and probe the local repo.
         final String version = reference.version().get().toString();
-        return PomXmlUtils.findJarByModuleName(reference.name(), version, this.localRepo)
+        return MavenModuleNaming.findJarByModuleName(reference.name(), version, this.localRepo)
             .map(c -> {
                 final Artifact artifact = Artifact.create(c[0], c[1], c[2], "jar");
                 final Artifact.Constraint constraint = Artifact.Constraint.of(artifact);
@@ -146,7 +146,7 @@ public class PomBasedModuleCatalog
 
         @Override
         public boolean isWorkspace(final Path path) {
-            return PomXmlUtils.isMavenWorkspaceRoot(path)
+            return PomWorkspaces.isMavenWorkspaceRoot(path)
                 && !Files.exists(path.resolve(MODULE_CATALOG_FILENAME));
         }
 
