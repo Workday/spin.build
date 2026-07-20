@@ -46,6 +46,7 @@ import build.spin.module.modulesystem.JavadocArguments;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.Verbose;
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 
 import java.io.File;
 import java.io.IOException;
@@ -54,7 +55,6 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -96,7 +96,32 @@ public abstract class AbstractJavaDoc
     @Inject
     @Configuration
     @Source("build.spin.module.javadoc")
-    private Optional<Properties> properties;
+    @Named("verbose")
+    private Optional<Boolean> verboseOverride;
+
+    @Inject
+    @Configuration
+    @Source("build.spin.module.javadoc")
+    @Named("author")
+    private Optional<Boolean> author;
+
+    @Inject
+    @Configuration
+    @Source("build.spin.module.javadoc")
+    @Named("version")
+    private Optional<Boolean> showVersion;
+
+    @Inject
+    @Configuration
+    @Source("build.spin.module.javadoc")
+    @Named("nodeprecated")
+    private Optional<Boolean> nodeprecated;
+
+    @Inject
+    @Configuration
+    @Source("build.spin.module.javadoc")
+    @Named("enable-preview")
+    private Optional<Boolean> enablePreview;
 
     /**
      * Compiles and produces Java Documentation from the source code in the provided {@link PathSet}, outputting it
@@ -158,18 +183,31 @@ public abstract class AbstractJavaDoc
             // include the output path for documentation
             writer.println("-d " + Strings.doubleQuoteIfContainsWhiteSpace(targetPath.toString()));
 
-            // include -verbose (for debugging)
-            if (this.verbose == Verbose.ENABLED) {
+            // include -verbose (for debugging); a configured "verbose" value overrides the CLI Verbose option
+            if (this.verboseOverride.orElse(this.verbose == Verbose.ENABLED)) {
                 writer.println("-verbose");
             }
             else {
                 writer.println("-quiet");
             }
 
+            // include the common javadoc toggles, when configured
+            if (this.author.orElse(false)) {
+                writer.println("-author");
+            }
+            if (this.showVersion.orElse(false)) {
+                writer.println("-version");
+            }
+            if (this.nodeprecated.orElse(false)) {
+                writer.println("-nodeprecated");
+            }
+
             // pin the release; --release and --enable-preview are Java 9+ only
             if (this.javaVersion.isModular()) {
                 writer.println("--release " + this.javaVersion.major());
-                writer.println("--enable-preview");
+                if (this.enablePreview.orElse(true)) {
+                    writer.println("--enable-preview");
+                }
             } else {
                 writer.println("-source " + this.javaVersion.major());
             }
