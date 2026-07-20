@@ -9,9 +9,9 @@ package build.spin;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -56,11 +56,11 @@ public interface Workspace
 
             @Override
             public void onLeaving(final Project project) {
-                // close the AutoCloseable Plugins and Resources
-                project.plugins(AutoCloseable.class)
-                    .forEach(closable -> {
+                // close the AutoCloseable Extensions (Plugins, then Resources - see Project#extensions())
+                project.extensions(AutoCloseable.class)
+                    .forEach(closeable -> {
                         try {
-                            closable.close();
+                            closeable.close();
                         }
                         catch (final Exception e) {
                             throw new RuntimeException(e);
