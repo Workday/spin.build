@@ -66,6 +66,7 @@ import java.util.stream.Stream;
  * @author brian.oliver
  * @since Mar-2021
  */
+@Source("build.spin.module.javadoc")
 public abstract class AbstractJavaDoc
     implements JavaCompilerPlugin.JavaDoc {
 
@@ -95,31 +96,26 @@ public abstract class AbstractJavaDoc
 
     @Inject
     @Configuration
-    @Source("build.spin.module.javadoc")
     @Named("verbose")
     private Optional<Boolean> verboseOverride;
 
     @Inject
     @Configuration
-    @Source("build.spin.module.javadoc")
     @Named("author")
     private Optional<Boolean> author;
 
     @Inject
     @Configuration
-    @Source("build.spin.module.javadoc")
     @Named("version")
     private Optional<Boolean> showVersion;
 
     @Inject
     @Configuration
-    @Source("build.spin.module.javadoc")
     @Named("nodeprecated")
     private Optional<Boolean> nodeprecated;
 
     @Inject
     @Configuration
-    @Source("build.spin.module.javadoc")
     @Named("enable-preview")
     private Optional<Boolean> enablePreview;
 

@@ -23,7 +23,6 @@ package build.spin.module.configuration;
 import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
 import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.foundation.usage.AnnotationTypeUsage;
 import build.codemodel.injection.Binding;
 import build.codemodel.injection.Dependency;
 import build.codemodel.injection.Resolver;
@@ -31,7 +30,6 @@ import build.spin.Extension;
 import build.spin.Project;
 import build.spin.Service;
 import build.spin.annotation.Bootstrap;
-import build.spin.common.util.AnnotationValues;
 import jakarta.inject.Inject;
 
 import java.nio.file.FileSystem;
@@ -83,17 +81,7 @@ public class ConfigurationService
             telemetryRecorder,
             pathSet,
             dependency -> {
-                // obtain the source location
-                final String sourceValue = dependency.typeUsage()
-                    .traits(AnnotationTypeUsage.class)
-                    .filter(a -> a.typeName().canonicalName().equals(Source.class.getCanonicalName()))
-                    .findFirst()
-                    .flatMap(a -> AnnotationValues.firstLiteral(a, String.class))
-                    .orElse(null);
-
-                final String name = sourceValue != null
-                    ? sourceValue
-                    : ConfigurationResource.definingClass(dependency).getCanonicalName();
+                final String name = ConfigurationResource.definingClass(dependency).getCanonicalName();
 
                 // drop .MetaClass from the name
                 final String metaClass = ".MetaClass";

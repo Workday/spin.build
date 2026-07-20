@@ -24,7 +24,6 @@ import build.base.foundation.Strings;
 import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
 import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.foundation.usage.AnnotationTypeUsage;
 import build.codemodel.injection.Binding;
 import build.codemodel.injection.Dependency;
 import build.codemodel.injection.InjectionPointDependency;
@@ -33,7 +32,6 @@ import build.codemodel.jdk.descriptor.JDKType;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Workspace;
-import build.spin.common.util.AnnotationValues;
 import build.spin.common.util.Globs;
 import jakarta.inject.Inject;
 
@@ -106,17 +104,7 @@ public class ConfigurationResource
         this.resolver = new ConfigurationResolver(
             recorder,
             pathSet,
-            dependency -> {
-                final String sourceValue = dependency.typeUsage()
-                    .traits(AnnotationTypeUsage.class)
-                    .filter(a -> a.typeName().canonicalName().equals(Source.class.getCanonicalName()))
-                    .findFirst()
-                    .flatMap(a -> AnnotationValues.firstLiteral(a, String.class))
-                    .orElse(null);
-                return sourceValue != null
-                    ? sourceValue
-                    : definingClass(dependency).getCanonicalName();
-            }
+            dependency -> definingClass(dependency).getCanonicalName()
         );
 
         // -------------------

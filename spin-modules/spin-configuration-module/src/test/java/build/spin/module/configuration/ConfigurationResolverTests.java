@@ -8,9 +8,7 @@ import build.base.telemetry.Commenced;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
 import build.spin.common.telemetry.TelemetryPublisher;
-import build.codemodel.foundation.usage.AnnotationTypeUsage;
 import build.codemodel.injection.Context;
-import build.spin.common.util.AnnotationValues;
 import build.codemodel.injection.InjectionFramework;
 import build.codemodel.injection.UnsatisfiedDependencyException;
 import jakarta.inject.Inject;
@@ -92,19 +90,13 @@ class ConfigurationResolverTests {
 
         final var pathSet = builder.build();
 
-        // establish the ConfigurationResolver
+        // establish the ConfigurationResolver; @Source (on the injection point, its defining class, or an
+        // ancestor) is now resolved internally by ConfigurationResolver, so this factory only supplies the
+        // fallback base file name used when no @Source can be resolved
         this.resolver = new ConfigurationResolver(
             this.recorder,
             pathSet,
-            dependency -> {
-                final var sourceValue = dependency.typeUsage()
-                    .traits(AnnotationTypeUsage.class)
-                    .filter(a -> a.typeName().canonicalName().equals(Source.class.getCanonicalName()))
-                    .findFirst()
-                    .flatMap(a -> AnnotationValues.firstLiteral(a, String.class))
-                    .orElse(null);
-                return sourceValue != null ? sourceValue : "config";
-            });
+            dependency -> "config");
 
         // establish the Context for testing the ConfigurationResolver
         return InjectionFramework.create().newContext(this.resolver);
@@ -663,5 +655,155 @@ class ConfigurationResolverTests {
         assertThat(example.verbose).contains(true);
         assertThat(example.properties).isPresent();
         assertThat(reads.get()).isEqualTo(1);
+    }
+
+    /**
+     * Ensure a {@link Source} declared on the class defining the injection point is used when the injection
+     * point itself has no {@link Source}.
+     */
+    @Test
+    void shouldResolveSourceDeclaredOnTheDefiningClass() {
+
+        @Source("config")
+        class Example {
+
+            @Inject
+            @Configuration
+            Properties properties;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.get("message")).isEqualTo("hello world");
+    }
+
+    /**
+     * Ensure a {@link Source} declared on an interface implemented by the defining class is used when neither
+     * the injection point nor the defining class itself has a {@link Source}.
+     */
+    @Test
+    void shouldResolveSourceDeclaredOnAnImplementedInterface() {
+
+        @Source("config")
+        interface ConfiguredSource {
+        }
+
+        class Example implements ConfiguredSource {
+
+            @Inject
+            @Configuration
+            Properties properties;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.get("message")).isEqualTo("hello world");
+    }
+
+    /**
+     * Ensure a {@link Source} declared on a superclass of the defining class is used when neither the injection
+     * point nor the defining class itself has a {@link Source}.
+     */
+    @Test
+    void shouldResolveSourceDeclaredOnASuperclass() {
+
+        @Source("config")
+        class ConfiguredBase {
+        }
+
+        class Example extends ConfiguredBase {
+
+            @Inject
+            @Configuration
+            Properties properties;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.get("message")).isEqualTo("hello world");
+    }
+
+    /**
+     * Ensure a {@link Source} declared on the defining class wins over one declared on an ancestor (superclass),
+     * ie: the closest {@link Source} wins.
+     */
+    @Test
+    void shouldPreferSourceOnTheDefiningClassOverAnAncestor() {
+
+        @Source("this.source.is.missing")
+        class WrongSourceBase {
+        }
+
+        @Source("config")
+        class Example extends WrongSourceBase {
+
+            @Inject
+            @Configuration
+            Properties properties;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.get("message")).isEqualTo("hello world");
+    }
+
+    /**
+     * Ensure a {@link Source} declared on a nearer ancestor wins over one declared on a farther ancestor, ie:
+     * the closest {@link Source} wins.
+     */
+    @Test
+    void shouldPreferNearerAncestorSourceOverFartherAncestor() {
+
+        @Source("this.source.is.missing")
+        class Grandparent {
+        }
+
+        @Source("config")
+        class Parent extends Grandparent {
+        }
+
+        class Example extends Parent {
+
+            @Inject
+            @Configuration
+            Properties properties;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.get("message")).isEqualTo("hello world");
+    }
+
+    /**
+     * Ensure a {@link Source} declared directly on the injection point wins over one declared on the defining
+     * class, ie: the closest {@link Source} wins.
+     */
+    @Test
+    void shouldPreferFieldLevelSourceOverClassLevelSource() {
+
+        @Source("this.source.is.missing")
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config")
+            Properties properties;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.properties).isNotNull();
+        assertThat(example.properties.get("message")).isEqualTo("hello world");
     }
 }
