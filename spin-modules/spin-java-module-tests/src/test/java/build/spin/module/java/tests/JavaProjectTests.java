@@ -103,6 +103,41 @@ public class JavaProjectTests {
     }
 
     @Test
+    @WorkspacePath("javadoc-config")
+    void shouldApplyNamedConfigurationToJavadocArguments(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // create a Program to generate javadoc for the Workspace
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("javadoc"));
+
+        // create a Task ExecutionCache for the Program
+        final AssetCache cache = DefaultAssetCache.create();
+
+        program.execute(cache);
+
+        // locate the generated "arguments-javadoc-*" file, containing the arguments passed to javadoc
+        final Path buildPath = workspace.path().resolve(".build");
+        final Path argumentsFile;
+        try (var files = Files.list(buildPath)) {
+            argumentsFile = files
+                .filter(path -> path.getFileName().toString().startsWith("arguments-javadoc-"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                    "Expected an arguments-javadoc-* file in [" + buildPath + "]"));
+        }
+
+        final String contents = Files.readString(argumentsFile);
+
+        // the .spin/build.spin.module.javadoc.properties fixture sets author, version and nodeprecated to true
+        assertThat(contents).contains("-author");
+        assertThat(contents).contains("-version");
+        assertThat(contents).contains("-nodeprecated");
+
+        // ... and sets enable-preview to false, overriding the default (enabled) behavior
+        assertThat(contents).doesNotContain("--enable-preview");
+    }
+
+    @Test
     @WorkspacePath("no-config")
     void shouldDiscoverJavaWorkspaceWithoutSpinConfig(final Workspace workspace) {
         // Reaching this assertion means workspace discovery completed without
