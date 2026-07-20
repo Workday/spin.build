@@ -6,6 +6,7 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doAnswer;
@@ -25,7 +26,7 @@ class WorkspaceCloseTests {
      * @return the {@link Workspace} mock
      */
     private static Workspace mockWorkspace() {
-        final Workspace workspace = mock(Workspace.class, CALLS_REAL_METHODS);
+        final var workspace = mock(Workspace.class, CALLS_REAL_METHODS);
 
         doAnswer(invocation -> {
             final Visitor<? super Project> visitor = invocation.getArgument(0);
@@ -54,7 +55,7 @@ class WorkspaceCloseTests {
             }
         }
 
-        final Workspace workspace = mockWorkspace();
+        final var workspace = mockWorkspace();
         when(workspace.plugins()).thenReturn(Stream.of(new TestPlugin()));
 
         workspace.close();
@@ -77,7 +78,7 @@ class WorkspaceCloseTests {
             }
         }
 
-        final Workspace workspace = mockWorkspace();
+        final var workspace = mockWorkspace();
         when(workspace.resources()).thenReturn(Stream.of(new TestResource()));
 
         workspace.close();
@@ -91,7 +92,76 @@ class WorkspaceCloseTests {
      */
     @Test
     void shouldNotStackOverflowWithNoPlugins() {
-        final Workspace workspace = mockWorkspace();
+        final var workspace = mockWorkspace();
         assertDoesNotThrow(workspace::close);
+    }
+
+    /**
+     * Verifies that {@link Workspace#close()} continues closing the remaining {@link AutoCloseable} extensions
+     * after an earlier one fails to close, rather than aborting.
+     */
+    @Test
+    void shouldContinueClosingRemainingExtensionsAfterAFailure() {
+        final boolean[] secondClosed = {false};
+
+        final class FailingPlugin implements Plugin, AutoCloseable {
+            @Override
+            public void close() throws Exception {
+                throw new IllegalStateException("first plugin failed to close");
+            }
+        }
+
+        final class SecondPlugin implements Plugin, AutoCloseable {
+            @Override
+            public void close() {
+                secondClosed[0] = true;
+            }
+        }
+
+        final var workspace = mockWorkspace();
+        when(workspace.plugins()).thenReturn(Stream.of(new FailingPlugin(), new SecondPlugin()));
+
+        assertThrows(RuntimeException.class, workspace::close);
+
+        assertThat(secondClosed[0])
+            .withFailMessage("The second AutoCloseable plugin must still be closed after the first fails")
+            .isTrue();
+    }
+
+    /**
+     * Verifies that {@link Workspace#close()} reports every failure to close an {@link AutoCloseable} extension:
+     * the first as the thrown exception's cause, and any subsequent failures as
+     * {@linkplain Throwable#getSuppressed() suppressed} exceptions.
+     */
+    @Test
+    void shouldReportAllFailuresWhenMultipleExtensionsFailToClose() {
+
+        final class FailingPlugin implements Plugin, AutoCloseable {
+
+            private final String message;
+
+            FailingPlugin(final String message) {
+                this.message = message;
+            }
+
+            @Override
+            public void close() throws Exception {
+                throw new IllegalStateException(message);
+            }
+        }
+
+        final var workspace = mockWorkspace();
+        when(workspace.plugins()).thenReturn(Stream.of(new FailingPlugin("first"), new FailingPlugin("second")));
+
+        final var thrown = assertThrows(RuntimeException.class, workspace::close);
+
+        assertThat(thrown.getCause())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("first");
+
+        assertThat(thrown.getSuppressed()).hasSize(1);
+        assertThat(thrown.getSuppressed()[0].getCause())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("second");
     }
 }
