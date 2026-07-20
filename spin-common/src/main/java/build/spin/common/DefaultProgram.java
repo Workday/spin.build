@@ -401,7 +401,9 @@ public final class DefaultProgram
             this.instructions.keySet().stream()
                 .filter(ref -> pending.get(ref).get() == 0)
                 .forEach(ref -> {
-                    if (dispatched.add(ref)) {
+                    // fail-fast: once any task has failed, stop starting new ones — tasks
+                    // already in flight are left to finish, but nothing new gets dispatched
+                    if (failures.isEmpty() && dispatched.add(ref)) {
                         scope.fork(() -> runTask(ref, pending, dispatched, executionCache, execution, failures));
                     }
                 });
@@ -519,9 +521,10 @@ public final class DefaultProgram
             .filter(dependent -> pending.get(dependent).decrementAndGet() == 0)
             .toList();
 
-        if (!readyDependents.isEmpty()) {
+        if (!readyDependents.isEmpty() && failures.isEmpty()) {
             try (var nestedScope = StructuredTaskScope.open()) {
                 readyDependents.stream()
+                    .filter(_ -> failures.isEmpty())
                     .filter(dispatched::add)
                     .forEach(dep -> nestedScope.fork(() ->
                         runTask(dep, pending, dispatched, executionCache, execution, failures)));

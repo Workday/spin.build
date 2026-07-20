@@ -29,6 +29,8 @@ class ProgramBehaviorTests {
     void resetFlags() {
         PreProcessTestPlugin.PRE_PROCESSOR_RAN.set(false);
         PreProcessTestPlugin.MAIN_TASK_RAN.set(false);
+        FailFastTestPlugin.SLOW_ROOT_RAN.set(false);
+        FailFastTestPlugin.NEVER_TASK_RAN.set(false);
     }
 
     @Test
@@ -55,5 +57,25 @@ class ProgramBehaviorTests {
 
         assertThrows(ProgramExecutionException.class, () -> program.execute(cache),
             "execute() must throw ProgramExecutionException when tasks have cyclic dependencies");
+    }
+
+    // ── Bug 3: once a task fails, new tasks must not be dispatched ────────────
+
+    @Test
+    @WorkspacePath("fail-fast-test")
+    void shouldNotDispatchNewTasksAfterAFailure(final Engine engine, final Workspace workspace) {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("fail-fast"));
+
+        assertThrows(ProgramExecutionException.class, () -> program.execute(cache),
+            "execute() must throw ProgramExecutionException when a task fails");
+
+        assertThat(FailFastTestPlugin.SLOW_ROOT_RAN.get())
+            .withFailMessage("an already in-flight task must be left to finish")
+            .isTrue();
+        assertThat(FailFastTestPlugin.NEVER_TASK_RAN.get())
+            .withFailMessage("no new task may be dispatched once a failure has been recorded")
+            .isFalse();
     }
 }
