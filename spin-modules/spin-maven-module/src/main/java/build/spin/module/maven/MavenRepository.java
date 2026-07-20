@@ -39,7 +39,6 @@ import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import jakarta.inject.Inject;
-import org.eclipse.aether.graph.Dependency;
 
 import java.nio.file.FileSystem;
 import java.nio.file.Files;
@@ -49,11 +48,8 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * An {@link Artifact.Resolver} {@link Service} for an Apache Maven-based Repository.
- * <p>
- * This implementation is based on the
- * <a href="https://github.com/apache/maven-resolver/blob/master/maven-resolver-demos/maven-resolver-demo-snippets">Apache Maven Demo Snippets</a>
- * provided by Apache.
+ * An {@link Artifact.Resolver} {@link Service} for an Apache Maven-based Repository, backed by the
+ * pure-JDK {@link MavenFacade}/{@link PomResolver}.
  *
  * @author brian.oliver
  * @since Sep-2019
@@ -113,14 +109,12 @@ public class MavenRepository
 
     @Override
     public Exceptional<Path> resolve(final Artifact artifact) {
-
-        return this.maven.resolveArtifact(artifact.toString())
-            .map(result -> result.getArtifact().getPath());
+        return this.maven.resolveArtifact(artifact);
     }
 
     @Override
     public Exceptional<List<Path>> resolveTransitive(final Artifact artifact) {
-        return this.maven.resolveTransitiveDependencies(artifact.toString());
+        return this.maven.resolveTransitiveDependencies(artifact);
     }
 
     @Override
@@ -254,28 +248,22 @@ public class MavenRepository
         enhanced.getTrait(VersionTrait.class).ifPresent(enhanced::removeTrait);
         enhanced.addTrait(VersionTrait.of(artifact.version()));
 
-        final var resolved = this.maven.resolveArtifactDescriptor(artifact.toString())
-            .flatMap(result -> {
-                final List<Dependency> dependencies = result.getDependencies().stream()
-                    .filter(d -> (d.getScope().equals("compile")
-                        || d.getScope().equals("runtime")
-                        || d.getScope().equals("provided"))
-                        && !d.isOptional())
-                    .toList();
-
+        final var resolved = this.maven.resolveArtifactDescriptor(artifact)
+            .flatMap(dependencies -> {
                 dependencies.stream()
-                    .filter(d -> d.getScope().equals("compile")
-                        || d.getScope().equals("runtime")
-                        || d.getScope().equals("provided"))
+                    .filter(d -> (d.scope().equals("compile")
+                        || d.scope().equals("runtime")
+                        || d.scope().equals("provided"))
+                        && !d.optional())
                     .forEach(d -> {
-                        final boolean isStatic = d.getScope().equals("provided") || d.isOptional();
+                        final boolean isStatic = d.scope().equals("provided") || d.optional();
 
                         final Artifact requiredArtifact = Artifact.create(
-                            d.getArtifact().getGroupId(),
-                            d.getArtifact().getArtifactId(),
-                            d.getArtifact().getVersion(),
-                            d.getArtifact().getExtension(),
-                            d.getArtifact().getClassifier());
+                            d.groupId(),
+                            d.artifactId(),
+                            d.version().orElse(null),
+                            d.type(),
+                            d.classifier().orElse(null));
 
                         final var reference = getModuleReference(requiredArtifact, catalog)
                             .filter(r -> r.version().isPresent())
