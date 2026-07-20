@@ -2,9 +2,9 @@ package build.spin.module.configuration;
 
 import build.base.flow.SubscriberRegistry;
 import build.base.foundation.UniformResource;
-import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
 import build.base.json.JsonValue;
+import build.base.telemetry.Commenced;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
 import build.spin.common.telemetry.TelemetryPublisher;
@@ -14,6 +14,7 @@ import build.spin.common.util.AnnotationValues;
 import build.codemodel.injection.InjectionFramework;
 import build.codemodel.injection.UnsatisfiedDependencyException;
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -60,7 +62,7 @@ class ConfigurationResolverTests {
 
         // determine the Path in which the sample configuration files reside
         // (based on a known configuration file)
-        final Path sourcePath = Paths.get(
+        final var sourcePath = Paths.get(
             this.getClass().getProtectionDomain().getCodeSource().getLocation().getPath());
         this.path = sourcePath.resolve("configuration/config.properties").getParent();
 
@@ -83,19 +85,19 @@ class ConfigurationResolverTests {
     private Context createContext(final Path... paths) {
 
         // establish the PathSet of directories in which configuration may be present, in search order
-        final PathSetBuilder builder = PathSetBuilder.create(paths);
+        final var builder = PathSetBuilder.create(paths);
 
         // include the sample path directory
         builder.add(this.path);
 
-        final PathSet pathSet = builder.build();
+        final var pathSet = builder.build();
 
         // establish the ConfigurationResolver
         this.resolver = new ConfigurationResolver(
             this.recorder,
             pathSet,
             dependency -> {
-                final String sourceValue = dependency.typeUsage()
+                final var sourceValue = dependency.typeUsage()
                     .traits(AnnotationTypeUsage.class)
                     .filter(a -> a.typeName().canonicalName().equals(Source.class.getCanonicalName()))
                     .findFirst()
@@ -122,7 +124,7 @@ class ConfigurationResolverTests {
             Path path;
         }
 
-        final Example example = createContext().inject(new Example());
+        final var example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.path).isNotNull();
@@ -142,7 +144,7 @@ class ConfigurationResolverTests {
             Optional<Path> path;
         }
 
-        final Example example = createContext().inject(new Example());
+        final var example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.path).isNotNull();
@@ -163,7 +165,7 @@ class ConfigurationResolverTests {
             Optional<Path> path;
         }
 
-        final Example example = createContext().inject(new Example());
+        final var example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.path).isNotNull();
@@ -184,7 +186,7 @@ class ConfigurationResolverTests {
             Properties properties;
         }
 
-        final Example example = createContext().inject(new Example());
+        final var example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.properties).isNotNull();
@@ -204,7 +206,7 @@ class ConfigurationResolverTests {
             Properties properties;
         }
 
-        final Example example = createContext().inject(new Example());
+        final var example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.properties).isNotNull();
@@ -224,7 +226,7 @@ class ConfigurationResolverTests {
             @Source("config")
             Optional<Properties> properties;
         }
-        final Example example = createContext().inject(new Example());
+        final var example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.properties).isNotNull();
@@ -263,7 +265,7 @@ class ConfigurationResolverTests {
             @Source("this.source.is.missing")
             Optional<Properties> properties;
         }
-        final Example example = createContext().inject(new Example());
+        final var example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.properties).isNotNull();
@@ -283,7 +285,7 @@ class ConfigurationResolverTests {
             JsonValue node;
         }
 
-        final Example example = createContext().inject(new Example());
+        final var example = createContext().inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.node).isNotNull();
@@ -322,13 +324,13 @@ class ConfigurationResolverTests {
         }
 
         // establish a Context that uses our hierarchical search paths
-        final Context context = createContext(
+        final var context = createContext(
             this.path.resolve("level-1/level-2/level-3/level-4"),
             this.path.resolve("level-1/level-2/level-3"),
             this.path.resolve("level-1/level-2"),
             this.path.resolve("level-1"));
 
-        final Example example = context.inject(new Example());
+        final var example = context.inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.paths.isEmpty()).isFalse();
@@ -358,13 +360,13 @@ class ConfigurationResolverTests {
         }
 
         // establish a Context that uses our hierarchical search paths
-        final Context context = createContext(
+        final var context = createContext(
             this.path.resolve("level-1/level-2/level-3/level-4"),
             this.path.resolve("level-1/level-2/level-3"),
             this.path.resolve("level-1/level-2"),
             this.path.resolve("level-1"));
 
-        final Example example = context.inject(new Example());
+        final var example = context.inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.properties.isEmpty()).isFalse();
@@ -385,15 +387,281 @@ class ConfigurationResolverTests {
         }
 
         // establish a Context that uses our hierarchical search paths
-        final Context context = createContext(
+        final var context = createContext(
             this.path.resolve("level-1/level-2/level-3/level-4"),
             this.path.resolve("level-1/level-2/level-3"),
             this.path.resolve("level-1/level-2"),
             this.path.resolve("level-1"));
 
-        final Example example = context.inject(new Example());
+        final var example = context.inject(new Example());
 
         assertThat(example).isNotNull();
         assertThat(example.properties.isEmpty()).isTrue();
+    }
+
+    /**
+     * Ensure a {@code "/"}-separated {@link Named} value is navigated as a path through a {@code .json} file.
+     */
+    @Test
+    void shouldResolveNamedNestedValueFromJsonFile() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/port")
+            Optional<Integer> port;
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/verbose")
+            Optional<Boolean> verbose;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.port).contains(8080);
+        assertThat(example.verbose).contains(true);
+    }
+
+    /**
+     * Ensure a {@code "/"}-separated {@link Named} value has its separators replaced with {@code "."} and is
+     * resolved as a flat key from a {@code .properties} file.
+     */
+    @Test
+    void shouldResolveNamedNestedValueFromPropertiesFile() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.properties")
+            @Named("server/port")
+            Optional<Integer> port;
+
+            @Inject
+            @Configuration
+            @Source("config.properties")
+            @Named("server/verbose")
+            Optional<Boolean> verbose;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.port).contains(8080);
+        assertThat(example.verbose).contains(true);
+    }
+
+    /**
+     * Ensure a required (non-{@link Optional}) {@link Named} value can be resolved and coerced.
+     */
+    @Test
+    void shouldResolveRequiredNamedValue() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/port")
+            Integer port;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.port).isEqualTo(8080);
+    }
+
+    /**
+     * Ensure a required (non-{@link Optional}) {@link Named} value can be resolved and coerced to a primitive
+     * {@code int} and {@code boolean}, from a {@code .json} file.
+     */
+    @Test
+    void shouldResolveRequiredPrimitiveNamedValueFromJsonFile() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/port")
+            int port;
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/verbose")
+            boolean verbose;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.port).isEqualTo(8080);
+        assertThat(example.verbose).isTrue();
+    }
+
+    /**
+     * Ensure a required (non-{@link Optional}) {@link Named} value can be resolved and coerced to a primitive
+     * {@code int} and {@code boolean}, from a {@code .properties} file.
+     */
+    @Test
+    void shouldResolveRequiredPrimitiveNamedValueFromPropertiesFile() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.properties")
+            @Named("server/port")
+            int port;
+
+            @Inject
+            @Configuration
+            @Source("config.properties")
+            @Named("server/verbose")
+            boolean verbose;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.port).isEqualTo(8080);
+        assertThat(example.verbose).isTrue();
+    }
+
+    /**
+     * Ensure an {@link Optional} {@link Named} value resolves to {@link Optional#empty()} when the named value
+     * doesn't exist.
+     */
+    @Test
+    void shouldResolveOptionalNamedValueAsEmptyWhenMissing() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/missing")
+            Optional<String> missing;
+        }
+
+        final var example = createContext().inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.missing).isEmpty();
+    }
+
+    /**
+     * Ensure a required (non-{@link Optional}) {@link Named} value throws when it doesn't exist.
+     */
+    @Test
+    void shouldNotResolveRequiredNamedValueWhenMissing() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/missing")
+            String missing;
+        }
+
+        Assertions.assertThrows(UnsatisfiedDependencyException.class, () -> createContext().inject(new Example()));
+    }
+
+    /**
+     * Ensure a {@code .json} {@link Configuration} file is only read/parsed once, even when multiple
+     * {@code @Named} values (and a whole-file value) are resolved from it, ie: {@link ConfigurationResolver}
+     * memoizes previously parsed files.
+     */
+    @Test
+    void shouldOnlyReadJsonFileOnceForMultipleValues() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/port")
+            Optional<Integer> port;
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            @Named("server/verbose")
+            Optional<Boolean> verbose;
+
+            @Inject
+            @Configuration
+            @Source("config.json")
+            Optional<JsonValue> node;
+        }
+
+        final var reads = new AtomicInteger();
+        this.observers.subscribe(telemetry -> {
+            if (telemetry instanceof Commenced) {
+                reads.incrementAndGet();
+            }
+        });
+
+        final var context = createContext();
+        final var example = context.inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.port).contains(8080);
+        assertThat(example.verbose).contains(true);
+        assertThat(example.node).isPresent();
+        assertThat(reads.get()).isEqualTo(1);
+    }
+
+    /**
+     * Ensure a {@code .properties} {@link Configuration} file is only read/parsed once, even when multiple
+     * {@code @Named} values (and a whole-file value) are resolved from it, ie: {@link ConfigurationResolver}
+     * memoizes previously parsed files.
+     */
+    @Test
+    void shouldOnlyReadPropertiesFileOnceForMultipleValues() {
+
+        class Example {
+
+            @Inject
+            @Configuration
+            @Source("config.properties")
+            @Named("server/port")
+            Optional<Integer> port;
+
+            @Inject
+            @Configuration
+            @Source("config.properties")
+            @Named("server/verbose")
+            Optional<Boolean> verbose;
+
+            @Inject
+            @Configuration
+            @Source("config.properties")
+            Optional<Properties> properties;
+        }
+
+        final var reads = new AtomicInteger();
+        this.observers.subscribe(telemetry -> {
+            if (telemetry instanceof Commenced) {
+                reads.incrementAndGet();
+            }
+        });
+
+        final var context = createContext();
+        final var example = context.inject(new Example());
+
+        assertThat(example).isNotNull();
+        assertThat(example.port).contains(8080);
+        assertThat(example.verbose).contains(true);
+        assertThat(example.properties).isPresent();
+        assertThat(reads.get()).isEqualTo(1);
     }
 }

@@ -73,7 +73,7 @@ public class MavenRepositoryTests {
     @Test
     void shouldResolveBaseFoundationDependency() {
 
-        final Artifact artifact = Artifact.parse("build.base:base-foundation:0.21.5");
+        final Artifact artifact = Artifact.parse("build.base:base-foundation:0.29.0");
 
         final Exceptional<Path> path = this.repository.resolve(artifact);
 

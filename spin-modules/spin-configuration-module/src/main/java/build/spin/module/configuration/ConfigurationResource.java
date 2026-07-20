@@ -9,9 +9,9 @@ package build.spin.module.configuration;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -154,15 +154,18 @@ public class ConfigurationResource
         return this.predicates.stream().anyMatch(predicate -> predicate.test(path));
     }
 
-    static Class<?> definingClass(final Dependency dep) {
-        if (dep instanceof InjectionPointDependency ipd && ipd.injectionPoint() != null) {
-            return ipd.injectionPoint().typeDescriptor().getTrait(JDKType.class)
+    static Class<?> definingClass(final Dependency dependency) {
+        if (dependency instanceof InjectionPointDependency injectionPointDependency
+            && injectionPointDependency.injectionPoint() != null) {
+
+            return injectionPointDependency.injectionPoint().typeDescriptor().getTrait(JDKType.class)
                 .map(JDKType::type)
                 .filter(Class.class::isInstance)
                 .map(Class.class::cast)
                 .orElse(null);
         }
-        return dep.getClass();
+
+        return dependency.getClass();
     }
 
     @Override
