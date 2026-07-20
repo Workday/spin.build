@@ -74,14 +74,27 @@ public abstract class AbstractDetectTestResolution
 
     @Override
     protected Stream<Artifact> additionalArtifacts() {
-        final String jupiterVersion = this.versioning.getVersion("org.junit.jupiter")
-            .map(Version::get)
-            .orElse("5.6.0");
+        final String jupiterVersion = jupiterVersion(this.versioning);
         final String platformVersion = derivePlatformVersion(jupiterVersion);
 
         return Stream.of(
             Artifact.parse("org.junit.platform:junit-platform-console:" + platformVersion),
             Artifact.parse("org.junit.jupiter:junit-jupiter-engine:" + jupiterVersion));
+    }
+
+    /**
+     * Resolves the JUnit Jupiter version to use, falling back to {@code "5.6.0"} when the
+     * workspace declares none.
+     * <p>
+     * The lookup key must be the real JPMS module name of {@code junit-jupiter-api}
+     * ({@code org.junit.jupiter.api}), not its groupId ({@code org.junit.jupiter}) — a
+     * {@link ModuleVersioning} that prefers ground-truth module names read from jars (as
+     * {@code PomDependencyGraphWalker} does) never registers a version under the bare groupId.
+     */
+    static String jupiterVersion(final ModuleVersioning versioning) {
+        return versioning.getVersion("org.junit.jupiter.api")
+            .map(Version::get)
+            .orElse("5.6.0");
     }
 
     /**

@@ -25,8 +25,8 @@ import build.base.foundation.UniformResource;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
-import build.spin.common.telemetry.TelemetryPublisher;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
@@ -61,7 +61,7 @@ class AbstractDetectResolutionTest {
     // an Artifact.Resolver stub whose other members every test in this class leaves
     // unexercised — only resolveTransitive varies per test.
     private static Artifact.Resolver stubResolver(
-            final Function<Artifact, Exceptional<List<Path>>> resolveTransitive) {
+        final Function<Artifact, Exceptional<List<Path>>> resolveTransitive) {
 
         return new Artifact.Resolver() {
             @Override
@@ -246,7 +246,7 @@ class AbstractDetectResolutionTest {
 
     @Test
     void correctPinnedVersions_ambiguousCatalogMatchThenReResolutionFails_doesNotClaimTheAmbiguousArtifactWasKept()
-            throws IOException {
+        throws IOException {
 
         final Path repo = projectRoot.resolve("repo");
         final Path onDisk = createArtifactJar(
