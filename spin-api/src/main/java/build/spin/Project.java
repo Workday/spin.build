@@ -140,6 +140,31 @@ public interface Project
     Stream<Resource> resources();
 
     /**
+     * Obtains the {@link Stream} of {@link Extension}s (both {@link Plugin}s and {@link Resource}s) for the
+     * {@link Project}.
+     *
+     * @return the {@link Stream} of {@link Extension}s
+     */
+    default Stream<Extension> extensions() {
+        return Stream.concat(plugins(), resources());
+    }
+
+    /**
+     * Obtains the {@link Stream} of {@link Extension}s (both {@link Plugin}s and {@link Resource}s) for the
+     * {@link Project} that are assignable to the specified {@link Class}.
+     *
+     * @param <T> the assignable type
+     * @param assignableTo the {@link Class} to which an {@link Extension} must be assignable
+     *
+     * @return a {@link Stream} of {@link Extension}s assignable to the specified {@link Class}
+     */
+    default <T> Stream<T> extensions(final Class<T> assignableTo) {
+        return extensions()
+            .filter(assignableTo::isInstance)
+            .map(assignableTo::cast);
+    }
+
+    /**
      * Obtains the {@link Workspace} for the {@link Project}.
      *
      * @return the {@link Workspace}
