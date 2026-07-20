@@ -107,25 +107,13 @@ public class PomBasedTestModuleDescriptor
                     continue;
                 }
 
-                final String groupId = dep.groupId();
-                final String artifactId = dep.artifactId();
-
-                // register under the same three key conventions used by PomBasedModuleCatalog
-                final ModuleName groupIdName =
-                    this.codeModel.getNameProvider().getModuleName(groupId).orElseThrow();
-                descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, groupIdName));
-
-                final String derivedName = MavenModuleNaming.derivedModuleName(artifactId);
-                final ModuleName derivedModuleName =
-                    this.codeModel.getNameProvider().getModuleName(derivedName).orElseThrow();
-                descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, derivedModuleName));
-
-                final String lastSegment = MavenModuleNaming.lastHyphenSegment(artifactId);
-                if (!lastSegment.isEmpty()) {
-                    final String combinedName = groupId + "." + lastSegment;
-                    final ModuleName combinedModuleName =
-                        this.codeModel.getNameProvider().getModuleName(combinedName).orElseThrow();
-                    descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, combinedModuleName));
+                // this synthetic descriptor has no jar to read a ground-truth module name from,
+                // so every naming-convention candidate must be tried — MavenModuleNaming.deriveNames
+                // is the single canonical set of those, shared with PomDependencyGraphWalker.
+                for (final String candidate : MavenModuleNaming.deriveNames(dep.groupId(), dep.artifactId())) {
+                    final ModuleName moduleName =
+                        this.codeModel.getNameProvider().getModuleName(candidate).orElseThrow();
+                    descriptor.addTrait(RequiresModuleDescriptor.of(this.codeModel, moduleName));
                 }
             }
         } catch (final Exception e) {

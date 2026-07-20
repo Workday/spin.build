@@ -164,6 +164,58 @@ class MavenModuleNaming {
     }
 
     /**
+     * Returns the derived JPMS module name candidates for a (groupId, artifactId) pair.
+     * The list always includes the groupId and the derived artifactId name; additional candidates
+     * are included when the group-prefix/suffix/parent conventions above produce them.
+     * <p>
+     * This is the single canonical set of naming-convention candidates for a Maven coordinate —
+     * every caller that needs to guess a JPMS module name from a coordinate alone (no jar to read
+     * a ground-truth name from) must go through this method rather than reimplementing a subset
+     * of these conventions by hand, which is exactly how {@code PomBasedTestModuleDescriptor} once
+     * silently dropped multi-hyphen-segment artifactIds like {@code base-transport-json}.
+     */
+    static List<String> deriveNames(final String groupId, final String artifactId) {
+        final List<String> names = new ArrayList<>(6);
+        names.add(groupId);
+        names.add(derivedModuleName(artifactId));
+        final String lastSegment = lastHyphenSegment(artifactId);
+        if (!lastSegment.isEmpty()) {
+            // bare segment matches projects whose directory name is just the last artifact segment
+            // (e.g. "processor" directory for artifact "ap-simple-processor")
+            names.add(lastSegment);
+            // only fire when groupPrefixedModuleName won't, and only when the artifact's first
+            // hyphen-segment is actually part of the groupId (guards spurious steals like acme-api
+            // claiming com.example.api)
+            if (groupPrefixedModuleName(groupId, artifactId).isEmpty()) {
+                final String firstSeg = firstHyphenSegment(artifactId);
+                if (!firstSeg.isEmpty() && groupIdContainsSegment(groupId, firstSeg)) {
+                    names.add(groupId + "." + lastSegment);
+                }
+            }
+        }
+        groupPrefixedModuleName(groupId, artifactId).ifPresent(names::add);
+        groupSuffixedModuleName(groupId, artifactId).ifPresent(names::add);
+        groupParentWithLastArtifactSegment(groupId, artifactId).ifPresent(names::add);
+        return names;
+    }
+
+    private static boolean groupIdContainsSegment(final String groupId, final String segment) {
+        int start = 0;
+        while (start < groupId.length()) {
+            final int dot = groupId.indexOf('.', start);
+            final int end = dot < 0 ? groupId.length() : dot;
+            if (groupId.regionMatches(start, segment, 0, end - start) && segment.length() == end - start) {
+                return true;
+            }
+            if (dot < 0) {
+                break;
+            }
+            start = dot + 1;
+        }
+        return false;
+    }
+
+    /**
      * Extracts the JPMS module name from the {@code module-info.java} file located at
      * {@code src/main/java/module-info.java} relative to the directory containing the given pom.xml.
      *

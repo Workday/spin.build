@@ -282,7 +282,7 @@ final class PomDependencyGraphWalker {
             final Optional<String> preferred = MavenModuleNaming.readModuleName(pomPath);
             final List<String> names = preferred.isPresent()
                 ? List.of(preferred.get())
-                : deriveNames(groupId, artifactId);
+                : MavenModuleNaming.deriveNames(groupId, artifactId);
 
             visitor.accept(names, groupId, artifactId, resolvedVersion);
         } catch (final Exception e) {
@@ -313,57 +313,12 @@ final class PomDependencyGraphWalker {
             final Optional<String> groundTruth = MavenModuleNaming
                 .readNamedModuleName(groupId, artifactId, resolvedVersion, localRepo, codeModel)
                     .or(() -> MavenModuleNaming.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo));
-            final List<String> names = groundTruth.map(List::of).orElseGet(() -> deriveNames(groupId, artifactId));
+            final List<String> names = groundTruth.map(List::of)
+                .orElseGet(() -> MavenModuleNaming.deriveNames(groupId, artifactId));
             visitor.accept(names, groupId, artifactId, resolvedVersion);
         } catch (final Exception e) {
             recorder.warn(e, "PomDependencyGraphWalker failed to visit dependency [%s:%s:%s]",
                 groupId, artifactId, resolvedVersion);
         }
-    }
-
-    /**
-     * Returns the derived JPMS module name candidates for a (groupId, artifactId) pair.
-     * The list always includes the groupId and the derived artifactId name; additional candidates
-     * are included when the heuristics in {@link MavenModuleNaming} produce them.
-     */
-    private static List<String> deriveNames(final String groupId, final String artifactId) {
-        final List<String> names = new ArrayList<>(6);
-        names.add(groupId);
-        names.add(MavenModuleNaming.derivedModuleName(artifactId));
-        final String lastSegment = MavenModuleNaming.lastHyphenSegment(artifactId);
-        if (!lastSegment.isEmpty()) {
-            // bare segment matches projects whose directory name is just the last artifact segment
-            // (e.g. "processor" directory for artifact "ap-simple-processor")
-            names.add(lastSegment);
-            // only fire when groupPrefixedModuleName won't, and only when the artifact's first
-            // hyphen-segment is actually part of the groupId (guards spurious steals like acme-api
-            // claiming com.example.api)
-            if (MavenModuleNaming.groupPrefixedModuleName(groupId, artifactId).isEmpty()) {
-                final String firstSeg = MavenModuleNaming.firstHyphenSegment(artifactId);
-                if (!firstSeg.isEmpty() && groupIdContainsSegment(groupId, firstSeg)) {
-                    names.add(groupId + "." + lastSegment);
-                }
-            }
-        }
-        MavenModuleNaming.groupPrefixedModuleName(groupId, artifactId).ifPresent(names::add);
-        MavenModuleNaming.groupSuffixedModuleName(groupId, artifactId).ifPresent(names::add);
-        MavenModuleNaming.groupParentWithLastArtifactSegment(groupId, artifactId).ifPresent(names::add);
-        return names;
-    }
-
-    private static boolean groupIdContainsSegment(final String groupId, final String segment) {
-        int start = 0;
-        while (start < groupId.length()) {
-            final int dot = groupId.indexOf('.', start);
-            final int end = dot < 0 ? groupId.length() : dot;
-            if (groupId.regionMatches(start, segment, 0, end - start) && segment.length() == end - start) {
-                return true;
-            }
-            if (dot < 0) {
-                break;
-            }
-            start = dot + 1;
-        }
-        return false;
     }
 }
