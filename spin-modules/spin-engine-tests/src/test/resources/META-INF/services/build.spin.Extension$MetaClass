@@ -1,2 +1,3 @@
 build.spin.engine.tests.PreProcessTestPlugin$MetaClass
 build.spin.engine.tests.CyclicTestPlugin$MetaClass
+build.spin.engine.tests.FailFastTestPlugin$MetaClass
