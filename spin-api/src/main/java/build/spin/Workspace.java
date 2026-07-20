@@ -20,6 +20,8 @@ package build.spin;
  * #L%
  */
 
+import java.util.ArrayDeque;
+
 /**
  * A {@link Workspace} is a collection of one or more {@link Project}s discovered by an {@link Engine}.
  * <p>
@@ -41,10 +43,17 @@ public interface Workspace
     extends Project, AutoCloseable {
 
     /**
-     * Depth-first closes the {@link AutoCloseable} {@link Plugin}s and {@link Resource}s in the {@link Workspace}.
+     * Depth-first closes the {@link AutoCloseable} {@link Plugin}s and {@link Resource}s in the {@link Workspace},
+     * attempting to close every one of them, even if one or more fail to close.
+     *
+     * @throws RuntimeException wrapping the first failure to close an {@link AutoCloseable}, with any subsequent
+     *         failures added as {@linkplain Throwable#addSuppressed(Throwable) suppressed} exceptions, when one or
+     *         more {@link AutoCloseable}s failed to close
      */
     @Override
     default void close() {
+
+        final var failures = new ArrayDeque<RuntimeException>();
 
         walk(new Visitor<>() {
 
@@ -56,17 +65,25 @@ public interface Workspace
 
             @Override
             public void onLeaving(final Project project) {
-                // close the AutoCloseable Extensions (Plugins, then Resources - see Project#extensions())
+                // attempt to close every AutoCloseable Extension (Plugins, then Resources - see
+                // Project#extensions()), collecting rather than propagating failures, so that a failure to close
+                // one doesn't prevent the rest from being closed
                 project.extensions(AutoCloseable.class)
                     .forEach(closeable -> {
                         try {
                             closeable.close();
                         }
                         catch (final Exception e) {
-                            throw new RuntimeException(e);
+                            failures.add(new RuntimeException(e));
                         }
                     });
             }
         });
+
+        if (!failures.isEmpty()) {
+            final var first = failures.poll();
+            failures.forEach(first::addSuppressed);
+            throw first;
+        }
     }
 }
