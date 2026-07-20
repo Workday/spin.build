@@ -172,6 +172,38 @@ class PomBasedTestModuleDescriptorTests {
         assertThat(requiredModuleNames(workspace)).contains("org.assertj");
     }
 
+    /**
+     * This is the regression this test exists to catch: a test-scoped dependency whose artifactId
+     * has more than one hyphen segment past the groupId-matching prefix (e.g. {@code
+     * base-transport-json}, whose real module name is {@code build.base.transport.json}) was
+     * silently dropped — the "combined" fallback here only ever appends the artifactId's *last*
+     * hyphen segment to the groupId ({@code build.base.json}), discarding the middle segment
+     * ({@code transport}) entirely, and none of the other two candidates matches either. The
+     * result: the dependency never becomes a synthetic {@code requires}, so
+     * AbstractDetectResolution never resolves it, and test compilation fails with "package
+     * ... does not exist" even though the pom declares the dependency correctly.
+     */
+    @Test
+    void get_registersDependencyWithMultiSegmentGroupPrefixedArtifactId(@TempDir final Path workspace)
+            throws Exception {
+        Files.writeString(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>build.base</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-transport-json</artifactId>
+                  <version>0.29.1-SNAPSHOT</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        assertThat(requiredModuleNames(workspace)).contains("build.base.transport.json");
+    }
+
     private static List<String> requiredModuleNames(final Path workspace) throws Exception {
         final Project project = mock(Project.class);
         when(project.path()).thenReturn(workspace);
