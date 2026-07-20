@@ -59,6 +59,11 @@
         </dependency>
 
         <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>hierarchical-codemodel</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>build.base</groupId>
             <artifactId>base-json</artifactId>
         </dependency>

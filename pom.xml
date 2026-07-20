@@ -314,6 +314,12 @@
             </dependency>
 
             <dependency>
+                <groupId>build.codemodel</groupId>
+                <artifactId>hierarchical-codemodel</artifactId>
+                <version>${codemodel.version}</version>
+            </dependency>
+
+            <dependency>
                 <groupId>build.base</groupId>
                 <artifactId>base-template</artifactId>
                 <version>${base.version}</version>
