@@ -6,7 +6,6 @@ import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.option.WorkingDirectory;
 import build.base.telemetry.TelemetryRecorder;
-import build.base.version.Version;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
@@ -45,6 +44,7 @@ import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.stream.Stream;
 
@@ -101,9 +101,7 @@ public abstract class AbstractTest
         final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
         // JUnit 6+ uses subcommands; JUnit 5 uses flat options
-        final String jupiterVersion = this.versioning.getVersion("org.junit.jupiter")
-            .map(Version::get)
-            .orElse("5.6.0");
+        final String jupiterVersion = AbstractDetectTestResolution.jupiterVersion(this.versioning);
         final boolean useSubcommand = AbstractDetectTestResolution.jupiterMajorVersion(jupiterVersion) >= 6;
 
         final Path testClassesDir = buildPath.resolve("test/" + this.target.get());
@@ -188,19 +186,10 @@ public abstract class AbstractTest
             args.add(AddModules.of(rootModule, "ALL-MODULE-PATH"));
             args.add(AddReads.of(rootModule, "ALL-UNNAMED"));
 
-            // Add --add-reads for every named-module JAR on the module path that the main
-            // module doesn't explicitly require (e.g. assertj, JUnit APIs used in tests).
-            // ModuleFinder reads the module-info.class from each JAR to get its real name.
-            modulePath.stream()
-                .filter(p -> !Files.isDirectory(p))
-                .forEach(jar -> {
-                    try {
-                        ModuleFinder.of(jar).findAll().forEach(ref ->
-                            args.add(AddReads.of(rootModule, ref.descriptor().name())));
-                    } catch (final Exception ignored) {
-                        // skip JARs that cannot be opened as modules
-                    }
-                });
+            // Add --add-reads for every named module on the module path that the main module
+            // doesn't explicitly require (e.g. assertj, JUnit APIs used in tests).
+            namedModuleNames(modulePath.stream())
+                .forEach(name -> args.add(AddReads.of(rootModule, name)));
 
             try (Stream<Path> walk = Files.walk(testClassesDir)) {
                 walk.filter(Files::isDirectory)
@@ -277,6 +266,27 @@ public abstract class AbstractTest
         }
 
         return PathSetBuilder.create().build();
+    }
+
+    /**
+     * Returns the module name of every named module found among the given module-path entries.
+     * <p>
+     * {@link ModuleFinder#of} reads a real module's {@code module-info.class} whether the entry
+     * is a packaged JAR or an exploded module directory (module-info.class directly at its
+     * root) — the latter is how an unpackaged workspace sibling's build output is laid out.
+     * Entries that cannot be opened as a module (unnamed JARs, non-module directories) are
+     * silently skipped, matching {@code --add-reads}'s "best effort" role here.
+     */
+    static List<String> namedModuleNames(final Stream<Path> modulePathEntries) {
+        final List<String> names = new ArrayList<>();
+        modulePathEntries.forEach(entry -> {
+            try {
+                ModuleFinder.of(entry).findAll().forEach(ref -> names.add(ref.descriptor().name()));
+            } catch (final Exception ignored) {
+                // skip entries that cannot be opened as modules
+            }
+        });
+        return names;
     }
 
     /**
