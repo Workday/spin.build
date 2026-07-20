@@ -35,6 +35,7 @@ import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.foundation.usage.AnnotationTypeUsage;
 import build.codemodel.injection.Binding;
 import build.codemodel.injection.Dependency;
+import build.codemodel.injection.InjectionPointDependency;
 import build.codemodel.injection.Resolver;
 import build.codemodel.injection.ValueBinding;
 import build.codemodel.jdk.TypeUsages;
@@ -75,8 +76,9 @@ public class ConfigurationResolver
     private final PathSet configurationPaths;
 
     /**
-     * The {@link Function} to produce a suitable {@link Configuration} file name for a {@link Dependency}
-     * requiring injection of a {@link Configuration}.
+     * The {@link Function} to produce a fallback {@link Configuration} file name for a {@link Dependency} requiring
+     * injection of a {@link Configuration}, used only when no {@link Source} can be resolved for the {@link Dependency}
+     * (see {@link #resolveSource(Dependency)}).
      */
     private final Function<? super Dependency, String> baseFileNameFactory;
 
@@ -102,7 +104,8 @@ public class ConfigurationResolver
      * @param recorder            the {@link TelemetryRecorder}
      * @param configurationPaths  the {@link PathSet} defining the {@link Path}s in which to search for
      *                            {@link Configuration} files
-     * @param baseFileNameFactory the {@link Function} to produce base {@link Configuration} file names to parse
+     * @param baseFileNameFactory the {@link Function} to produce a fallback {@link Configuration} file name, used
+     *                            when no {@link Source} can be resolved for a {@link Dependency}
      */
     public ConfigurationResolver(final TelemetryRecorder recorder,
                                  final PathSet configurationPaths,
@@ -323,6 +326,54 @@ public class ConfigurationResolver
         return TypeUsages.getThreadContextClass(dependency.typeUsage()).orElse(null);
     }
 
+    /**
+     * Resolves the {@link Source#value()} to use as the base {@link Configuration} file name for the specified
+     * {@link Dependency}, preferring (in order, "closest" first):
+     * <ol>
+     *     <li>a {@link Source} declared directly on the injection point (the field/parameter itself)</li>
+     *     <li>a {@link Source} declared on the class defining the injection point (eg: the {@code Task} class or
+     *     interface), or on one of that class's ancestors (superclasses and/or implemented interfaces), nearest
+     *     ancestor first</li>
+     * </ol>
+     *
+     * @param dependency the {@link Dependency}
+     * @return an {@link Optional} containing the resolved {@link Source#value()}, or {@link Optional#empty()} when
+     *         no {@link Source} is declared anywhere
+     */
+    private static Optional<String> resolveSource(final Dependency dependency) {
+        final var direct = firstSource(dependency.typeUsage().traits(AnnotationTypeUsage.class));
+
+        if (direct.isPresent()) {
+            return direct;
+        }
+
+        if (dependency instanceof InjectionPointDependency injectionPointDependency
+            && injectionPointDependency.injectionPoint() != null) {
+
+            final var typeDescriptor = injectionPointDependency.injectionPoint().typeDescriptor();
+
+            return firstSource(Stream.concat(Stream.of(typeDescriptor), typeDescriptor.ancestors())
+                .flatMap(ancestor -> ancestor.traits(AnnotationTypeUsage.class)));
+        }
+
+        return Optional.empty();
+    }
+
+    /**
+     * Obtains the {@link Source#value()} of the first {@link Source} {@link AnnotationTypeUsage} in the specified
+     * {@link Stream}, if any.
+     *
+     * @param annotations the {@link Stream} of {@link AnnotationTypeUsage}s to search
+     * @return an {@link Optional} containing the {@link Source#value()}, or {@link Optional#empty()} if none of the
+     *         {@link AnnotationTypeUsage}s is a {@link Source}
+     */
+    private static Optional<String> firstSource(final Stream<AnnotationTypeUsage> annotations) {
+        return annotations
+            .filter(a -> a.typeName().canonicalName().equals(Source.class.getCanonicalName()))
+            .findFirst()
+            .flatMap(a -> AnnotationValues.firstLiteral(a, String.class));
+    }
+
     private static Optional<Class<?>> firstTypeArg(final Dependency dep) {
         return TypeUsages.getFirstTypeParameterClass(dep.typeUsage());
     }
@@ -409,8 +460,9 @@ public class ConfigurationResolver
                                          final Class<?> requiredClass,
                                          final Optional<String> name) {
 
-        // obtain the base file name we can use to locate configuration files
-        final var baseFileName = this.baseFileNameFactory.apply(dependency);
+        // obtain the base file name we can use to locate configuration files: a @Source declared on the
+        // injection point, its defining class, or an ancestor of that class, wins over the fallback factory
+        final var baseFileName = resolveSource(dependency).orElseGet(() -> this.baseFileNameFactory.apply(dependency));
 
         return Streamable.of(this.configurationPaths.stream()
             .filter(Files::exists)
