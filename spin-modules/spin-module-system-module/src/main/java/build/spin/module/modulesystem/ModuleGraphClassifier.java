@@ -195,16 +195,24 @@ public final class ModuleGraphClassifier {
      *                            {@code build.spin.module.*} modules, so re-asking the boot
      *                            layer to resolve them from the finder produces "reads more
      *                            than one module named X" errors)
-     * @param beforeFinder        the "before" finder for {@link Configuration#resolve};
-     *                            typically {@link ModuleFinder#ofSystem()} when
-     *                            {@code parentConfiguration} is
+     * @param supplementalFinder  a finder consulted only for module names the candidate jars
+     *                            don't provide — typically {@link ModuleFinder#ofSystem()}
+     *                            when {@code parentConfiguration} is
      *                            {@link Configuration#empty()}, or an empty
-     *                            {@code ModuleFinder.of()} otherwise
+     *                            {@code ModuleFinder.of()} otherwise. The candidate jars
+     *                            always take precedence on a name collision: when this code
+     *                            runs from inside a jlink image that already baked the
+     *                            candidates' own modules into the system image,
+     *                            {@code ModuleFinder.ofSystem()} would otherwise shadow the
+     *                            freshly built candidates with their baked {@code jrt:}
+     *                            versions, and every candidate would resolve to a
+     *                            non-{@code file:} location — see the {@code resolved} filter
+     *                            below — making everything look "unreachable" and get pruned.
      * @param log                 per-decision log sink (as for {@link #classify})
      * @return a {@link Classification} whose {@code modulePath} is the resolved graph
-     *         filtered to {@code file:}-scheme locations that exist in the input candidate
-     *         set, and whose {@code classPath} is every remaining input not in the resolved
-     *         graph
+     * filtered to {@code file:}-scheme locations that exist in the input candidate
+     * set, and whose {@code classPath} is every remaining input not in the resolved
+     * graph
      * @throws IllegalStateException if the JPMS resolution fails (wrapped
      *                               {@link FindException} or {@link ResolutionException})
      */
@@ -212,7 +220,7 @@ public final class ModuleGraphClassifier {
                                                     final Set<String> seedRequiredNames,
                                                     final String rootModuleName,
                                                     final Configuration parentConfiguration,
-                                                    final ModuleFinder beforeFinder,
+                                                    final ModuleFinder supplementalFinder,
                                                     final Consumer<String> log) {
         final ConflictResolution resolution = resolveConflicts(candidates, seedRequiredNames, log);
         final Set<Path> moduleCandidates = new LinkedHashSet<>(candidates);
@@ -222,9 +230,11 @@ public final class ModuleGraphClassifier {
         final ModuleFinder finder = ModuleFinder.of(moduleCandidates.toArray(new Path[0]));
         final Configuration config;
         try {
-            config = parentConfiguration.resolve(beforeFinder, finder, Set.of(rootModuleName));
-        }
-        catch (final FindException | ResolutionException e) {
+            // candidates go first ("before") so a freshly built jar always wins over a
+            // same-named module the supplemental finder happens to also provide — see the
+            // supplementalFinder javadoc above for why this matters at jlink-image launch time
+            config = parentConfiguration.resolve(finder, supplementalFinder, Set.of(rootModuleName));
+        } catch (final FindException | ResolutionException e) {
             throw new IllegalStateException("Unable to resolve JPMS module graph from root ["
                 + rootModuleName + "]: " + e.getMessage(), e);
         }
@@ -254,8 +264,7 @@ public final class ModuleGraphClassifier {
         for (final Path jar : candidates) {
             if (resolved.contains(jar)) {
                 modulePath.add(jar);
-            }
-            else {
+            } else {
                 classPath.add(jar);
             }
         }

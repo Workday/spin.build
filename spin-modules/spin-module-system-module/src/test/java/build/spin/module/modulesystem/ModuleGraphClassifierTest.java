@@ -497,6 +497,27 @@ class ModuleGraphClassifierTest {
         assertThat(result.classPath()).containsExactly(other);
     }
 
+    @Test
+    void classifyAndResolve_supplementalFinderShadowsCandidate_candidateStillWins() throws IOException {
+        // Regression for the self-hosted jlink-image bug: when this code runs from inside a
+        // runtime image that jlink already baked the root module into, ModuleFinder.ofSystem()
+        // (the supplemental finder) provides its own copy of "my.root" alongside the freshly
+        // built candidate jar. Configuration.resolve only keeps one location per module name —
+        // the candidate (file:) must win, not the supplemental finder's copy, or every
+        // candidate looks "unreachable" and gets pruned to classpath (see
+        // classifyAndResolve's javadoc on supplementalFinder).
+        final Path root = automaticModule("root.jar", "my.root", "com/root/R.class");
+        // A second, distinct jar declaring the same module name simulates the shadowing
+        // "before" copy that a jlink image's own ModuleFinder.ofSystem() would provide.
+        final Path shadow = automaticModule("root-shadow.jar", "my.root", "com/root/R.class");
+        final var result = ModuleGraphClassifier.classifyAndResolve(
+            List.of(root), Set.of("my.root"), "my.root",
+            Configuration.empty(), ModuleFinder.compose(ModuleFinder.ofSystem(), ModuleFinder.of(shadow)),
+            msg -> {});
+        assertThat(result.modulePath()).containsExactly(root);
+        assertThat(result.classPath()).isEmpty();
+    }
+
     // =========================================================================
     // closeOverRequires — transitive requires walk
     // =========================================================================
