@@ -1,0 +1,28 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>test</groupId>
+  <artifactId>root</artifactId>
+  <version>1.0</version>
+  <dependencies>
+    <!-- a excludes test:conflict from its own subtree; without exclusion enforcement, a's
+         conflict:1.0 would win nearest-wins (declared first, same depth as b's conflict:2.0).
+         With exclusion enforcement, a's occurrence is blocked entirely and b's conflict:2.0 —
+         a completely separate, unexcluded edge — wins by default. -->
+    <dependency>
+      <groupId>test</groupId>
+      <artifactId>a</artifactId>
+      <version>1.0</version>
+      <exclusions>
+        <exclusion>
+          <groupId>test</groupId>
+          <artifactId>conflict</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>test</groupId>
+      <artifactId>b</artifactId>
+      <version>1.0</version>
+    </dependency>
+  </dependencies>
+</project>

@@ -9,9 +9,9 @@ package build.spin.module.maven;
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,274 +23,145 @@ package build.spin.module.maven;
 import build.base.configuration.Configuration;
 import build.base.foundation.Exceptional;
 import build.base.telemetry.TelemetryRecorder;
+import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.UnresolvableResourceException;
+import build.spin.module.modulesystem.pom.Dependency;
+import build.spin.module.modulesystem.pom.Gav;
 import build.spin.option.NetworkAccess;
-import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
-import org.apache.maven.settings.Server;
-import org.apache.maven.settings.Settings;
-import org.apache.maven.settings.building.DefaultSettingsBuilderFactory;
-import org.apache.maven.settings.building.DefaultSettingsBuildingRequest;
-import org.apache.maven.settings.building.SettingsBuilder;
-import org.apache.maven.settings.building.SettingsBuildingException;
-import org.apache.maven.settings.building.SettingsBuildingRequest;
-import org.eclipse.aether.DefaultRepositorySystemSession;
-import org.eclipse.aether.RepositorySystem;
-import org.eclipse.aether.RepositorySystemSession;
-import org.eclipse.aether.artifact.Artifact;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.collection.CollectRequest;
-import org.eclipse.aether.graph.Dependency;
-import org.eclipse.aether.repository.LocalRepository;
-import org.eclipse.aether.repository.RemoteRepository;
-import org.eclipse.aether.resolution.ArtifactDescriptorException;
-import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
-import org.eclipse.aether.resolution.ArtifactDescriptorResult;
-import org.eclipse.aether.resolution.ArtifactRequest;
-import org.eclipse.aether.resolution.ArtifactResolutionException;
-import org.eclipse.aether.resolution.ArtifactResult;
-import org.eclipse.aether.resolution.DependencyRequest;
-import org.eclipse.aether.resolution.DependencyResolutionException;
-import org.eclipse.aether.resolution.DependencyResult;
-import org.eclipse.aether.supplier.RepositorySystemSupplier;
-import org.eclipse.aether.util.repository.AuthenticationBuilder;
 
-import java.nio.file.FileSystems;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
-import static build.spin.option.NetworkAccess.ONLINE;
+import static build.spin.option.NetworkAccess.OFFLINE;
 
 /**
- * A facade to simplify programmatic access to and interaction with Apache Maven repositories and tooling.
- * <p>
- * Inspired by the invaluable
- * <a href="https://github.com/apache/maven-resolver/blob/master/maven-resolver-demos/maven-resolver-demo-snippets">examples and demo snippets</a>
- * provided by the Apache Maven team.
- *
- * @author brian.oliver
- * @since Dec-2022
+ * A facade for Maven artifact resolution backed by the pure-JDK {@link PomResolver}.
+ * Provides the same operations as before — single-artifact resolve, descriptor resolve,
+ * and transitive dependency resolve — without any Aether or SLF4J dependencies.
  */
 class MavenFacade {
 
-    /**
-     * The {@link TelemetryRecorder}.
-     */
     private final TelemetryRecorder recorder;
+    private final PomResolver resolver;
 
-    /**
-     * The {@link RepositorySystem}.
-     */
-    private final RepositorySystem repositorySystem;
-
-    /**
-     * The {@link RepositorySystemSession}.
-     */
-    private final RepositorySystemSession repositorySystemSession;
-
-    /**
-     * The {@link RemoteRepository}s.
-     */
-    private final List<RemoteRepository> remoteRepositories;
-
-    /**
-     * Constructs a {@link MavenFacade}.
-     *
-     * @param recorder the {@link TelemetryRecorder}
-     * @param optionsByType the {@link Configuration} to configure the {@link MavenFacade}
-     */
     MavenFacade(final TelemetryRecorder recorder,
                 final Configuration optionsByType) {
-
         this.recorder = recorder;
-
-        final Path homePath = FileSystems.getDefault().getPath(System.getProperty("user.home"));
-        final Path mavenPath = homePath.resolve(".m2");
-        final Path settingsPath = mavenPath.resolve("settings.xml");
-        final Path localRepositoryPath = mavenPath.resolve("repository");
-
-        // establish the Repository System (auto-discovers connectors and transports via ServiceLoader)
-        this.repositorySystem = new RepositorySystemSupplier().get();
-
-        // establish the Repository System Session
-        final DefaultRepositorySystemSession session = MavenRepositorySystemUtils.newSession();
-
-        // provide system properties so Maven's profile activators (e.g. JDK version checks
-        // in parent POMs like jboss-parent) can determine the current Java version; without
-        // this, ModelBuildingException is silently swallowed and returns empty dependencies
-        session.setSystemProperties(System.getProperties());
-
-        // configure network access
-        session.setOffline(optionsByType.getOptional(NetworkAccess.class).orElse(ONLINE) == NetworkAccess.OFFLINE);
-
-        final LocalRepository localRepository = new LocalRepository(localRepositoryPath);
-        session.setLocalRepositoryManager(this.repositorySystem.newLocalRepositoryManager(session, localRepository));
-
-        this.repositorySystemSession = session;
-
-        // establish the RemoteRepositories
-        this.remoteRepositories = new ArrayList<>();
-
-        try {
-            // determine the Apache Maven Settings
-            final SettingsBuilder settingsBuilder = new DefaultSettingsBuilderFactory().newInstance();
-            final SettingsBuildingRequest settingsBuilderRequest = new DefaultSettingsBuildingRequest();
-
-            settingsBuilderRequest.setSystemProperties(System.getProperties());
-            settingsBuilderRequest.setUserSettingsFile(settingsPath.toFile());
-
-            final Settings settings = settingsBuilder.build(settingsBuilderRequest).getEffectiveSettings();
-
-            // obtain the remote repositories from the active plugins in the settings
-            settings.getActiveProfiles().stream()
-                .map(name -> settings.getProfilesAsMap().get(name))
-                .filter(Objects::nonNull)
-                .flatMap(profile -> profile.getRepositories().stream())
-                .map(repository -> {
-                    final RemoteRepository.Builder builder =
-                        new RemoteRepository.Builder(repository.getId(), "default", repository.getUrl());
-
-                    // establish the authentication for the repository server
-                    final String serverId = repository.getId();
-                    final Server server = settings.getServer(serverId);
-
-                    if (server != null) {
-                        final AuthenticationBuilder authenticationBuilder = new AuthenticationBuilder();
-                        authenticationBuilder.addUsername(server.getUsername());
-                        authenticationBuilder.addPassword(server.getPassword());
-                        builder.setAuthentication(authenticationBuilder.build());
-                    }
-                    else {
-                        this.recorder.warn("Failed to locate specified Service [%s].  Will not use authentication.",
-                            serverId);
-                    }
-
-                    return builder;
-                })
-                .map(RemoteRepository.Builder::build)
-                .forEach(this.remoteRepositories::add);
-
-            // when no repositories are configured from settings, fall back to Maven Central
-            if (this.remoteRepositories.isEmpty()) {
-                this.remoteRepositories.add(
-                    new RemoteRepository.Builder(
-                        "central",
-                        "default",
-                        "https://repo.maven.apache.org/maven2/").build());
-            }
-        }
-        catch (final SettingsBuildingException e) {
-            this.recorder.warn(e,
-                "Failed to establish settings for Maven.  Defaulting to Maven Central to resolve artifacts");
-
-            this.remoteRepositories.add(
-                new RemoteRepository.Builder(
-                    "central",
-                    "default",
-                    "https://repo.maven.apache.org/maven2/").build());
-        }
+        final boolean offline = optionsByType.getOptional(NetworkAccess.class)
+            .map(n -> n == OFFLINE)
+            .orElse(false);
+        this.resolver = PomResolver.fromSettings(recorder, offline);
     }
 
     /**
-     * Attempts to resolve an {@link ArtifactResult} for an {@link Artifact} with the specified coordinates.
+     * Resolves a single artifact to its local {@code .m2} path.
      *
-     * @param coordinates the group:artifact:classifier:type:version coordinates
-     * @return an {@link Exceptional} {@link ArtifactResult}
+     * @param coordinates {@code groupId:artifactId[:extension[:classifier]]:version}
+     * @return an {@link Exceptional} {@link Path}
      */
-    public synchronized Exceptional<ArtifactResult> resolveArtifact(final String coordinates) {
+    public Exceptional<Path> resolveArtifact(final String coordinates) {
         try {
-            final Artifact artifact = new DefaultArtifact(coordinates);
-
-            final ArtifactRequest artifactRequest = new ArtifactRequest();
-            artifactRequest.setArtifact(artifact);
-            artifactRequest.setRepositories(this.remoteRepositories);
-
-            final ArtifactResult artifactResult = this.repositorySystem
-                .resolveArtifact(this.repositorySystemSession, artifactRequest);
-
-            if (!artifactResult.isResolved()) {
-                this.recorder.warn("Failed to resolve %s", artifact);
-            }
-
-            return Exceptional.of(artifactResult);
-        }
-        catch (final ArtifactResolutionException e) {
-            this.recorder.error(e, "Failed to resolve %s", coordinates);
-            return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
-        }
-        catch (final RuntimeException e) {
+            return this.resolver.resolveArtifact(coordinates)
+                .map(Exceptional::of)
+                .orElseGet(() -> Exceptional.ofException(new UnresolvableResourceException(coordinates)));
+        } catch (final RuntimeException e) {
             this.recorder.error(e, "Unexpected error resolving %s", coordinates);
             return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
         }
     }
 
     /**
-     * Resolves the specified artifact and all of its compile-scope transitive dependencies,
-     * returning the full list of local {@link Path}s via Aether's native dependency resolution.
-     * Aether handles artifact-graph cycles internally, so no manual BFS is needed.
+     * Resolves a single artifact to its local {@code .m2} path. For callers that already have a
+     * resolved {@link Artifact} rather than a formatted coordinate string, so no
+     * stringify-then-reparse round trip is needed.
      *
-     * @param coordinates the group:artifact:classifier:type:version coordinates
-     * @return an {@link Exceptional} list of resolved {@link Path}s (root + all transitive deps)
+     * @param artifact the artifact to resolve
+     * @return an {@link Exceptional} {@link Path}
      */
-    public synchronized Exceptional<List<Path>> resolveTransitiveDependencies(final String coordinates) {
+    public Exceptional<Path> resolveArtifact(final Artifact artifact) {
         try {
-            final org.eclipse.aether.artifact.Artifact artifact = new DefaultArtifact(coordinates);
-            final CollectRequest collectRequest = new CollectRequest(
-                new Dependency(artifact, "compile"),
-                this.remoteRepositories);
-            final DependencyRequest dependencyRequest = new DependencyRequest(collectRequest, null);
-            final DependencyResult result = this.repositorySystem
-                .resolveDependencies(this.repositorySystemSession, dependencyRequest);
+            return this.resolver.resolveArtifact(coordinatesOf(artifact))
+                .map(Exceptional::of)
+                .orElseGet(() -> Exceptional.ofException(new UnresolvableResourceException(artifact.toString())));
+        } catch (final RuntimeException e) {
+            this.recorder.error(e, "Unexpected error resolving %s", artifact);
+            return Exceptional.ofException(new UnresolvableResourceException(artifact.toString(), e));
+        }
+    }
 
-            final List<Path> paths = result.getArtifactResults().stream()
-                .filter(ArtifactResult::isResolved)
-                .map(r -> r.getArtifact().getPath())
-                .filter(Objects::nonNull)
-                .toList();
-
+    /**
+     * Resolves all transitive compile/runtime dependencies, returning their local paths.
+     *
+     * @param coordinates {@code groupId:artifactId[:extension[:classifier]]:version}
+     * @return an {@link Exceptional} list of local {@link Path}s
+     */
+    public Exceptional<List<Path>> resolveTransitiveDependencies(final String coordinates) {
+        try {
+            final List<Path> paths = this.resolver.resolveTransitive(coordinates);
             return Exceptional.of(paths);
-        }
-        catch (final DependencyResolutionException e) {
-            this.recorder.error(e, "Failed to resolve transitive dependencies for %s", coordinates);
-            return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
-        }
-        catch (final RuntimeException e) {
+        } catch (final RuntimeException e) {
             this.recorder.error(e, "Unexpected error resolving transitive dependencies for %s", coordinates);
             return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
         }
     }
 
     /**
-     * Attempts to resolve the {@link ArtifactDescriptorResult} for an {@link Artifact} with the specified coordinates.
+     * Resolves all transitive compile/runtime dependencies, returning their local paths. For
+     * callers that already have a resolved {@link Artifact} rather than a formatted coordinate
+     * string.
      *
-     * @param coordinates the group:artifact:classifier:type:version coordinates
-     * @return an {@link Exceptional} {@link ArtifactDescriptorResult}
+     * @param artifact the root artifact
+     * @return an {@link Exceptional} list of local {@link Path}s
      */
-    public synchronized Exceptional<ArtifactDescriptorResult> resolveArtifactDescriptor(final String coordinates) {
+    public Exceptional<List<Path>> resolveTransitiveDependencies(final Artifact artifact) {
         try {
-            final Artifact artifact = new DefaultArtifact(coordinates);
-
-            final ArtifactDescriptorRequest descriptorRequest = new ArtifactDescriptorRequest();
-            descriptorRequest.setArtifact(artifact);
-            descriptorRequest.setRepositories(this.remoteRepositories);
-
-            final ArtifactDescriptorResult descriptorResult = this.repositorySystem
-                .readArtifactDescriptor(this.repositorySystemSession, descriptorRequest);
-
-            if (!descriptorResult.getExceptions().isEmpty()) {
-                this.recorder.warn("Failed to resolve descriptor for %s", artifact);
-            }
-
-            return Exceptional.of(descriptorResult);
+            final List<Path> paths = this.resolver.resolveTransitive(gavOf(artifact), artifact.type());
+            return Exceptional.of(paths);
+        } catch (final RuntimeException e) {
+            this.recorder.error(e, "Unexpected error resolving transitive dependencies for %s", artifact);
+            return Exceptional.ofException(new UnresolvableResourceException(artifact.toString(), e));
         }
-        catch (final ArtifactDescriptorException e) {
-            this.recorder.error(e, "Failed to resolve descriptor for %s", coordinates);
-            return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
-        }
-        catch (final RuntimeException e) {
+    }
+
+    /**
+     * Resolves the effective direct dependencies declared by the POM at the given coordinates.
+     *
+     * @param coordinates {@code groupId:artifactId[:extension[:classifier]]:version}
+     * @return an {@link Exceptional} list of {@link Dependency} entries
+     */
+    public Exceptional<List<Dependency>> resolveArtifactDescriptor(final String coordinates) {
+        try {
+            final List<Dependency> deps = this.resolver.resolveDescriptor(coordinates);
+            return Exceptional.of(deps);
+        } catch (final RuntimeException e) {
             this.recorder.error(e, "Unexpected error resolving descriptor for %s", coordinates);
             return Exceptional.ofException(new UnresolvableResourceException(coordinates, e));
         }
+    }
+
+    /**
+     * Resolves the effective direct dependencies declared by the POM for the given artifact. For
+     * callers that already have a resolved {@link Artifact} rather than a formatted coordinate
+     * string.
+     *
+     * @param artifact the artifact whose POM should be read
+     * @return an {@link Exceptional} list of {@link Dependency} entries
+     */
+    public Exceptional<List<Dependency>> resolveArtifactDescriptor(final Artifact artifact) {
+        try {
+            final List<Dependency> deps = this.resolver.resolveDescriptor(gavOf(artifact));
+            return Exceptional.of(deps);
+        } catch (final RuntimeException e) {
+            this.recorder.error(e, "Unexpected error resolving descriptor for %s", artifact);
+            return Exceptional.ofException(new UnresolvableResourceException(artifact.toString(), e));
+        }
+    }
+
+    private static Gav gavOf(final Artifact artifact) {
+        return new Gav(artifact.groupId(), artifact.artifactId(), artifact.version().toString());
+    }
+
+    private static PomResolver.Coordinates coordinatesOf(final Artifact artifact) {
+        return new PomResolver.Coordinates(gavOf(artifact), artifact.type(), artifact.classifier());
     }
 }

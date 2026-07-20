@@ -1,0 +1,28 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>test</groupId>
+  <artifactId>child</artifactId>
+  <version>1.0</version>
+  <parent>
+    <groupId>test</groupId>
+    <artifactId>parent</artifactId>
+    <version>1.0</version>
+  </parent>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>test</groupId>
+        <artifactId>lib</artifactId>
+        <version>2.0</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <!-- no explicit version: must be resolved via managed version, and child's own
+         dependencyManagement (2.0) must take precedence over the inherited parent's (1.0) -->
+    <dependency>
+      <groupId>test</groupId>
+      <artifactId>lib</artifactId>
+    </dependency>
+  </dependencies>
+</project>

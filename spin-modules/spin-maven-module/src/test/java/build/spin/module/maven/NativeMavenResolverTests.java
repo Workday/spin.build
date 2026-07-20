@@ -1,9 +1,8 @@
 package build.spin.module.maven;
 
 import build.base.configuration.Configuration;
+import build.base.foundation.Exceptional;
 import build.spin.common.telemetry.TelemetryPublisher;
-import org.eclipse.aether.RepositorySystem;
-import org.eclipse.aether.resolution.ArtifactResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +25,7 @@ public class NativeMavenResolverTests {
     private MavenFacade maven;
 
     /**
-     * Establish the {@link RepositorySystem} for each test
+     * Establish the {@link MavenFacade} for each test
      */
     @BeforeEach
     public void onBeforeEach() {
@@ -58,9 +57,7 @@ public class NativeMavenResolverTests {
 
         final long failures = coordinates.stream()
             .map(this.maven::resolveArtifact)
-            .filter(exceptional -> exceptional.isException()
-                || exceptional.map(ArtifactResult::isMissing)
-                .orElse(false))
+            .filter(Exceptional::isException)
             .count();
 
         if (failures > 0) {
@@ -100,9 +97,7 @@ public class NativeMavenResolverTests {
 
         final long failures = coordinates.stream()
             .map(this.maven::resolveArtifactDescriptor)
-            .filter(exceptional -> exceptional.isException()
-                || exceptional.map(result -> !result.getExceptions().isEmpty())
-                .orElse(false))
+            .filter(Exceptional::isException)
             .count();
 
         if (failures > 0) {

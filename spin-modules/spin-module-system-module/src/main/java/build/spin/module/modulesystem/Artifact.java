@@ -432,8 +432,7 @@ public interface Artifact {
          * Attempts to transitively resolve the specified {@link Artifact} and all of its
          * compile-scope transitive dependencies, returning the full set of {@link Path}s.
          * <p>
-         * Uses the underlying repository system's native dependency resolution (e.g. Aether)
-         * rather than a hand-rolled BFS, so artifact-graph cycles are handled correctly.
+         * Implementations are expected to handle artifact-graph cycles correctly.
          *
          * @param artifact the root {@link Artifact}
          *

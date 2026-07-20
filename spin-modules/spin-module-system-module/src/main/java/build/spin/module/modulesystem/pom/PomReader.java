@@ -30,7 +30,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -38,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.xml.XMLConstants;
@@ -94,7 +94,7 @@ public final class PomReader {
     private final TelemetryRecorder recorder;
     private final boolean allowRelativePath;
     private final PomLocator locator;
-    private final Map<Path, Pom> cache = new HashMap<>();
+    private final Map<Path, Pom> cache = new ConcurrentHashMap<>();
 
     /**
      * Reads POMs already present on disk: parent resolution tries {@code <relativePath>} first,

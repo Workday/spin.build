@@ -60,8 +60,9 @@ import java.util.stream.Stream;
  * <ol>
  *   <li>Walk the workspace-sibling transitive closure starting from the injected
  *       the injected {@link JDKModuleDescriptor}'s {@code requiresClauses()}.</li>
- *   <li>Resolve each external require transitively via Aether ({@link Artifact.Resolver#resolveTransitive}),
- *       so artifact-graph cycles are handled by the resolver rather than a hand-rolled BFS.</li>
+ *   <li>Resolve each external require transitively via the {@link Artifact.Resolver}
+ *       ({@link Artifact.Resolver#resolveTransitive}), so artifact-graph cycles are handled by the
+ *       resolver rather than a hand-rolled BFS.</li>
  *   <li>Classify all candidates via {@link ModuleGraphClassifier#classify} with the three-tier
  *       split-package policy (required-module preference → proper-over-automatic → demote-all).</li>
  * </ol>
@@ -180,7 +181,7 @@ public abstract class AbstractDetectResolution
             }
         }
 
-        // Step 2 — Resolve external requires via Aether (handles artifact-graph cycles internally).
+        // Step 2 — Resolve external requires via the Artifact.Resolver (handles artifact-graph cycles internally).
         final List<Path> externalCandidates = new ArrayList<>();
 
         for (final RequiresModuleDescriptor r : externalRequires.values()) {
@@ -242,19 +243,19 @@ public abstract class AbstractDetectResolution
         });
 
         // Step 2c — Correct candidates whose resolved version diverges from a project-wide pin.
-        // Each top-level `requires` in Step 2 is resolved independently via Aether, using whatever
-        // version that require's own pom pins transitively (e.g. a Helidon dependency transitively
-        // pulls in the older protobuf-java/grpc versions pinned by Helidon's own BOM) — even when
-        // this project's pom.xml pins a newer version directly, if that artifact is only ever
-        // reached transitively (never a direct `requires`), there's no Aether call scoped to this
-        // project's own pom to apply that pin. `versioning` already has the correct, workspace-wide
+        // Each top-level `requires` in Step 2 is resolved independently via the resolver, using
+        // whatever version that require's own pom pins transitively (e.g. a Helidon dependency
+        // transitively pulls in the older protobuf-java/grpc versions pinned by Helidon's own BOM)
+        // — even when this project's pom.xml pins a newer version directly, if that artifact is only
+        // ever reached transitively (never a direct `requires`), there's no resolver call scoped to
+        // this project's own pom to apply that pin. `versioning` already has the correct, workspace-wide
         // answer (it's populated from every pom.xml and already used to correct `requires`-clause
         // versions for jlink/jdeps); reuse it here to re-resolve any candidate that disagrees.
         final List<Path> versionCorrectedCandidates =
             correctPinnedVersions(externalCandidates, this.versioning, this.catalog, this.resolver, this.recorder);
 
         // Step 2d — Dedupe external candidates by Maven coordinate, keeping the highest version.
-        // Each top-level `requires` in Step 2 is resolved independently via Aether, so two
+        // Each top-level `requires` in Step 2 is resolved independently via the resolver, so two
         // different requires can transitively pull in different versions of the same artifact
         // with no cross-call reconciliation (e.g. this project directly requires a newer
         // graphql-java/grpc/protobuf, while a Helidon dependency transitively pulls in the older
@@ -306,7 +307,7 @@ public abstract class AbstractDetectResolution
      * {@code grpc-core} may pull in an old {@code protobuf-java} that is itself pinned elsewhere in the
      * workspace). Each module name is re-resolved at most once per call — repeat occurrences of the
      * same module (very likely, since deduping by coordinate happens in a later step) reuse that
-     * single correction rather than issuing a redundant Aether call, and this also bounds the
+     * single correction rather than issuing a redundant resolver call, and this also bounds the
      * fixed-point iteration against cycles in the transitive graph.
      *
      * @param paths the resolved external candidate {@link Path}s
@@ -357,7 +358,7 @@ public abstract class AbstractDetectResolution
 
             if (!resolvedModuleNames.add(moduleName.get())) {
                 // already re-resolved this module during this call — accept as-is rather than issuing
-                // a duplicate Aether call or looping forever on a transitive-graph cycle
+                // a duplicate resolver call or looping forever on a transitive-graph cycle
                 corrected.add(path);
                 continue;
             }

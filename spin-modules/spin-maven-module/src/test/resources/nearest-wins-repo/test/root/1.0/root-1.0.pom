@@ -1,0 +1,22 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>test</groupId>
+  <artifactId>root</artifactId>
+  <version>1.0</version>
+  <dependencies>
+    <!-- a is declared first, but reaches "conflict" at depth 2 (root -> a -> conflict);
+         b reaches it at depth 3 (root -> b -> c -> conflict). Depth must win over declaration/traversal
+         order: a stack-based (LIFO) traversal would visit b's deeper subtree first because b is the
+         last-declared child, and would wrongly resolve conflict to 2.0. -->
+    <dependency>
+      <groupId>test</groupId>
+      <artifactId>a</artifactId>
+      <version>1.0</version>
+    </dependency>
+    <dependency>
+      <groupId>test</groupId>
+      <artifactId>b</artifactId>
+      <version>1.0</version>
+    </dependency>
+  </dependencies>
+</project>
