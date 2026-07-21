@@ -232,9 +232,6 @@ public final class DefaultProgram
                 // bind the interfaces implemented by the Plugin
                 taskContext.bind(taskPlugin).asAllInterfaces();
 
-                // allow project resources to be resolved and injected
-                taskContext.addResolver(new ProjectResourceResolver(taskProject));
-
                 // allow project resources that are resolvers to resolve
                 taskContext.addResolver(dependency -> project.resources()
                     .filter(Resolver.class::isInstance)
@@ -244,6 +241,10 @@ public final class DefaultProgram
 
                 // allow the Program to resolve InjectionPoints
                 taskContext.addResolver(this.context.resolver());
+
+                // allow project resources to be resolved and injected — registered last since it always
+                // resolves an Optional<X>-typed dependency, so other resolvers must get first refusal
+                taskContext.addResolver(new ProjectResourceResolver(taskProject));
 
                 this.recorder.diagnostic("Creating Instruction [%s] defined by [%s] for [%s]",
                     describe(taskInvocable.getTaskClass()),

@@ -97,11 +97,12 @@ public class Invocables {
         // establish a Context to create the Invocable
         final Context context = FRAMEWORK.newContext();
 
-        // allow the Project to resolve Dependencies
-        context.addResolver(new ProjectResourceResolver(project));
-
         // allow the Plugin to provide values for injection
         context.addResolver(ProvidesResolver.of(plugin, FRAMEWORK));
+
+        // allow the Project to resolve Dependencies — registered last since it always resolves an
+        // Optional<X>-typed dependency, so other resolvers must get first refusal
+        context.addResolver(new ProjectResourceResolver(project));
 
         // allow the Project, Plugin and Task class to be injected
         context.bind(Project.class).to(project);
