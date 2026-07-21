@@ -106,4 +106,46 @@ class ModuleCatalogTests {
             .get()
             .isEqualTo(Artifact.parse("com.example:one:1.0.0"));
     }
+
+    /**
+     * Reproduces the snappy-java bug: when a jar carries neither {@code module-info.class} nor an
+     * {@code Automatic-Module-Name} attribute, {@code MavenModuleNaming.deriveNames} registers several
+     * naming-convention candidates for the same {@link Artifact} — including the bare
+     * {@code lastHyphenSegment} heuristic, which for {@code org.xerial:snappy-java} is the misleading
+     * {@code "java"}. {@link ModuleCatalog.HeapBased#getModuleReference(Artifact)} must deterministically
+     * prefer the JPMS-spec-derived name ({@code "snappy.java"}) over such aliases, regardless of which
+     * entry a {@code ConcurrentHashMap} happens to iterate first.
+     */
+    @Test
+    void getModuleReference_prefersTheDerivedNameOverOtherRegisteredAliases() {
+        final Artifact snappyJava = Artifact.parse("org.xerial:snappy-java:1.1.10.8");
+        final Artifact.Constraint constraint = Artifact.Constraint.of(snappyJava);
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("java", constraint)
+            .add("org.xerial", constraint)
+            .add("snappy.java", constraint);
+
+        assertThat(catalog.getModuleReference(snappyJava))
+            .isPresent()
+            .get()
+            .extracting(ModuleReference::name)
+            .isEqualTo("snappy.java");
+    }
+
+    @Test
+    void getModuleReference_fallsBackToAnyRegisteredAliasWhenTheDerivedNameIsNotOneOfThem() {
+        final Artifact snappyJava = Artifact.parse("org.xerial:snappy-java:1.1.10.8");
+        final Artifact.Constraint constraint = Artifact.Constraint.of(snappyJava);
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("java", constraint)
+            .add("org.xerial", constraint);
+
+        assertThat(catalog.getModuleReference(snappyJava))
+            .isPresent()
+            .get()
+            .extracting(ModuleReference::name)
+            .isIn("java", "org.xerial");
+    }
 }

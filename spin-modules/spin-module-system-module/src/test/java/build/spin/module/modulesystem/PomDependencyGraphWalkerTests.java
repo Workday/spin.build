@@ -711,6 +711,40 @@ class PomDependencyGraphWalkerTests {
             .containsExactly("com.example.named.module");
     }
 
+    /**
+     * Reproduces the snappy-java bug: a jar present in the local repo with neither
+     * {@code module-info.class} nor {@code Automatic-Module-Name} is a confirmed automatic module,
+     * so only the single JPMS-spec-derived name should be registered — not the full
+     * {@link MavenModuleNaming#deriveNames} heuristic set, whose {@code lastHyphenSegment} candidate
+     * would otherwise register the misleading name {@code "java"} for {@code org.xerial:snappy-java}.
+     */
+    @Test
+    void walk_registersOnlyTheDerivedNameForAConfirmedUnnamedDependencyJar(@TempDir final Path workspace,
+                                                                           @TempDir final Path localRepo) throws Exception {
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>org.xerial</groupId>
+                  <artifactId>snappy-java</artifactId>
+                  <version>1.1.10.8</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        unnamedJar(localRepo.resolve("org/xerial/snappy-java/1.1.10.8/snappy-java-1.1.10.8.jar"));
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        assertThat(visitor.forCoordinate("org.xerial", "snappy-java").names)
+            .containsExactly("snappy.java");
+    }
+
     // -------------------------------------------------------------------------
     // ${project.groupId} / ${project.version} self-reference resolution
     // -------------------------------------------------------------------------
@@ -1139,6 +1173,13 @@ class PomDependencyGraphWalkerTests {
         manifest.getMainAttributes().putValue("Automatic-Module-Name", automaticModuleName);
         try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jarPath), manifest)) {
             // empty jar body — the manifest attribute alone is enough for readAutomaticModuleName
+        }
+    }
+
+    private static void unnamedJar(final Path jarPath) throws Exception {
+        Files.createDirectories(jarPath.getParent());
+        try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            // no module-info.class, no manifest attribute — a genuinely unnamed/automatic jar
         }
     }
 
