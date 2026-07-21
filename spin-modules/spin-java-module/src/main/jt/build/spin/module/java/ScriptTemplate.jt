@@ -1,12 +1,16 @@
 package build.spin.module.java;
 
-template TextOut ScriptTemplate(String classpath, String rootModule, String mainClass, String name) {
+template TextOut ScriptTemplate(String classpath, boolean hasModulePath, String rootModule, String mainClass, String name) {
 #!/bin/sh
 
 SCRIPTPATH=$(dirname `readlink -f "$0"`)
 
-MP=`readlink -f "$SCRIPTPATH/../modules"`
+@if (classpath != null && !classpath.isEmpty()) {
 LIB=`readlink -f "$SCRIPTPATH/../classpath"`
+@}
+@if (hasModulePath) {
+MP=`readlink -f "$SCRIPTPATH/../modules"`
+@}
 
-$SCRIPTPATH/java --enable-preview --module-path $MP#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/#{mainClass} $@
+$SCRIPTPATH/java --enable-preview#{hasModulePath ? " --module-path $MP" : ""}#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/#{mainClass} $@
 @end

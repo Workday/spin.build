@@ -240,6 +240,20 @@ class MavenModuleNaming {
     }
 
     /**
+     * Returns {@code true} if the jar for the given Maven coordinates exists in the local repository.
+     */
+    static boolean jarExists(final String groupId,
+                             final String artifactId,
+                             final String version,
+                             final Path localRepo) {
+        return Files.exists(localRepo
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version)
+            .resolve(artifactId + "-" + version + ".jar"));
+    }
+
+    /**
      * Reads the {@code Automatic-Module-Name} attribute from the {@code META-INF/MANIFEST.MF} of
      * the jar for the given Maven coordinates in the local repository.
      *

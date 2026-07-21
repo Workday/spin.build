@@ -201,10 +201,10 @@ public final class ModuleGraphClassifier {
      *                            {@link Configuration#empty()}, or an empty
      *                            {@code ModuleFinder.of()} otherwise. The candidate jars
      *                            always take precedence on a name collision: when this code
-     *                            runs from inside a jlink image that already baked the
+     *                            runs from inside a jlink image that already linked the
      *                            candidates' own modules into the system image,
      *                            {@code ModuleFinder.ofSystem()} would otherwise shadow the
-     *                            freshly built candidates with their baked {@code jrt:}
+     *                            freshly built candidates with their linked {@code jrt:}
      *                            versions, and every candidate would resolve to a
      *                            non-{@code file:} location — see the {@code resolved} filter
      *                            below — making everything look "unreachable" and get pruned.

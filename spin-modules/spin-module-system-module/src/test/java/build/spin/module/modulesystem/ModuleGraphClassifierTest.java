@@ -458,7 +458,7 @@ class ModuleGraphClassifierTest {
     @Test
     void classifyAndResolve_systemModulesNotInResult() throws IOException {
         // Configuration.resolve pulls in java.base (jrt: scheme), but the result must
-        // contain only paths from the original candidate set — jlink bakes system modules
+        // contain only paths from the original candidate set — jlink links system modules
         // into the runtime image and copying jrt: paths would fail.
         final Path root = automaticModule("root.jar", "my.root", "com/root/R.class");
         final var result = ModuleGraphClassifier.classifyAndResolve(
@@ -500,7 +500,7 @@ class ModuleGraphClassifierTest {
     @Test
     void classifyAndResolve_supplementalFinderShadowsCandidate_candidateStillWins() throws IOException {
         // Regression for the self-hosted jlink-image bug: when this code runs from inside a
-        // runtime image that jlink already baked the root module into, ModuleFinder.ofSystem()
+        // runtime image that jlink already linked the root module into, ModuleFinder.ofSystem()
         // (the supplemental finder) provides its own copy of "my.root" alongside the freshly
         // built candidate jar. Configuration.resolve only keeps one location per module name —
         // the candidate (file:) must win, not the supplemental finder's copy, or every

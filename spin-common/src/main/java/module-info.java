@@ -34,6 +34,7 @@ module build.spin.common {
 
     opens build.spin.common to build.codemodel.injection;
     opens build.spin.common.annotation to build.codemodel.injection;
+    opens build.spin.common.injection to build.codemodel.injection;
     opens build.spin.common.task to build.codemodel.injection;
 
     exports build.spin.common;
