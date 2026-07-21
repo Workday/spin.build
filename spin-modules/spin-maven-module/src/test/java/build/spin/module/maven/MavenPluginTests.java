@@ -24,6 +24,8 @@ import build.base.io.PathSet;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.injection.InjectionFramework;
 import build.spin.Project;
+import build.spin.Resource;
+import build.spin.common.injection.ProjectResourceResolver;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.gpg.SignableResource;
 import build.spin.module.modulesystem.Artifact;
@@ -68,12 +70,10 @@ class MavenPluginTests {
         throws Exception {
 
         final var signable = new SignableResource();
-        final var project = mock(Project.class);
-        when(project.getResource(SignableResource.class))
-            .thenReturn(Optional.of(signable));
+        final var project = mockProjectWithResources(signable);
 
         final var context = InjectionFramework.create().newContext();
-        context.bind(Project.class).to(project);
+        context.addResolver(new ProjectResourceResolver(project));
 
         final var task = context.create(MavenPlugin.CreatePOMFile.class);
 
@@ -91,12 +91,10 @@ class MavenPluginTests {
     void shouldNotRegisterPomForSigningWhenSignableResourceAbsent(@TempDir final Path tempDir)
         throws Exception {
 
-        final var project = mock(Project.class);
-        when(project.getResource(SignableResource.class))
-            .thenReturn(Optional.empty());
+        final var project = mockProjectWithResources();
 
         final var context = InjectionFramework.create().newContext();
-        context.bind(Project.class).to(project);
+        context.addResolver(new ProjectResourceResolver(project));
 
         final var task = context.create(MavenPlugin.CreatePOMFile.class);
 
@@ -112,6 +110,13 @@ class MavenPluginTests {
         final var document = DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument();
         document.appendChild(document.createElement("project"));
         return document;
+    }
+
+    private static Project mockProjectWithResources(final Resource... resources) {
+        final var project = mock(Project.class);
+        when(project.hierarchy()).thenAnswer(invocation -> Stream.of(project));
+        when(project.resources()).thenAnswer(invocation -> Stream.of(resources));
+        return project;
     }
 
     /**

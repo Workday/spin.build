@@ -243,7 +243,7 @@ public class MavenPlugin
         implements build.spin.module.java.PackageModule {
 
         @Inject
-        private Project project;
+        private Optional<SignableResource> signableResource;
 
         @Inject
         private JDKModuleDescriptor descriptor;
@@ -281,8 +281,7 @@ public class MavenPlugin
                     }
 
                     // include the archive for signing, when GPG signing is available
-                    this.project.getResource(SignableResource.class)
-                        .ifPresent(resource -> resource.include(artifactPath));
+                    this.signableResource.ifPresent(resource -> resource.include(artifactPath));
 
                     return ArtifactDescriptor.create(ref, artifact, artifactPath);
 
@@ -305,7 +304,7 @@ public class MavenPlugin
         implements Task<ArtifactDescriptor> {
 
         @Inject
-        private Project project;
+        private Optional<SignableResource> signableResource;
 
         @Inject
         private JDKModuleDescriptor descriptor;
@@ -360,8 +359,7 @@ public class MavenPlugin
                     }
 
                     // include the archive for signing, when GPG signing is available
-                    this.project.getResource(SignableResource.class)
-                        .ifPresent(resource -> resource.include(artifactPath));
+                    this.signableResource.ifPresent(resource -> resource.include(artifactPath));
 
                     return ArtifactDescriptor.create(
                         ref,
@@ -391,7 +389,7 @@ public class MavenPlugin
         implements Task<ArtifactDescriptor> {
 
         @Inject
-        private Project project;
+        private Optional<SignableResource> signableResource;
 
         @Inject
         private JDKModuleDescriptor descriptor;
@@ -444,8 +442,7 @@ public class MavenPlugin
                     }
 
                     // include the archive for signing, when GPG signing is available
-                    this.project.getResource(SignableResource.class)
-                        .ifPresent(resource -> resource.include(artifactPath));
+                    this.signableResource.ifPresent(resource -> resource.include(artifactPath));
 
                     return ArtifactDescriptor.create(
                         ref,
@@ -656,7 +653,7 @@ public class MavenPlugin
         implements Task<Path> {
 
         @Inject
-        private Project project;
+        private Optional<SignableResource> signableResource;
 
         /**
          * Creates the pom.xml in the provided buildPath, using the specified POM {@link Document}.
@@ -680,7 +677,7 @@ public class MavenPlugin
             transformer.transform(new DOMSource(document), new StreamResult(Files.newBufferedWriter(pom)));
 
             // include the pom.xml for signing, when GPG signing is available
-            this.project.getResource(SignableResource.class).ifPresent(resource -> resource.include(pom));
+            this.signableResource.ifPresent(resource -> resource.include(pom));
 
             return pom;
         }
