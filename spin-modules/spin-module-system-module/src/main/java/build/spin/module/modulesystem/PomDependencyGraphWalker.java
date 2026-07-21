@@ -293,7 +293,11 @@ final class PomDependencyGraphWalker {
     /**
      * Visits a dependency coordinate, registering it under the ground-truth JPMS module name when
      * one can be read directly from the jar ({@code module-info.class}, then {@code Automatic-Module-Name});
-     * otherwise falls back to the derived-name-heuristics.
+     * otherwise falls back to the single JPMS-spec-derived automatic module name when the jar is
+     * present locally but confirmed to carry neither (it's then definitely an automatic module,
+     * which the JDK always names purely from the jar filename, never group-prefixed), or to the
+     * full {@link MavenModuleNaming#deriveNames} heuristic set when the jar isn't resolved yet and
+     * its eventual naming can't be determined.
      * <p>
      * The ground truth is preferred exclusively (not additively) because heuristic names are derived from the
      * groupId/artifactId shared by every sibling artifact under that groupId (e.g. every {@code io.helidon.config:*}
@@ -313,8 +317,12 @@ final class PomDependencyGraphWalker {
             final Optional<String> groundTruth = MavenModuleNaming
                 .readNamedModuleName(groupId, artifactId, resolvedVersion, localRepo, codeModel)
                     .or(() -> MavenModuleNaming.readAutomaticModuleName(groupId, artifactId, resolvedVersion, localRepo));
+            final boolean confirmedUnnamed = groundTruth.isEmpty()
+                && MavenModuleNaming.jarExists(groupId, artifactId, resolvedVersion, localRepo);
             final List<String> names = groundTruth.map(List::of)
-                .orElseGet(() -> MavenModuleNaming.deriveNames(groupId, artifactId));
+                .orElseGet(() -> confirmedUnnamed
+                    ? List.of(MavenModuleNaming.derivedModuleName(artifactId))
+                    : MavenModuleNaming.deriveNames(groupId, artifactId));
             visitor.accept(names, groupId, artifactId, resolvedVersion);
         } catch (final Exception e) {
             recorder.warn(e, "PomDependencyGraphWalker failed to visit dependency [%s:%s:%s]",

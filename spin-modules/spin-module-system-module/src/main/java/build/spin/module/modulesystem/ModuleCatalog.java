@@ -240,11 +240,26 @@ public interface ModuleCatalog {
 
         @Override
         public Optional<ModuleReference> getModuleReference(final Artifact artifact) {
-            return this.constraints.entrySet().stream()
+            final List<String> names = this.constraints.entrySet().stream()
                 .filter(entry -> entry.getValue().stream().anyMatch(constraint -> constraint.contains(artifact)))
                 .map(Map.Entry::getKey)
-                .findFirst()
-                .map(name -> ModuleReference.of(name, artifact.version()));
+                .toList();
+
+            if (names.isEmpty()) {
+                return Optional.empty();
+            }
+
+            // Multiple naming-convention candidates (groupId, derived artifactId, lastHyphenSegment,
+            // group-prefixed/suffixed, etc.) may be registered for the same Artifact when no ground-truth
+            // module name could be read from the jar. constraints is a ConcurrentHashMap, so iteration
+            // order is hash-bucket order, not registration order — picking the first entry would return
+            // an essentially random alias (e.g. "java" for "snappy-java" instead of "snappy.java"). Prefer
+            // the JPMS-spec-derived name (the same one the JDK's automatic-module-naming algorithm would
+            // produce from the jar filename), falling back to whatever matched if it wasn't registered.
+            final String derived = getDerivedModuleName(artifact);
+            final String name = names.contains(derived) ? derived : names.get(0);
+
+            return Optional.of(ModuleReference.of(name, artifact.version()));
         }
 
         @Override
