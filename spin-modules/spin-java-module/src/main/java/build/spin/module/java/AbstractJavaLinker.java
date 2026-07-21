@@ -42,14 +42,21 @@ import build.spin.module.modulesystem.ModuleReference;
 import jakarta.inject.Inject;
 
 import java.io.BufferedOutputStream;
+import java.io.File;
 import java.io.IOException;
+import java.lang.module.Configuration;
+import java.lang.module.ModuleDescriptor;
 import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -184,154 +191,258 @@ public abstract class AbstractJavaLinker
         }
 
         // ------
-        // create a list of the Java Platform modules to link
-        // (the rest are going on the ClassPath for now!)
-
-        final var moduleNames = analysis.platformModules()
+        // create a list of the Java Platform modules to link — these must always be linked
+        // regardless of how the application modules below are classified, since the
+        // external (unlinked) portion of the app's module graph still needs them at runtime.
+        final var platformModuleNames = analysis.platformModules()
             .map(ModuleReference::name)
             .filter(jdkModuleNames::contains)  // only include modules that actually exist in this JDK
-            .collect(Collectors.joining(","));
+            .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        // the host's jlink no longer implicitly resolves platform modules from "itself" the way it did
-        // when jlink was always run from within the target JDK — the target's jmods must be on the
-        // module path explicitly so jlink can find platform modules like java.base for the target
-        final var jlinkModulePath = Files.isDirectory(jmodsDir)
-            ? analysis.modulePath() + java.io.File.pathSeparator + jmodsDir
-            : analysis.modulePath().toString();
+        // -----
+        // Classify application jars into module-path vs classpath candidates. This runs
+        // BEFORE jlink so we know, up front, which application modules can be linked into
+        // the image alongside the platform modules above.
+        //
+        // Classification uses ModuleFinder + Configuration.resolve on the real on-disk
+        // jars — the same approach {@code build.spin.application.Launcher} uses for the
+        // spin1 Maven-exec launch. Split-package conflicts are iteratively demoted to
+        // classpath where the JPMS package-uniqueness rule doesn't apply; automatic
+        // modules on --module-path still reach the demoted classes via ALL-UNNAMED.
+        //
+        // Dependency dedupe (both by Maven (groupId, artifactId) and by JPMS module
+        // name) already happened upstream in {@link AbstractJavaDependencyAnalysis}, so
+        // analysis.dependencies() is a clean canonical set here.
+        final List<Path> candidatePaths = analysis.dependencies()
+            .flatMap(dep -> dep.artifactDescriptor().path().stream())
+            .toList();
 
-        final var recordingObserver = new RecordingSubscriber<String>();
-        final ErrorCapture captured = new ErrorCapture();
+        final var rootModule = this.descriptor.moduleName().toString();
 
-        // jlink's --strip-debug shells out to the host's native objcopy, which can't parse a foreign
-        // target's binaries (e.g. running x86_64 objcopy against aarch64 or Mach-O native libraries) —
-        // only strip when linking the host's own target
-        final List<build.base.configuration.Option> jlinkOptions = new ArrayList<>(List.of(
-            Executable.of(jlinkPath.toString()),
-            Name.of("jlink"),
-            Argument.of("--module-path"), Argument.of(jlinkModulePath),
-            Argument.of("--output"), Argument.of(packagePath),
-            Argument.of("--add-modules"), Argument.of(moduleNames)));
-        if (isHostTarget) {
-            jlinkOptions.add(Argument.of("--strip-debug"));
+        // Prefer classifyAndResolve so unreachable jars are pruned from the module-path.
+        // When spin runs from its own jlink image ModuleFinder.ofSystem() only covers
+        // spin's modules, so resolving an app that requires JDK modules outside that
+        // image (e.g. java.net.http) will fail — fall back to classify-only in that case.
+        ModuleGraphClassifier.Classification classification;
+        try {
+            classification = ModuleGraphClassifier.classifyAndResolve(
+                candidatePaths,
+                Set.of(rootModule),
+                rootModule,
+                Configuration.empty(),
+                ModuleFinder.ofSystem(),
+                msg -> this.recorder.info("[classify] %s", msg));
+        } catch (final IllegalStateException e) {
+            this.recorder.warn("[classify] classifyAndResolve failed (%s) — falling back to classify-only; "
+                + "unreachable jars will NOT be pruned from the module-path", e.getMessage());
+            classification = ModuleGraphClassifier.classify(
+                candidatePaths,
+                Set.of(rootModule),
+                msg -> this.recorder.info("[classify] %s", msg));
         }
-        jlinkOptions.addAll(List.of(
-            Argument.of("--no-header-files"),
-            Argument.of("--no-man-pages"),
-            Argument.of("--compress"), Argument.of("zip-6"),
-            Argument.of("--vm"), Argument.of("server"),
-            StandardOutputSubscriber.of(recordingObserver),
-            captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)));
+        final List<Path> modulePathJars = classification.modulePath();
 
-        try (var jlink = this.machine.launch(Application.class,
-            jlinkOptions.toArray(build.base.configuration.Option[]::new))) {
+        // -----
+        // Partition the module-path jars into "linkable" (jlink can link them straight into
+        // lib/modules) and "tainted" (must stay on an external runtime --module-path).
+        //
+        // jlink cannot link automatic modules into a runtime image at all — any module that
+        // is itself automatic, or that transitively requires one, has to be excluded from
+        // --add-modules and copied to an external module-path directory instead, exactly like
+        // spin did before full-image linking existed. Everything else gets linked in, so an
+        // application with a perfectly clean module graph (e.g. spin itself) still gets a
+        // fully self-contained image, while one with automatic-module dependencies degrades
+        // gracefully instead of failing jlink outright.
+        // readDescriptor returns null for jars ModuleFinder can't interpret as a module, so this
+        // is built with a plain loop rather than Collectors.toMap (which rejects null values)
+        final Map<Path, ModuleDescriptor> descriptorsByPath = new LinkedHashMap<>();
+        for (final var jar : modulePathJars) {
+            descriptorsByPath.put(jar, ModuleGraphClassifier.readDescriptor(jar));
+        }
 
-            try {
-                jlink.onExit().get();
-            } catch (final Exception e) {
-                throw new ProcessFailedException("jlink Execution Failed",
-                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
+        final Set<String> automaticNames = descriptorsByPath.values().stream()
+            .filter(Objects::nonNull)
+            .filter(ModuleDescriptor::isAutomatic)
+            .map(ModuleDescriptor::name)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        final Set<Path> tainted = new LinkedHashSet<>();
+        for (final var jar : modulePathJars) {
+            final var descriptor = descriptorsByPath.get(jar);
+            if (descriptor == null || descriptor.isAutomatic()) {
+                tainted.add(jar);
+                continue;
             }
-
-            if (jlink.exitValue().orElse(0) != 0) {
-                throw new ProcessFailedException(
-                    "Runtime Image Generation Failed (exit code: " + jlink.exitValue().orElse(-1) + ")",
-                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+            final var closure = ModuleGraphClassifier.closeOverRequires(modulePathJars, Set.of(descriptor.name()));
+            if (closure.stream().anyMatch(automaticNames::contains)) {
+                tainted.add(jar);
             }
+        }
 
-            // -----
-            // Classify application jars into --module-path (modules/) vs -cp (classpath/).
-            //
-            // The jlink subprocess above produces a Java runtime image, but the application
-            // jars themselves still need to be copied into the image and launched by the
-            // generated script. Historically they were copied flat into modules/ and launched
-            // with `java -cp modules/* Spin`, which broke the moment any provider migrated
-            // from @AutoService to a JPMS-native `provides` clause (such providers only work
-            // when their jars are loaded as named modules).
-            //
-            // Classification uses ModuleFinder + Configuration.resolve on the real on-disk
-            // jars — the same approach {@code build.spin.application.Launcher} uses for the
-            // spin1 Maven-exec launch. Split-package conflicts are iteratively demoted to
-            // classpath where the JPMS package-uniqueness rule doesn't apply; automatic
-            // modules on --module-path still reach the demoted classes via ALL-UNNAMED.
-            //
-            // Dependency dedupe (both by Maven (groupId, artifactId) and by JPMS module
-            // name) already happened upstream in {@link AbstractJavaDependencyAnalysis}, so
-            // analysis.dependencies() is a clean canonical set here.
-            //
-            // Note: we use `classpath/` (not `lib/`) because jlink writes its runtime image
-            // into packagePath/lib/modules and owns the lib/ directory.
+        final List<Path> linkableJars = modulePathJars.stream().filter(jar -> !tainted.contains(jar)).toList();
+        if (!tainted.isEmpty()) {
+            this.recorder.info("[jlink] %d module-path jar(s) depend on automatic modules and will stay "
+                + "external to the image: %s", tainted.size(),
+                tainted.stream().map(p -> p.getFileName().toString()).toList());
+        }
 
-            final var modulePath = packagePath.resolve("modules");
-            final var classPathDir = packagePath.resolve("classpath");
-            Files.createDirectories(modulePath);
-            Files.createDirectories(classPathDir);
+        final var nativePlatform = nativePlatformFor(target);
 
-            final List<Path> candidatePaths = analysis.dependencies()
-                .flatMap(dep -> dep.artifactDescriptor().path().stream())
-                .toList();
-
-            final var rootModule = this.descriptor.moduleName().toString();
-
-            // Prefer classifyAndResolve so unreachable jars are pruned from modules/.
-            // When spin runs from its own jlink image ModuleFinder.ofSystem() only covers
-            // spin's modules, so resolving an app that requires JDK modules outside that
-            // image (e.g. java.net.http) will fail — fall back to classify-only in that case.
-            ModuleGraphClassifier.Classification classification;
-            try {
-                classification = ModuleGraphClassifier.classifyAndResolve(
-                    candidatePaths,
-                    Set.of(rootModule),
-                    rootModule,
-                    java.lang.module.Configuration.empty(),
-                    ModuleFinder.ofSystem(),
-                    msg -> this.recorder.info("[classify] %s", msg));
-            } catch (final IllegalStateException e) {
-                this.recorder.warn("[classify] classifyAndResolve failed (%s) — falling back to classify-only; "
-                    + "unreachable jars will NOT be pruned from the module-path", e.getMessage());
-                classification = ModuleGraphClassifier.classify(
-                    candidatePaths,
-                    Set.of(rootModule),
-                    msg -> this.recorder.info("[classify] %s", msg));
-            }
-            final Set<Path> modulePathJars = new LinkedHashSet<>(classification.modulePath());
-
-            final var nativePlatform = nativePlatformFor(target);
-            final List<Path> classPathTargets = new ArrayList<>();
-            for (final var source : candidatePaths) {
-                final var targetDir = modulePathJars.contains(source) ? modulePath : classPathDir;
-                final var destination = targetDir.resolve(source.getFileName());
-                Files.copy(source, destination);
+        // jlink packs module-path JARs directly into lib/modules — there is no way to strip
+        // foreign-platform native entries from the packed image format afterward, so we strip
+        // a staged copy before jlink ever sees it. analysis.modulePath() is shared across every
+        // target's linkForTarget() call, so we copy per-target rather than stripping in place;
+        // stripping the shared directory to one target's natives would silently corrupt the
+        // module-path for every other target's jlink run.
+        final var stagedModulePath = buildPath.resolve(packageName + "-" + target + "-modulepath-staging");
+        try {
+            // a prior run that was interrupted before reaching the finally block below (Ctrl-C,
+            // OOM-kill, crash) can leave stale jars here — clear them first so a stale copy of a
+            // since-renamed-or-removed dependency never ends up on jlink's module-path scan
+            // alongside its replacement
+            deleteDirectory(stagedModulePath);
+            Files.createDirectories(stagedModulePath);
+            for (final var jar : linkableJars) {
+                final var staged = stagedModulePath.resolve(jar.getFileName());
+                Files.copy(jar, staged, StandardCopyOption.REPLACE_EXISTING);
                 if (nativePlatform.isPresent()) {
                     final var p = nativePlatform.get();
-                    if (stripForeignNatives(destination, p.osDir(), p.archDir())) {
+                    if (stripForeignNatives(staged, p.osDir(), p.archDir())) {
                         this.recorder.info("[jlink] stripped foreign native platforms from %s (kept %s/%s)",
-                            destination.getFileName(), p.osDir(), p.archDir());
+                            staged.getFileName(), p.osDir(), p.archDir());
                     }
                 }
-                if (targetDir == classPathDir) {
-                    classPathTargets.add(destination);
+            }
+
+            // the host's jlink no longer implicitly resolves platform modules from "itself" the way it did
+            // when jlink was always run from within the target JDK — the target's jmods must be on the
+            // module path explicitly so jlink can find platform modules like java.base for the target
+            final var jlinkModulePath = Files.isDirectory(jmodsDir)
+                ? stagedModulePath + File.pathSeparator + jmodsDir
+                : stagedModulePath.toString();
+
+            final Set<String> addModules = new LinkedHashSet<>(platformModuleNames);
+            linkableJars.stream()
+                .map(descriptorsByPath::get)
+                .filter(Objects::nonNull)
+                .map(ModuleDescriptor::name)
+                .forEach(addModules::add);
+
+            final var recordingObserver = new RecordingSubscriber<String>();
+            final ErrorCapture captured = new ErrorCapture();
+
+            // jlink's --strip-debug shells out to the host's native objcopy, which can't parse a foreign
+            // target's binaries (e.g. running x86_64 objcopy against aarch64 or Mach-O native libraries) —
+            // only strip when linking the host's own target
+            final List<build.base.configuration.Option> jlinkOptions = new ArrayList<>(List.of(
+                Executable.of(jlinkPath.toString()),
+                Name.of("jlink"),
+                Argument.of("--module-path"), Argument.of(jlinkModulePath),
+                Argument.of("--output"), Argument.of(packagePath),
+                Argument.of("--add-modules"), Argument.of(String.join(",", addModules))));
+            if (isHostTarget) {
+                jlinkOptions.add(Argument.of("--strip-debug"));
+            }
+            jlinkOptions.addAll(List.of(
+                Argument.of("--no-header-files"),
+                Argument.of("--no-man-pages"),
+                Argument.of("--compress"), Argument.of("zip-6"),
+                Argument.of("--vm"), Argument.of("server"),
+                StandardOutputSubscriber.of(recordingObserver),
+                captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)));
+
+            try (var jlink = this.machine.launch(Application.class,
+                jlinkOptions.toArray(build.base.configuration.Option[]::new))) {
+
+                try {
+                    jlink.onExit().get();
+                } catch (final Exception e) {
+                    throw new ProcessFailedException("jlink Execution Failed",
+                        ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
                 }
+
+                if (jlink.exitValue().orElse(0) != 0) {
+                    throw new ProcessFailedException(
+                        "Runtime Image Generation Failed (exit code: " + jlink.exitValue().orElse(-1) + ")",
+                        ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+                }
+
+                // -----
+                // Copy whatever jlink didn't link in: tainted module-path jars go to an external
+                // runtime --module-path (modules/) and classpath losers go to classpath/. Linkable
+                // jars are already inside packagePath/lib/modules courtesy of jlink above and are
+                // not copied again. Directories are created lazily — a fully-linked graph (no
+                // tainted or classpath jars) leaves neither directory behind.
+                //
+                // Note: we use `classpath/` (not `lib/`) because jlink writes its runtime image
+                // into packagePath/lib/modules and owns the lib/ directory.
+                final var modulePath = packagePath.resolve("modules");
+                final var classPathDir = packagePath.resolve("classpath");
+
+                final Set<Path> classPathJars = new LinkedHashSet<>(classification.classPath());
+                final List<Path> classPathTargets = new ArrayList<>();
+                for (final var source : candidatePaths) {
+                    final boolean isClassPath = classPathJars.contains(source);
+                    final boolean isTainted = tainted.contains(source);
+                    if (!isClassPath && !isTainted) {
+                        // linkable — already packed into the image by jlink
+                        continue;
+                    }
+                    final var targetDir = isClassPath ? classPathDir : modulePath;
+                    Files.createDirectories(targetDir);
+                    final var destination = targetDir.resolve(source.getFileName());
+                    Files.copy(source, destination);
+                    if (nativePlatform.isPresent()) {
+                        final var p = nativePlatform.get();
+                        if (stripForeignNatives(destination, p.osDir(), p.archDir())) {
+                            this.recorder.info("[jlink] stripped foreign native platforms from %s (kept %s/%s)",
+                                destination.getFileName(), p.osDir(), p.archDir());
+                        }
+                    }
+                    if (isClassPath) {
+                        classPathTargets.add(destination);
+                    }
+                }
+
+                // ---------
+                // create the script to execute the application
+                final var scriptPath = packagePath.resolve("bin");
+
+                // The script template references $MP (modules/) and $LIB (classpath/). Only the
+                // classpath entries are listed explicitly; the module-path is a single directory.
+                // $MP (and the --module-path argument itself) is only emitted when tainted jars
+                // actually exist — a fully-linked graph has no modules/ directory to point at.
+                final var classPath = classPathTargets.stream()
+                    .map(path -> "$LIB/" + path.getFileName())
+                    .collect(Collectors.joining(":"));
+
+                try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
+                    new ScriptTemplate(classPath, !tainted.isEmpty(), rootModule, mainClass, packageName)
+                        .render(new TextOut(writer));
+                }
+
+                // make the script executable
+                scriptPath.resolve(scriptName).toFile().setExecutable(true);
             }
-
-            // ---------
-            // create the script to execute the application
-            final var scriptPath = packagePath.resolve("bin");
-
-            // The script template references $MP (modules/) and $LIB (classpath/). Only the
-            // classpath entries are listed explicitly; the module-path is a single directory.
-            final var classPath = classPathTargets.stream()
-                .map(path -> "$LIB/" + path.getFileName())
-                .collect(Collectors.joining(":"));
-
-            try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
-                new ScriptTemplate(classPath, rootModule, mainClass, packageName).render(new TextOut(writer));
-            }
-
-            // make the script executable
-            scriptPath.resolve(scriptName).toFile().setExecutable(true);
+        } finally {
+            // the staged, native-stripped copies were only needed for the jlink invocation above —
+            // the real bytes now live inside packagePath/lib/modules; clean up even if jlink or the
+            // post-processing above failed, so a retry doesn't inherit a stale staging directory
+            deleteDirectory(stagedModulePath);
         }
 
         return packagePath;
+    }
+
+    private static void deleteDirectory(final Path dir) throws IOException {
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        try (var paths = Files.walk(dir)) {
+            for (final var path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(path);
+            }
+        }
     }
 
     private static Optional<String> detectMainClass(final Path projectPath,
