@@ -26,6 +26,7 @@ import build.base.expression.compat.Variable;
 import build.base.foundation.Capture;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
+import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
 import build.codemodel.injection.PostInject;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
@@ -34,10 +35,14 @@ import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.After;
+import build.spin.annotation.Before;
 import build.spin.annotation.Category;
 import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.module.clean.CleanPlugin;
+import build.spin.module.configuration.Configuration;
+import build.spin.module.gpg.GpgPlugin;
+import build.spin.module.gpg.SignableResource;
 import build.spin.module.java.AbstractJavaPlugin;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.java.JavaPlatform;
@@ -62,7 +67,9 @@ import org.xml.sax.SAXException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.jar.Attributes;
@@ -223,13 +230,20 @@ public class MavenPlugin
 
     /**
      * Creates a Java Archive (jar) containing the compiled byte code and resources for the {@link Project}.
+     * <p>
+     * Marked {@link Before} {@code GpgPlugin.Sign} so, when GPG signing is available, the archive is
+     * registered with the {@link SignableResource} prior to signing.
      */
     @Named("package.module")
     @Description("Package JAR, sources, and Javadoc")
     @Category("package")
     @Category("build")
+    @Before(GpgPlugin.Sign.class)
     public static class PackageModule
         implements build.spin.module.java.PackageModule {
+
+        @Inject
+        private Project project;
 
         @Inject
         private JDKModuleDescriptor descriptor;
@@ -266,6 +280,10 @@ public class MavenPlugin
                         throw new RuntimeException("Failed to create Artifact [" + artifactName + "]", e);
                     }
 
+                    // include the archive for signing, when GPG signing is available
+                    this.project.getResource(SignableResource.class)
+                        .ifPresent(resource -> resource.include(artifactPath));
+
                     return ArtifactDescriptor.create(ref, artifact, artifactPath);
 
                 })
@@ -275,12 +293,19 @@ public class MavenPlugin
 
     /**
      * Creates a Maven-based Java Archive (jar) containing the source code and resources for a {@link Project}.
+     * <p>
+     * Marked {@link Before} {@code GpgPlugin.Sign} so, when GPG signing is available, the archive is
+     * registered with the {@link SignableResource} prior to signing.
      */
     @Named("package.source")
     @Category("package")
     @Category("build")
+    @Before(GpgPlugin.Sign.class)
     public static class PackageModuleSource
         implements Task<ArtifactDescriptor> {
+
+        @Inject
+        private Project project;
 
         @Inject
         private JDKModuleDescriptor descriptor;
@@ -334,6 +359,10 @@ public class MavenPlugin
                         throw new RuntimeException("Failed to create Artifact [" + artifactName + "]", e);
                     }
 
+                    // include the archive for signing, when GPG signing is available
+                    this.project.getResource(SignableResource.class)
+                        .ifPresent(resource -> resource.include(artifactPath));
+
                     return ArtifactDescriptor.create(
                         ref,
                         Artifact.create(
@@ -350,12 +379,19 @@ public class MavenPlugin
 
     /**
      * Creates a Maven-based Java Archive (jar) containing the Java Documentation for a {@link Project}.
+     * <p>
+     * Marked {@link Before} {@code GpgPlugin.Sign} so, when GPG signing is available, the archive is
+     * registered with the {@link SignableResource} prior to signing.
      */
     @Named("package.javadoc")
     @Category("package")
     @Category("build")
+    @Before(GpgPlugin.Sign.class)
     public static class PackageJavaDoc
         implements Task<ArtifactDescriptor> {
+
+        @Inject
+        private Project project;
 
         @Inject
         private JDKModuleDescriptor descriptor;
@@ -406,6 +442,10 @@ public class MavenPlugin
                     } catch (final IOException e) {
                         throw new RuntimeException("Failed to create Artifact [" + artifactName + "]", e);
                     }
+
+                    // include the archive for signing, when GPG signing is available
+                    this.project.getResource(SignableResource.class)
+                        .ifPresent(resource -> resource.include(artifactPath));
 
                     return ArtifactDescriptor.create(
                         ref,
@@ -605,11 +645,18 @@ public class MavenPlugin
 
     /**
      * Creates a Maven pom.xml based on the POM {@link Document} for a {@link Project}.
+     * <p>
+     * Marked {@link Before} {@code GpgPlugin.Sign} so, when GPG signing is available, the pom.xml is
+     * registered with the {@link SignableResource} prior to signing.
      */
     @Named("create.pom")
     @After(JavaCompilerPlugin.Compile.class)
+    @Before(GpgPlugin.Sign.class)
     public static class CreatePOMFile
         implements Task<Path> {
+
+        @Inject
+        private Project project;
 
         /**
          * Creates the pom.xml in the provided buildPath, using the specified POM {@link Document}.
@@ -632,7 +679,167 @@ public class MavenPlugin
             transformer.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "4");
             transformer.transform(new DOMSource(document), new StreamResult(Files.newBufferedWriter(pom)));
 
+            // include the pom.xml for signing, when GPG signing is available
+            this.project.getResource(SignableResource.class).ifPresent(resource -> resource.include(pom));
+
             return pom;
+        }
+    }
+
+    /**
+     * Publishes the packaged module jar, sources jar, javadoc jar, and pom.xml (and, when GPG signing is
+     * available, their detached signatures) to a Maven repository.
+     * <p>
+     * This {@link Task} is deliberately not {@link build.spin.annotation.Automatic}: publishing only occurs
+     * when explicitly requested (eg: {@code spin publish}), never as part of a regular build.
+     * <p>
+     * Three configuration keys (resolved from {@code .spin} configuration) are supported:
+     * <ul>
+     *     <li>{@code repository.url} - the base URL of the Maven repository to publish to (required)</li>
+     *     <li>{@code repository.username}/{@code repository.password} - credentials for HTTP Basic
+     *     authentication, used only when both are present</li>
+     * </ul>
+     */
+    @Named("publish")
+    @Description("Publish packaged artifacts to a Maven repository")
+    public static class Publish
+        implements Task<PathSet> {
+
+        @Inject
+        private TelemetryRecorder recorder;
+
+        @Inject
+        @Configuration
+        @Named("repository.url")
+        private Optional<String> repositoryUrl;
+
+        @Inject
+        @Configuration
+        @Named("repository.username")
+        private Optional<String> repositoryUsername;
+
+        @Inject
+        @Configuration
+        @Named("repository.password")
+        private Optional<String> repositoryPassword;
+
+        /**
+         * Publishes the packaged artifacts (and their signatures, if available) to the configured Maven
+         * repository.
+         *
+         * @param jar        the {@link ArtifactDescriptor} for the module jar
+         * @param sources    the {@link ArtifactDescriptor} for the sources jar
+         * @param javadoc    the {@link ArtifactDescriptor} for the javadoc jar
+         * @param pom        the {@link Path} to the pom.xml
+         * @param signatures the {@link Optional} {@link PathSet} of detached signatures, present only when
+         *                   GPG signing is available
+         * @return a {@link PathSet} of the local {@link Path}s successfully published
+         * @throws IOException          should reading a file or performing an HTTP request fail
+         * @throws InterruptedException should an HTTP request be interrupted
+         */
+        public PathSet publish(final @From(PackageModule.class) ArtifactDescriptor jar,
+                               final @From(PackageModuleSource.class) ArtifactDescriptor sources,
+                               final @From(PackageJavaDoc.class) ArtifactDescriptor javadoc,
+                               final @From(CreatePOMFile.class) Path pom,
+                               final @From(GpgPlugin.Sign.class) Optional<PathSet> signatures)
+            throws IOException, InterruptedException {
+
+            final var url = this.repositoryUrl
+                .orElseThrow(() -> new IllegalStateException(
+                    "No repository.url configured; cannot publish artifacts"));
+
+            final var repo = this.repositoryUsername.isPresent() && this.repositoryPassword.isPresent()
+                ? RemoteRepo.of("publish", url, this.repositoryUsername.get(), this.repositoryPassword.get())
+                : RemoteRepo.of("publish", url);
+
+            final var mainArtifact = jar.artifact();
+            final var pomArtifact = Artifact.create(
+                mainArtifact.groupId(), mainArtifact.artifactId(), mainArtifact.version().get(), "pom");
+
+            final var publishables = new ArrayList<Publishable>();
+            publishables.add(Publishable.of(jar.artifact(), jar.path().orElseThrow()));
+            publishables.add(Publishable.of(sources.artifact(), sources.path().orElseThrow()));
+            publishables.add(Publishable.of(javadoc.artifact(), javadoc.path().orElseThrow()));
+            publishables.add(new Publishable(pomArtifact,
+                mainArtifact.artifactId() + "-" + mainArtifact.version().get() + ".pom", pom));
+
+            signatures.ifPresent(sigs -> List.copyOf(publishables).forEach(publishable ->
+                findSignature(publishable.localFile(), sigs)
+                    .ifPresent(signatureFile -> publishables.add(publishable.signedBy(signatureFile)))));
+
+            final var publisher = new MavenPublisher(this.recorder, repo);
+
+            final var published = new ArrayList<Path>();
+            for (final var publishable : publishables) {
+                if (publisher.upload(publishable.relativePath(), publishable.localFile())) {
+                    this.recorder.info("Published %s to %s", publishable.remoteFileName(), repo.url());
+                    published.add(publishable.localFile());
+                } else {
+                    throw new IOException(
+                        "Failed to publish " + publishable.localFile() + " to " + repo.url());
+                }
+            }
+
+            return published.stream().collect(PathSet.collector());
+        }
+
+        /**
+         * Locates the detached signature {@link Path} (within the specified {@link PathSet}) for the specified
+         * artifact {@link Path}, based on the signature's filename starting with the artifact's filename (as
+         * produced by {@code GpgPlugin.Sign}, eg: {@code artifact.jar.asc}).
+         *
+         * @param artifact   the artifact {@link Path}
+         * @param signatures the {@link PathSet} of detached signatures
+         * @return an {@link Optional} containing the matching signature {@link Path}, if any
+         */
+        private static Optional<Path> findSignature(final Path artifact, final PathSet signatures) {
+            final var filename = artifact.getFileName().toString();
+            return signatures.stream()
+                .filter(signature -> signature.getFileName().toString().startsWith(filename))
+                .findFirst();
+        }
+
+        /**
+         * A file to be published to a Maven repository: the {@link Artifact} coordinates it belongs to, the
+         * filename it should be published under, and its local {@link Path}.
+         */
+        private record Publishable(Artifact artifact, String remoteFileName, Path localFile) {
+
+            /**
+             * Creates a {@link Publishable} whose remote filename matches the local file's filename.
+             *
+             * @param artifact  the {@link Artifact}
+             * @param localFile the local {@link Path}
+             * @return a new {@link Publishable}
+             */
+            static Publishable of(final Artifact artifact, final Path localFile) {
+                return new Publishable(artifact, localFile.getFileName().toString(), localFile);
+            }
+
+            /**
+             * Creates a {@link Publishable} for the detached signature of this {@link Publishable}, whose
+             * remote filename is this {@link Publishable}'s remote filename with the signature's additional
+             * suffix (eg: {@code .asc}) appended.
+             *
+             * @param signatureFile the local {@link Path} of the detached signature
+             * @return a new {@link Publishable} for the signature
+             */
+            Publishable signedBy(final Path signatureFile) {
+                final var localFileName = this.localFile.getFileName().toString();
+                final var suffix = signatureFile.getFileName().toString().substring(localFileName.length());
+                return new Publishable(this.artifact, this.remoteFileName + suffix, signatureFile);
+            }
+
+            /**
+             * Obtains the Maven-repository-layout relative path (including filename) for this {@link Publishable}.
+             *
+             * @return the relative path
+             */
+            String relativePath() {
+                final var groupPath = this.artifact.groupId().replace('.', '/');
+                return groupPath + "/" + this.artifact.artifactId() + "/" + this.artifact.version().get()
+                    + "/" + this.remoteFileName;
+            }
         }
     }
 

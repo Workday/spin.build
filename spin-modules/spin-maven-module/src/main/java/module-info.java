@@ -36,6 +36,8 @@ module build.spin.module.maven {
     requires build.codemodel.jdk;
     requires build.spin;
     requires build.spin.module.clean;
+    requires build.spin.module.configuration;
+    requires build.spin.module.gpg;
     requires jakarta.inject;
 
     opens build.spin.module.maven to build.codemodel.injection;
