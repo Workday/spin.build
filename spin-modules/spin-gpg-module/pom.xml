@@ -1,0 +1,134 @@
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>build.spin.module</groupId>
+        <artifactId>spin-modules</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>spin-gpg-module</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Spin GPG Module</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin-api</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin.module</groupId>
+            <artifactId>spin-configuration-module</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-configuration</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-flow</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-foundation</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-io</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-telemetry</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-application</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-local-platform</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>dependency-injection</artifactId>
+        </dependency>
+
+        <!-- Test Dependencies -->
+
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>dependency-properties</id>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+
+                    <execution>
+                        <id>analyze-dependencies</id>
+                        <configuration>
+                            <ignoredNonTestScopedDependencies combine.children="append">
+                                <!-- Only referenced by module-info.java's "opens ... to build.codemodel.injection"
+                                     directive and by test code (InjectionFramework); no main source directly
+                                     imports it, but it must remain a compile-scope dependency so the opens-to
+                                     target module resolves during compilation/javadoc. -->
+                                <ignoredNonTestScopedDependency>build.codemodel:dependency-injection</ignoredNonTestScopedDependency>
+                            </ignoredNonTestScopedDependencies>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-XX:+EnableDynamicAgentLoading -javaagent:${org.mockito:mockito-core:jar}</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -66,6 +66,12 @@
 
         <dependency>
             <groupId>build.spin.module</groupId>
+            <artifactId>spin-gpg-module</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin.module</groupId>
             <artifactId>spin-java-module</artifactId>
             <version>${revision}</version>
         </dependency>
@@ -150,6 +156,7 @@
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-clean-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-configuration-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-git-module</ignoredUnusedDeclaredDependency>
+                        <ignoredUnusedDeclaredDependency>build.spin.module:spin-gpg-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-java-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-junit-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-maven-module</ignoredUnusedDeclaredDependency>
