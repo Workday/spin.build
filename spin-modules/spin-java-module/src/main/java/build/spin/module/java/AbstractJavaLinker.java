@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.configuration.Option;
 import build.base.flow.RecordingSubscriber;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
@@ -345,7 +346,7 @@ public abstract class AbstractJavaLinker
             // recorded module-main property actually matches the launch script, which measured ~20% faster
             // than the jlink-plugin version. Same foreign-target restriction as --strip-debug applies: it
             // executes the freshly-linked image's own java, which can't run a foreign target's binary.
-            final List<build.base.configuration.Option> jlinkOptions = new ArrayList<>(List.of(
+            final List<Option> jlinkOptions = new ArrayList<>(List.of(
                 Executable.of(jlinkPath.toString()),
                 Name.of("jlink"),
                 Argument.of("--module-path"), Argument.of(jlinkModulePath),
@@ -363,7 +364,7 @@ public abstract class AbstractJavaLinker
                 captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)));
 
             try (var jlink = this.machine.launch(Application.class,
-                jlinkOptions.toArray(build.base.configuration.Option[]::new))) {
+                jlinkOptions.toArray(Option[]::new))) {
 
                 try {
                     jlink.onExit().get();
@@ -376,10 +377,6 @@ public abstract class AbstractJavaLinker
                     throw new ProcessFailedException(
                         "Runtime Image Generation Failed (exit code: " + jlink.exitValue().orElse(-1) + ")",
                         ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
-                }
-
-                if (isHostTarget) {
-                    dumpBaseCdsArchive(packagePath, rootModule, mainClass);
                 }
 
                 // -----
@@ -417,6 +414,10 @@ public abstract class AbstractJavaLinker
                     if (isClassPath) {
                         classPathTargets.add(destination);
                     }
+                }
+
+                if (isHostTarget) {
+                    dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets);
                 }
 
                 // ---------
@@ -470,21 +471,47 @@ public abstract class AbstractJavaLinker
     //
     // Best-effort: CDS is a startup-time optimization, not a correctness requirement, so a failure here
     // (e.g. an unusual JDK build without CDS support) is logged and swallowed rather than failing the link.
-    private void dumpBaseCdsArchive(final Path packagePath, final String rootModule, final String mainClass) {
+    //
+    // rootModule can itself be a tainted module-path jar (or its main class can live on the classpath) that
+    // jlink left external to the image rather than packed into lib/modules -- the same reason ScriptTemplate.jt
+    // conditionally adds --module-path $MP / -cp $LIB to the real launch command. Passing modulePath and
+    // classPathTargets here mirrors that so the dump's `-m rootModule/mainClass` can actually resolve the
+    // module instead of failing with FindException.
+    private void dumpBaseCdsArchive(final Path packagePath,
+                                    final String rootModule,
+                                    final String mainClass,
+                                    final Path modulePath,
+                                    final List<Path> classPathTargets) {
         final var javaPath = packagePath.resolve("bin/java");
         final var recordingObserver = new RecordingSubscriber<String>();
         final ErrorCapture captured = new ErrorCapture();
 
-        try (var dump = this.machine.launch(Application.class,
+        final List<Option> options = new ArrayList<>(List.of(
             Executable.of(javaPath.toString()),
             Name.of("java"),
             Argument.of("--enable-preview"),
-            Argument.of("-Xshare:dump"),
+            Argument.of("-Xshare:dump")
+        ));
+        if (Files.isDirectory(modulePath)) {
+            options.add(Argument.of("--module-path"));
+            options.add(Argument.of(modulePath.toString()));
+        }
+        if (!classPathTargets.isEmpty()) {
+            options.add(Argument.of("-cp"));
+            options.add(Argument.of(classPathTargets.stream()
+                .map(Path::toString)
+                .collect(Collectors.joining((File.pathSeparator)))
+            ));
+        }
+        options.addAll(List.of(
             Argument.of("-m"), Argument.of(rootModule + "/" + mainClass),
             StandardOutputSubscriber.of(recordingObserver),
             captured.triageSubscriber(
                 ((Predicate<String>) ErrorCapture::isJvmNoise).or(ErrorCapture::isCdsDumpNoise),
-                this.recorder::warn, this.recorder::error))) {
+                this.recorder::warn, this.recorder::error)
+        ));
+
+        try (var dump = this.machine.launch(Application.class, options.toArray(Option[]::new))) {
 
             try {
                 dump.onExit().get();
@@ -498,8 +525,12 @@ public abstract class AbstractJavaLinker
                     ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
             }
         } catch (final Exception e) {
+            final Throwable unwrapped = ProcessFailedException.unwrap(e);
+            final var detail = unwrapped instanceof ProcessFailedException p && !p.output().isEmpty()
+                ? "%n%s".formatted(p.output())
+                : "";
             this.recorder.warn("[jlink] failed to dump CDS base archive for %s — startup will not benefit "
-                + "from class data sharing: %s", packagePath, e.getMessage());
+                + "from class data sharing: %s%s", packagePath, e.getMessage(), detail);
         }
     }
 
