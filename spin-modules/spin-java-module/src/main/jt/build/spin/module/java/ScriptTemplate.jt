@@ -11,6 +11,7 @@ LIB=`readlink -f "$SCRIPTPATH/../classpath"`
 @if (hasModulePath) {
 MP=`readlink -f "$SCRIPTPATH/../modules"`
 @}
+CDS=`readlink -f "$SCRIPTPATH/.."`/app.jsa
 
-$SCRIPTPATH/java --enable-preview#{hasModulePath ? " --module-path $MP" : ""}#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/#{mainClass} $@
+$SCRIPTPATH/java --enable-preview -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile=$CDS -Xlog:cds=error#{hasModulePath ? " --module-path $MP" : ""}#{classpath != null && !classpath.isEmpty() ? " -cp " + classpath : ""} -m #{rootModule}/#{mainClass} $@
 @end

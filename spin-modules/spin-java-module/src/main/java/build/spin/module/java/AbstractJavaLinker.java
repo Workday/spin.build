@@ -59,6 +59,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -333,7 +334,17 @@ public abstract class AbstractJavaLinker
 
             // jlink's --strip-debug shells out to the host's native objcopy, which can't parse a foreign
             // target's binaries (e.g. running x86_64 objcopy against aarch64 or Mach-O native libraries) —
-            // only strip when linking the host's own target
+            // only strip when linking the host's own target.
+            //
+            // Deliberately NOT using jlink's own --generate-cds-archive plugin: it dumps the base archive
+            // generically, with no knowledge of how the image is actually launched, so it records
+            // jdk.module.main as unset. Since every generated script launches with -m rootModule/mainClass,
+            // that mismatches at runtime and permanently disables CDS's "optimized module handling" / "full
+            // module graph" optimization on every single launch (dynamic archive or not) — confirmed via
+            // -Xlog:cds. dumpBaseCdsArchive() below re-derives the same archive ourselves, passing -m so the
+            // recorded module-main property actually matches the launch script, which measured ~20% faster
+            // than the jlink-plugin version. Same foreign-target restriction as --strip-debug applies: it
+            // executes the freshly-linked image's own java, which can't run a foreign target's binary.
             final List<build.base.configuration.Option> jlinkOptions = new ArrayList<>(List.of(
                 Executable.of(jlinkPath.toString()),
                 Name.of("jlink"),
@@ -365,6 +376,10 @@ public abstract class AbstractJavaLinker
                     throw new ProcessFailedException(
                         "Runtime Image Generation Failed (exit code: " + jlink.exitValue().orElse(-1) + ")",
                         ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+                }
+
+                if (isHostTarget) {
+                    dumpBaseCdsArchive(packagePath, rootModule, mainClass);
                 }
 
                 // -----
@@ -432,6 +447,60 @@ public abstract class AbstractJavaLinker
         }
 
         return packagePath;
+    }
+
+    // Dumps the base (static) CDS archive for a just-linked image ourselves, instead of using jlink's own
+    // --generate-cds-archive plugin.
+    //
+    // Why: that plugin (jdk.jlink's CDSPlugin, see jdk.jlink/jdk/tools/jlink/internal/plugins/CDSPlugin.java
+    // in the JDK source) always dumps with a bare `java -Xshare:dump` — no -m, no module, no main class, and
+    // it has no notion of --launcher either, so it can never know that every image spin links gets launched
+    // with `-m rootModule/mainClass` (see ScriptTemplate.jt). That leaves the archived jdk.module.main
+    // property unset. At every subsequent launch the JVM detects that the (unset) archived value doesn't
+    // match the `-m` argument actually supplied, logs a "Mismatched values for property jdk.module.main"
+    // warning, and permanently disables CDS's "full module graph" optimization for that run — confirmed
+    // directly against JDK 25 and current (post-25) jdk.jlink mainline via -Xlog:cds; this is not fixed
+    // upstream. Since spin already knows the exact `-m` invocation the generated script will use, dumping
+    // the archive here with that same rootModule/mainClass avoids the mismatch entirely and lets CDS's full
+    // optimization kick in — measured ~20% faster than the mismatched jlink-plugin archive in practice.
+    //
+    // This produces the same lib/server/classes.jsa location and dump mechanism (`-Xshare:dump`) as the
+    // jlink plugin — just with -m added — so ScriptTemplate.jt's -XX:+AutoCreateSharedArchive (which builds
+    // a dynamic app.jsa layered on top of this base archive at first real run) keeps working unchanged.
+    //
+    // Best-effort: CDS is a startup-time optimization, not a correctness requirement, so a failure here
+    // (e.g. an unusual JDK build without CDS support) is logged and swallowed rather than failing the link.
+    private void dumpBaseCdsArchive(final Path packagePath, final String rootModule, final String mainClass) {
+        final var javaPath = packagePath.resolve("bin/java");
+        final var recordingObserver = new RecordingSubscriber<String>();
+        final ErrorCapture captured = new ErrorCapture();
+
+        try (var dump = this.machine.launch(Application.class,
+            Executable.of(javaPath.toString()),
+            Name.of("java"),
+            Argument.of("--enable-preview"),
+            Argument.of("-Xshare:dump"),
+            Argument.of("-m"), Argument.of(rootModule + "/" + mainClass),
+            StandardOutputSubscriber.of(recordingObserver),
+            captured.triageSubscriber(
+                ((Predicate<String>) ErrorCapture::isJvmNoise).or(ErrorCapture::isCdsDumpNoise),
+                this.recorder::warn, this.recorder::error))) {
+
+            try {
+                dump.onExit().get();
+            } catch (final Exception e) {
+                throw new ProcessFailedException("CDS Base Archive Dump Failed",
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
+            }
+            if (dump.exitValue().orElse(0) != 0) {
+                throw new ProcessFailedException(
+                    "CDS Base Archive Dump Failed (exit code: " + dump.exitValue().orElse(-1) + ")",
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+            }
+        } catch (final Exception e) {
+            this.recorder.warn("[jlink] failed to dump CDS base archive for %s — startup will not benefit "
+                + "from class data sharing: %s", packagePath, e.getMessage());
+        }
     }
 
     private static void deleteDirectory(final Path dir) throws IOException {
