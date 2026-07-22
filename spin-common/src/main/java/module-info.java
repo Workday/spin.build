@@ -28,14 +28,14 @@ module build.spin.common {
     requires build.base.io;
     requires build.base.telemetry;
     requires build.codemodel.foundation;
-    requires build.codemodel.injection;
+    requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
     requires jakarta.inject;
 
-    opens build.spin.common to build.codemodel.injection;
-    opens build.spin.common.annotation to build.codemodel.injection;
-    opens build.spin.common.injection to build.codemodel.injection;
-    opens build.spin.common.task to build.codemodel.injection;
+    opens build.spin.common to build.codemodel.dependency.injection;
+    opens build.spin.common.annotation to build.codemodel.dependency.injection;
+    opens build.spin.common.injection to build.codemodel.dependency.injection;
+    opens build.spin.common.task to build.codemodel.dependency.injection;
 
     exports build.spin.common;
     exports build.spin.common.annotation;

@@ -115,7 +115,7 @@ class MavenModuleNaming {
      * <p>
      * Examples:
      * <ul>
-     *   <li>{@code build.codemodel:jdk-codemodel} → {@code build.codemodel.jdk}</li>
+     *   <li>{@code build.codemodel:codemodel-jdk} → {@code build.codemodel.jdk}</li>
      * </ul>
      * Returns empty if the suffix does not match or the artifactId has no hyphen.
      */

@@ -21,7 +21,7 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.injection.PostInject;
+import build.codemodel.dependency.injection.PostInject;
 import build.spin.Project;
 import build.spin.Resource;
 import jakarta.inject.Inject;

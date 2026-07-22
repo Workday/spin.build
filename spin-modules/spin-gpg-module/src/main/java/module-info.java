@@ -29,7 +29,7 @@ module build.spin.module.gpg {
     requires build.spin.module.configuration;
     requires jakarta.inject;
 
-    opens build.spin.module.gpg to build.codemodel.injection;
+    opens build.spin.module.gpg to build.codemodel.dependency.injection;
 
     exports build.spin.module.gpg;
 

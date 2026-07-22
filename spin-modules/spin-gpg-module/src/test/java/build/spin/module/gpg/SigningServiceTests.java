@@ -20,7 +20,7 @@ package build.spin.module.gpg;
  * #L%
  */
 
-import build.codemodel.injection.InjectionFramework;
+import build.codemodel.dependency.injection.InjectionFramework;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

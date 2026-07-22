@@ -24,8 +24,8 @@ import build.base.configuration.Configuration;
 import build.base.configuration.Option;
 import build.base.flow.Publicist;
 import build.base.telemetry.Telemetry;
-import build.codemodel.injection.Context;
-import build.codemodel.injection.InjectionFramework;
+import build.codemodel.dependency.injection.Context;
+import build.codemodel.dependency.injection.InjectionFramework;
 
 import java.nio.file.FileSystem;
 import java.nio.file.Path;
@@ -150,7 +150,7 @@ public interface Engine
     Program createProgram(Project project, Option... options);
 
     /**
-     * Closes the {@link Engine}, invoking any {@link build.codemodel.injection.PreDestroy} lifecycle
+     * Closes the {@link Engine}, invoking any {@link build.codemodel.dependency.injection.PreDestroy} lifecycle
      * methods on instantiated extension singletons in reverse dependency order.
      */
     @Override

@@ -2,7 +2,7 @@
 
 ## Codebase Overview
 
-**spin** is a script-free Java 25 build system that infers what to build by inspecting project structure via pluggable Extensions (discovered via JPMS `ServiceLoader`), then executes a dependency-ordered graph of `Task`s. Extensions auto-detect applicability, declare task dependencies via annotations (`@From`, `@After`, `@Before`, `@PreProcess`, `@PostProcess`), and are composed via a DI framework (`build.codemodel.injection`, Jakarta Inject compatible). spin is self-hosting: spin₁ builds spin₂ builds spin₃ during the Maven `prepare-package` phase.
+**spin** is a script-free Java 25 build system that infers what to build by inspecting project structure via pluggable Extensions (discovered via JPMS `ServiceLoader`), then executes a dependency-ordered graph of `Task`s. Extensions auto-detect applicability, declare task dependencies via annotations (`@From`, `@After`, `@Before`, `@PreProcess`, `@PostProcess`), and are composed via a DI framework (`build.codemodel.dependency.injection`, Jakarta Inject compatible). spin is self-hosting: spin₁ builds spin₂ builds spin₃ during the Maven `prepare-package` phase.
 
 **Stack:** Java 25, Maven multi-module, Eclipse Aether (artifact resolution), GraphQL Java, serve.build (HTTP/LSP), FreeMarker, JUnit 6.
 
@@ -35,7 +35,7 @@ For detailed architecture, see [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md).
 - Getters: `age()` not `getAge()`; `Stream` returns have no `get` prefix
 - Interface names: no `I` prefix; implementation classes: no `Impl` suffix; use `Default` prefix
 - Constructors: private or package-private; use Builder or static factory
-- DI via `build.codemodel.injection` everywhere
+- DI via `build.codemodel.dependency.injection` everywhere
 
 ## Key Gotchas
 

@@ -25,7 +25,7 @@ module build.spin.testing {
     requires build.base.foundation;
     requires build.base.option;
     requires build.base.telemetry;
-    requires build.codemodel.injection;
+    requires build.codemodel.dependency.injection;
     requires build.spin;
     requires build.spin.common;
     requires org.junit.jupiter.api;

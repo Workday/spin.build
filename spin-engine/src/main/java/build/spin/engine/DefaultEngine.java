@@ -32,19 +32,19 @@ import build.base.foundation.UniformResource;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.dependency.injection.Binder;
+import build.codemodel.dependency.injection.ConfigurationResolver;
+import build.codemodel.dependency.injection.Context;
+import build.codemodel.dependency.injection.DefaultOptionResolver;
+import build.codemodel.dependency.injection.InjectionFramework;
+import build.codemodel.dependency.injection.Module;
+import build.codemodel.dependency.injection.OptionalResolver;
+import build.codemodel.dependency.injection.QualifiedResolver;
+import build.codemodel.dependency.injection.Resolver;
+import build.codemodel.dependency.injection.SystemPropertyResolver;
+import build.codemodel.dependency.injection.ValueBinding;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.foundation.naming.NonCachingNameProvider;
-import build.codemodel.injection.Binder;
-import build.codemodel.injection.ConfigurationResolver;
-import build.codemodel.injection.Context;
-import build.codemodel.injection.DefaultOptionResolver;
-import build.codemodel.injection.InjectionFramework;
-import build.codemodel.injection.Module;
-import build.codemodel.injection.OptionalResolver;
-import build.codemodel.injection.QualifiedResolver;
-import build.codemodel.injection.Resolver;
-import build.codemodel.injection.SystemPropertyResolver;
-import build.codemodel.injection.ValueBinding;
 import build.codemodel.jdk.JDKCodeModel;
 import build.codemodel.jdk.TypeUsages;
 import build.spawn.platform.local.LocalMachine;
@@ -140,7 +140,7 @@ public final class DefaultEngine implements Engine {
 
     /**
      * The {@link Context}s in which each {@link Extension} instance was created, keyed by extension class.
-     * Stored so {@link #close()} can invoke {@link build.codemodel.injection.PreDestroy} lifecycle methods.
+     * Stored so {@link #close()} can invoke {@link build.codemodel.dependency.injection.PreDestroy} lifecycle methods.
      */
     private final LinkedHashMap<Class<? extends Extension>, Context> extensionContexts;
 
@@ -466,7 +466,7 @@ public final class DefaultEngine implements Engine {
      */
     /**
      * Core value bindings for the engine {@link Context}. Extracted as a {@link Module} so tests
-     * can override individual bindings via {@link build.codemodel.injection.Modules#override}.
+     * can override individual bindings via {@link build.codemodel.dependency.injection.Modules#override}.
      */
     record EngineModule(InjectionFramework framework, FileSystem fileSystem, Configuration optionsByType)
         implements Module {

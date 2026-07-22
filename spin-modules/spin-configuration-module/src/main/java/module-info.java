@@ -23,7 +23,7 @@ module build.spin.module.configuration {
     requires build.base.io;
     requires build.base.telemetry;
     requires build.codemodel.foundation;
-    requires build.codemodel.injection;
+    requires build.codemodel.dependency.injection;
     requires build.base.json;
     requires build.codemodel.jdk;
     requires build.spin;
@@ -32,7 +32,7 @@ module build.spin.module.configuration {
 
     exports build.spin.module.configuration;
 
-    opens build.spin.module.configuration to build.codemodel.injection;
+    opens build.spin.module.configuration to build.codemodel.dependency.injection;
 
     provides build.spin.Extension.MetaClass with
         build.spin.module.configuration.ConfigurationService.MetaClass,

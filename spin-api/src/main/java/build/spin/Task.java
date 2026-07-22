@@ -21,13 +21,13 @@ package build.spin;
  */
 
 import build.base.configuration.AbstractValueOption;
+import build.codemodel.dependency.injection.Context;
+import build.codemodel.dependency.injection.Dependency;
+import build.codemodel.dependency.injection.IndependentDependency;
+import build.codemodel.dependency.injection.InjectionFramework;
+import build.codemodel.dependency.injection.UnsatisfiedDependencyException;
+import build.codemodel.dependency.injection.ValueBinding;
 import build.codemodel.foundation.descriptor.FormalParameterDescriptor;
-import build.codemodel.injection.Context;
-import build.codemodel.injection.Dependency;
-import build.codemodel.injection.IndependentDependency;
-import build.codemodel.injection.InjectionFramework;
-import build.codemodel.injection.UnsatisfiedDependencyException;
-import build.codemodel.injection.ValueBinding;
 import build.codemodel.jdk.descriptor.MethodType;
 import build.codemodel.jdk.descriptor.Static;
 import build.codemodel.objectoriented.descriptor.AccessModifier;

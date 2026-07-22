@@ -23,7 +23,7 @@ package build.spin.module.modulesystem;
 import build.base.parsing.ParseException;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
-import build.codemodel.injection.PostInject;
+import build.codemodel.dependency.injection.PostInject;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.common.util.Globs;

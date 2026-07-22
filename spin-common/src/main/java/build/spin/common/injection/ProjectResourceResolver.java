@@ -20,11 +20,11 @@ package build.spin.common.injection;
  * #L%
  */
 
-import build.codemodel.injection.Binding;
-import build.codemodel.injection.ChainedResolver;
-import build.codemodel.injection.Dependency;
-import build.codemodel.injection.Resolver;
-import build.codemodel.injection.ValueBinding;
+import build.codemodel.dependency.injection.Binding;
+import build.codemodel.dependency.injection.ChainedResolver;
+import build.codemodel.dependency.injection.Dependency;
+import build.codemodel.dependency.injection.Resolver;
+import build.codemodel.dependency.injection.ValueBinding;
 import build.codemodel.jdk.TypeUsages;
 import build.spin.Project;
 import build.spin.Resource;

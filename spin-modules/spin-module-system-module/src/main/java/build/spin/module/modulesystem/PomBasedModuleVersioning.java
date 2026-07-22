@@ -22,9 +22,9 @@ package build.spin.module.modulesystem;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.dependency.injection.PostInject;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.foundation.naming.NonCachingNameProvider;
-import build.codemodel.injection.PostInject;
 import build.codemodel.jdk.JDKCodeModel;
 import build.spin.Project;
 import build.spin.Resource;
