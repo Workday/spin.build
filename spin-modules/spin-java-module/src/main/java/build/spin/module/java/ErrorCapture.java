@@ -73,6 +73,17 @@ public final class ErrorCapture {
     }
 
     /**
+     * Returns {@code true} for {@code -Xlog:cds} warning lines emitted by {@code -Xshare:dump}
+     * (e.g. {@code [0.123s][warning][cds] Skipping jdk/proxy2/$Proxy1: Unsupported location}).
+     * These use a lowercase, timestamp-bracketed format that {@link #isJvmNoise} doesn't recognize;
+     * dynamic-proxy and JFR-event classes are routinely and harmlessly ineligible for CDS archiving,
+     * so every static dump logs a batch of them regardless of application correctness.
+     */
+    public static boolean isCdsDumpNoise(final String line) {
+        return line.contains("[warning][cds]");
+    }
+
+    /**
      * Returns a {@link StandardErrorSubscriber} that routes each line to {@code warn} when
      * {@code isNoise} matches, or to {@code error} (and appends it) otherwise.
      */

@@ -266,6 +266,47 @@ public class JavaProjectTests {
     }
 
     @Test
+    @WorkspacePath("jlink-tainted")
+    void shouldDumpCdsBaseArchiveAlongsideTaintedRootModule(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // create a Program to build a jlink runtime image for the Workspace
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("jlink"));
+
+        // create a Task ExecutionCache for the Program
+        final AssetCache cache = DefaultAssetCache.create();
+
+        program.execute(cache);
+
+        // jlink() builds one runtime image per staged target platform (including foreign targets,
+        // for which dumpBaseCdsArchive is deliberately skipped) — locate the host's own image, since
+        // that's the only one dumpBaseCdsArchive actually runs against
+        final Path buildPath = workspace.path().resolve(".build");
+        final Path packagePath = buildPath.resolve(workspace.name() + "-" + JavaPlatform.hostTarget());
+        assertThat(packagePath).as("expected a host-target runtime image at [" + packagePath + "]").isDirectory();
+
+        // the fixture's own root module requires javax.inject, a real automatic module (no
+        // module-info.class) — jlink cannot link that into lib/modules, so it must have been left
+        // on an external runtime --module-path instead of silently dropped
+        final Path modulePath = packagePath.resolve("modules");
+        assertThat(modulePath).isDirectory();
+        try (var modules = Files.list(modulePath)) {
+            assertThat(modules.anyMatch(p -> p.getFileName().toString().startsWith("javax.inject")))
+                .as("expected the tainted javax.inject jar under [" + modulePath + "]")
+                .isTrue();
+        }
+
+        // dumpBaseCdsArchive must have been able to resolve "-m app/app.Main" against that external
+        // module-path (rather than failing with a module-not-found error) and produced a base archive
+        assertThat(packagePath.resolve("lib/server/classes.jsa")).exists();
+
+        // the generated launch script should point AutoCreateSharedArchive at app.jsa alongside it
+        final Path script = packagePath.resolve("bin/jlink-tainted.sh");
+        assertThat(script).exists();
+        assertThat(Files.readString(script)).contains("-XX:+AutoCreateSharedArchive");
+    }
+
+    @Test
     @WorkspacePath("jdeps")
     void getEarliestShouldReturnPresentOptional(final JavaPlatform platform) {
         assertThat(platform.getEarliest().isPresent()).as("getEarliest() should return a JDK but no JDKs were discovered").isTrue();
