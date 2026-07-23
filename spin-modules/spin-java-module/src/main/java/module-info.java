@@ -31,7 +31,7 @@ module build.spin.module.java {
     requires build.base.option;
     requires build.base.table;
     requires build.base.telemetry;
-    requires build.codemodel.injection;
+    requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
     requires build.spawn.application;
     requires build.spawn.jdk;
@@ -44,7 +44,7 @@ module build.spin.module.java {
 
     uses build.spawn.platform.local.jdk.JDKDetector;
 
-    opens build.spin.module.java to build.codemodel.injection;
+    opens build.spin.module.java to build.codemodel.dependency.injection;
 
     exports build.spin.module.java;
 

@@ -1,7 +1,7 @@
 package build.spin.common;
 
 import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.injection.Context;
+import build.codemodel.dependency.injection.Context;
 import build.spin.Invocable;
 import build.spin.Plugin;
 import build.spin.Project;

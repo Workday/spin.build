@@ -20,10 +20,10 @@ package build.spin.common.injection;
  * #L%
  */
 
-import build.codemodel.injection.InjectionFramework;
-import build.codemodel.injection.Resolver;
-import build.codemodel.injection.UnsatisfiedDependencyException;
-import build.codemodel.injection.ValueBinding;
+import build.codemodel.dependency.injection.InjectionFramework;
+import build.codemodel.dependency.injection.Resolver;
+import build.codemodel.dependency.injection.UnsatisfiedDependencyException;
+import build.codemodel.dependency.injection.ValueBinding;
 import build.codemodel.jdk.TypeUsages;
 import build.spin.Project;
 import build.spin.Resource;

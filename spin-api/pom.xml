@@ -48,17 +48,17 @@
 
         <dependency>
             <groupId>build.codemodel</groupId>
-            <artifactId>objectoriented-codemodel</artifactId>
+            <artifactId>codemodel-objectoriented</artifactId>
         </dependency>
 
         <dependency>
             <groupId>build.codemodel</groupId>
-            <artifactId>jdk-codemodel</artifactId>
+            <artifactId>codemodel-jdk</artifactId>
         </dependency>
 
         <dependency>
             <groupId>build.codemodel</groupId>
-            <artifactId>dependency-injection</artifactId>
+            <artifactId>codemodel-dependency-injection</artifactId>
         </dependency>
 
         <dependency>

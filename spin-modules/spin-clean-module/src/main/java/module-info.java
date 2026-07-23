@@ -22,7 +22,7 @@ module build.spin.module.clean {
     requires build.spin;
     requires jakarta.inject;
 
-    opens build.spin.module.clean to build.codemodel.injection;
+    opens build.spin.module.clean to build.codemodel.dependency.injection;
 
     exports build.spin.module.clean;
 

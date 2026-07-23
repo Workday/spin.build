@@ -24,7 +24,7 @@ module build.spin.module.reporting {
     requires build.spin.common;
     requires jakarta.inject;
 
-    opens build.spin.module.reporting to build.codemodel.injection;
+    opens build.spin.module.reporting to build.codemodel.dependency.injection;
 
     exports build.spin.module.reporting;
 

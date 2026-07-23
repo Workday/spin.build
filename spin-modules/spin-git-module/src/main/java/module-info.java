@@ -21,7 +21,7 @@
 module build.spin.module.git {
     requires build.spin;
 
-    opens build.spin.module.git to build.codemodel.injection;
+    opens build.spin.module.git to build.codemodel.dependency.injection;
 
     exports build.spin.module.git;
 

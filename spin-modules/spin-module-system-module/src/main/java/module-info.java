@@ -25,13 +25,13 @@ module build.spin.module.modulesystem {
     requires build.base.parsing;
     requires build.base.telemetry;
     requires java.xml;
-    requires build.codemodel.injection;
+    requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
     requires build.spin;
     requires build.spin.common;
     requires jakarta.inject;
 
-    opens build.spin.module.modulesystem to build.codemodel.injection;
+    opens build.spin.module.modulesystem to build.codemodel.dependency.injection;
 
     exports build.spin.module.modulesystem;
     exports build.spin.module.modulesystem.pom;

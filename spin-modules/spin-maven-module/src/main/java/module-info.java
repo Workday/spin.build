@@ -32,13 +32,13 @@ module build.spin.module.maven {
     requires build.base.io;
     requires build.base.option;
     requires build.base.telemetry;
-    requires build.codemodel.injection;
+    requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
     requires build.spin;
     requires build.spin.module.clean;
     requires jakarta.inject;
 
-    opens build.spin.module.maven to build.codemodel.injection;
+    opens build.spin.module.maven to build.codemodel.dependency.injection;
 
     exports build.spin.module.maven;
 
