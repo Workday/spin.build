@@ -1,6 +1,7 @@
 package build.spin.module.java.tests;
 
 import build.base.assertion.Eventually;
+import build.base.configuration.Option;
 import build.base.flow.CompletingSubscriber;
 import build.base.flow.RecordingSubscriber;
 import build.base.foundation.Strings;
@@ -55,14 +56,17 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Stack;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -364,7 +368,6 @@ public class JavaProjectTests {
 
         final var artifactModuleDescriptors = new LinkedHashMap<Artifact, JDKModuleDescriptor>();
         final var artifactPaths = new LinkedHashMap<Artifact, Path>();
-        final var classPathBuilder = PathSetBuilder.create();
 
         var initial = ModuleReference.of("build.spawn.platform.local",
             Version.parse("0.1.0"));
@@ -383,7 +386,6 @@ public class JavaProjectTests {
                 if (!artifactPaths.containsKey(artifact)) {
                     var path = repository.resolve(artifact).orElseThrow(() -> new AssertionError("Failed to resolve path for artifact [" + artifact + "]"));
                     artifactPaths.put(artifact, path);
-                    classPathBuilder.add(path);
                 }
 
                 // obtain the ModuleDescriptor
@@ -413,36 +415,25 @@ public class JavaProjectTests {
         // create the module path
         Files.createDirectories(modulePath);
 
-        // deduplicate by module name, keeping the highest version (avoids "two versions of module X found" jdeps errors)
-        final var deduplicated = new LinkedHashMap<String, Map.Entry<Artifact, Path>>();
-        artifactPaths.entrySet().forEach(entry -> {
-            var descriptor = artifactModuleDescriptors.get(entry.getKey());
-            var moduleName = descriptor != null ? descriptor.moduleName().toString() : entry.getKey().artifactId();
-            var existing = deduplicated.get(moduleName);
-            if (existing == null) {
-                deduplicated.put(moduleName, entry);
-            }
-            else {
-                var existingVersion = Version.parse(existing.getKey().version().get());
-                var newVersion = Version.parse(entry.getKey().version().get());
-                if (newVersion.compareTo(existingVersion) > 0) {
-                    deduplicated.put(moduleName, entry);
-                }
-            }
-        });
-
-        // classify and de-conflict: named modules go to module-path; demoted/superseded go to classpath
-        final var allPaths = deduplicated.values().stream().map(Map.Entry::getValue).toList();
+        // classify and de-conflict: named modules go to module-path; demoted/superseded go to classpath.
+        // Same-module/different-version jars share identical package sets, so resolveConflicts's own
+        // version-dedupe tier (grouping by base name, keeping the newest) already avoids the "two
+        // versions of module X found" jdeps error without a separate hand-rolled dedupe pass here.
+        final var allPaths = artifactPaths.values().stream().toList();
         final var resolution = ModuleGraphClassifier.resolveConflicts(allPaths, java.util.Set.of(), msg -> {});
 
-        // copy non-conflicting named jars to the module path — intentionally named-only here
-        // because jdeps does not resolve modules by filename-derived names the way javac does;
-        // plain unnamed jars on a jdeps --module-path cause "module not found" errors at analysis
-        // time rather than silently becoming automatic modules. ModuleGraphClassifier.classify
-        // promotes all non-conflicting jars (including filename-derived automatics) for javac.
+        // a jar goes on the module path — intentionally named-only here because jdeps does not
+        // resolve modules by filename-derived names the way javac does; plain unnamed jars on a
+        // jdeps --module-path cause "module not found" errors at analysis time rather than silently
+        // becoming automatic modules. ModuleGraphClassifier.classify promotes all non-conflicting
+        // jars (including filename-derived automatics) for javac. Everything else — unnamed,
+        // superseded, or demoted — belongs on the classpath instead, never both, so the same jar
+        // never appears at two different paths and trips jdeps's split-package detection.
+        final Predicate<Path> onModulePath = source -> ModuleGraphClassifier.isNamedModule(source)
+            && !resolution.superseded().contains(source) && !resolution.demoted().contains(source);
+
         allPaths.stream()
-            .filter(ModuleGraphClassifier::isNamedModule)
-            .filter(source -> !resolution.superseded().contains(source) && !resolution.demoted().contains(source))
+            .filter(onModulePath)
             .forEach(source -> {
                 try {
                     Files.copy(source, modulePath.resolve(source.getFileName()));
@@ -457,7 +448,9 @@ public class JavaProjectTests {
         // obtain the top-level dependency to analyze
         var dependencyPath = artifactPaths.values().stream().findFirst().orElseThrow(() -> new AssertionError("Expected at least one resolved artifact path but artifactPaths was empty"));
 
-        // build the classpath PathSet (containing the dependencies)
+        // build the classpath PathSet (containing only the jars that didn't go on the module path)
+        final var classPathBuilder = PathSetBuilder.create();
+        allPaths.stream().filter(onModulePath.negate()).forEach(classPathBuilder::add);
         var classPathSet = classPathBuilder.build();
         var classPath = Streams.reverse(classPathSet.stream())
             .map(Path::toString)
@@ -480,20 +473,27 @@ public class JavaProjectTests {
         var recordingObserver = new RecordingSubscriber<String>();
         var stdoutObserver = StandardOutputSubscriber.of(recordingObserver);
 
-        try (var jdeps = machine.launch(Application.class,
-            Executable.of(jdepsPath.toString()),
-            Name.of("jdeps"),
-            Argument.of("--module-path"), Argument.of(modulePath),
-            Argument.of("--class-path"), Argument.of(classPath),
-            Argument.of("--list-deps"),
-            Argument.of("--ignore-missing-deps"),
-            Argument.of("--multi-release"), Argument.of(jdk.version().major()),
-            //            Argument.of("--recursive"),
-            //            Argument.of("--add-modules"), Argument.of(moduleNames),
-            //            Argument.of(dependencyPath),
-            Argument.of("--module"), Argument.of(initial.name()),
-            Console.ofSystem(),
-            stdoutObserver)) {
+        // --class-path is omitted entirely when empty (e.g. every dependency landed on the
+        // module path) — jdeps errors with "no value given for --class-path" on an empty value
+        final List<Option> jdepsOptions = new ArrayList<>();
+        jdepsOptions.add(Executable.of(jdepsPath.toString()));
+        jdepsOptions.add(Name.of("jdeps"));
+        jdepsOptions.add(Argument.of("--module-path"));
+        jdepsOptions.add(Argument.of(modulePath));
+        if (!classPath.isEmpty()) {
+            jdepsOptions.add(Argument.of("--class-path"));
+            jdepsOptions.add(Argument.of(classPath));
+        }
+        jdepsOptions.add(Argument.of("--list-deps"));
+        jdepsOptions.add(Argument.of("--ignore-missing-deps"));
+        jdepsOptions.add(Argument.of("--multi-release"));
+        jdepsOptions.add(Argument.of(jdk.version().major()));
+        jdepsOptions.add(Argument.of("--module"));
+        jdepsOptions.add(Argument.of(initial.name()));
+        jdepsOptions.add(Console.ofSystem());
+        jdepsOptions.add(stdoutObserver);
+
+        try (var jdeps = machine.launch(Application.class, jdepsOptions.toArray(Option[]::new))) {
 
             Eventually.assertThat(jdeps.onExit()).isCompleted();
             assertThat(jdeps.exitValue().orElseThrow(() -> new AssertionError("jdeps process has no exit value — it may not have terminated"))).isEqualTo(0);
