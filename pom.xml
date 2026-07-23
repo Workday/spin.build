@@ -115,6 +115,7 @@
         <module>spin-modules</module>
         <module>spin-maven-plugin</module>
         <module>spin-testing</module>
+        <module>spin-integration-tests</module>
     </modules>
 
     <dependencyManagement>

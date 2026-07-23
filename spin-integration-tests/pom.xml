@@ -1,0 +1,77 @@
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>build.spin</groupId>
+        <artifactId>project</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>spin-integration-tests</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Spin Integration Tests</name>
+
+    <!--
+      True end-to-end tests that launch the real, already-built spin runtime image
+      (spin/.build/spin-<os>-<arch>/bin/spin.sh, produced by spin's own self-hosting build in
+      spin/pom.xml) as a subprocess against sample fixture projects, instead of exercising
+      spin's Engine in-process on the JVM running the test suite.
+
+      This exists because some bugs only manifest when spin is actually *running from* its own
+      self-hosted, trimmed jlink image — e.g. a supplemental JPMS ModuleFinder that reads
+      ModuleFinder.ofSystem() (the currently-running JVM's own modules) instead of a target
+      JDK's real jmods/ directory will resolve fine in an in-process JUnit test (which always
+      runs on a full, untrimmed JDK) but fail once spin links its own image without a dev-tool
+      module like jdk.compiler. Only launching the real spin.sh reproduces that.
+
+      This module must build AFTER spin/pom.xml's self-hosting step has produced a fresh
+      runtime image, so it declares an otherwise-unused test dependency on build.spin:spin
+      purely to force that reactor ordering (see maven-dependency-plugin configuration below).
+    -->
+    <properties>
+        <central.publishing.skip>true</central.publishing.skip>
+    </properties>
+
+    <dependencies>
+        <!-- Unused directly: forces this module to build after spin's self-hosting step so
+             spin/.build/spin-<os>-<arch>/ reflects the current source tree. -->
+        <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin</artifactId>
+            <version>${revision}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <configuration>
+                    <ignoredUnusedDeclaredDependencies>
+                        <!-- reactor-ordering-only, see the dependency comment above -->
+                        <ignoredUnusedDeclaredDependency>build.spin:spin</ignoredUnusedDeclaredDependency>
+                    </ignoredUnusedDeclaredDependencies>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
