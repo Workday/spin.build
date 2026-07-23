@@ -539,7 +539,9 @@ public abstract class AbstractJavaDependencyAnalysis
             recordingObserver.items()
                 .map(String::trim)
                 .filter(line -> !line.contains(" "))
-                .forEach(moduleName -> {
+                .forEach(line -> {
+                    final var moduleName = moduleNameFromListDepsLine(line);
+
                     if (JavaPlatform.isJavaPlatformModule(moduleName)) {
                         final ModuleReference reference = ModuleReference.of(moduleName, jdkVersion);
                         platformModules.add(reference);
@@ -636,6 +638,24 @@ public abstract class AbstractJavaDependencyAnalysis
                 }
             };
         }
+    }
+
+    /**
+     * Extracts the module name from a {@code jdeps --list-deps} output line.
+     *
+     * <p>{@code jdeps} prints {@code <module>/<package>} instead of plain {@code <module>}
+     * whenever the package isn't part of the module's default (unconditional) export surface —
+     * either because it's a qualified export ({@code exports pkg to other.module;}, as with two
+     * workspace modules like {@code com.example.library}/{@code com.example.app}) or a fully
+     * internal, unexported package (e.g. JDK internal APIs). The module name is always the
+     * portion before the first {@code /}.
+     *
+     * @param line a single trimmed, space-free line from {@code jdeps --list-deps} output
+     * @return the module name, with any {@code /package} suffix removed
+     */
+    static String moduleNameFromListDepsLine(final String line) {
+        final int slash = line.indexOf('/');
+        return slash < 0 ? line : line.substring(0, slash);
     }
 
     /**
