@@ -222,9 +222,16 @@ public abstract class AbstractJavaLinker
         final var rootModule = this.descriptor.moduleName().toString();
 
         // Prefer classifyAndResolve so unreachable jars are pruned from the module-path.
-        // When spin runs from its own jlink image ModuleFinder.ofSystem() only covers
-        // spin's modules, so resolving an app that requires JDK modules outside that
-        // image (e.g. java.net.http) will fail — fall back to classify-only in that case.
+        // The supplemental finder must reflect the *target* JDK's full module set, not
+        // ModuleFinder.ofSystem() -- spin itself typically runs from its own jlinked runtime
+        // image, which only contains the modules spin needs, so resolving an app that requires
+        // JDK modules outside that image would otherwise fail. JmodModuleFinder reads real
+        // descriptors straight out of the target's jmods/ (falling back to ModuleFinder.ofSystem()
+        // only when there's no jmods/ dir to read, e.g. a JRE).
+        final var targetJdkFinder = Files.isDirectory(jmodsDir)
+            ? JmodModuleFinder.of(jmodsDir)
+            : ModuleFinder.ofSystem();
+
         ModuleGraphClassifier.Classification classification;
         try {
             classification = ModuleGraphClassifier.classifyAndResolve(
@@ -232,7 +239,7 @@ public abstract class AbstractJavaLinker
                 Set.of(rootModule),
                 rootModule,
                 Configuration.empty(),
-                ModuleFinder.ofSystem(),
+                targetJdkFinder,
                 msg -> this.recorder.info("[classify] %s", msg));
         } catch (final IllegalStateException e) {
             this.recorder.warn("[classify] classifyAndResolve failed (%s) — falling back to classify-only; "
