@@ -224,6 +224,45 @@ class AbstractJavaDependencyAnalysisTest {
             "build.base.parsing", Optional.empty(), seen)).isFalse();
     }
 
+    // -------------------------------------------------------------------------
+    // moduleNameFromListDepsLine
+    // -------------------------------------------------------------------------
+
+    @Test
+    void moduleNameFromListDepsLine_plainModuleName_returnsUnchanged() {
+        assertThat(AbstractJavaDependencyAnalysis.moduleNameFromListDepsLine("java.base"))
+            .isEqualTo("java.base");
+    }
+
+    @Test
+    void moduleNameFromListDepsLine_qualifiedExportLine_returnsModulePortion() {
+        // jdeps prints "module/package" instead of plain "module" whenever the package isn't
+        // part of the module's default export surface — e.g. a workspace module com.example.library
+        // with "exports com.example.library to com.example.app;" is reported as
+        // "com.example.library/com.example.library" when depended on by com.example.app.
+        assertThat(AbstractJavaDependencyAnalysis.moduleNameFromListDepsLine(
+            "com.example.library/com.example.library")).isEqualTo("com.example.library");
+    }
+
+    @Test
+    void moduleNameFromListDepsLine_jdkInternalApiLine_returnsModulePortion() {
+        // The same "module/package" shape also appears for fully internal, unexported JDK
+        // packages (e.g. sun.security.x509), distinct from the qualified-export case above.
+        assertThat(AbstractJavaDependencyAnalysis.moduleNameFromListDepsLine(
+            "java.base/sun.security.x509")).isEqualTo("java.base");
+    }
+
+    @Test
+    void moduleNameFromListDepsLine_multipleSlashes_splitsOnFirst() {
+        assertThat(AbstractJavaDependencyAnalysis.moduleNameFromListDepsLine(
+            "java.base/sun.security.x509/extra")).isEqualTo("java.base");
+    }
+
+    @Test
+    void moduleNameFromListDepsLine_emptyLine_returnsEmpty() {
+        assertThat(AbstractJavaDependencyAnalysis.moduleNameFromListDepsLine("")).isEqualTo("");
+    }
+
     private static ArtifactDescriptor descriptor(final String groupId,
                                                  final String artifactId,
                                                  final String version,
