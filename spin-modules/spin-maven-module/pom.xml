@@ -220,17 +220,30 @@
 
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <!-- keeps testCompile in classpath mode rather than patching test classes into the
+                             build.spin.module.maven named module: ReposiliteApplication/ReposiliteSpecification
+                             (test-only) extend types from build.spawn.jdk, which isn't (and shouldn't need to
+                             be) a "requires" of the main module, since production code never uses Spawn.
+                             Module-path test compilation is otherwise flaky in CI: it has intermittently
+                             failed to resolve build.codemodel.injection (a main-scope dependency, already
+                             readable from the main module) for test sources, despite the identical module
+                             graph compiling cleanly moments earlier for main sources in the same build. -->
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <useModulePath>false</useModulePath>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- keeps surefire in classpath mode rather than patching test classes into the
-                         build.spin.module.maven named module: ReposiliteApplication/ReposiliteSpecification
-                         (test-only) extend types from build.spawn.jdk, which isn't (and shouldn't need to be)
-                         a "requires" of the main module, since production code never uses Spawn.
-                         (src/test/resources/META-INF/services/jakarta.el.ExpressionFactory and
-                         .../build.spawn.application.LauncherRegistration restore, for classpath-mode
-                         ServiceLoader, providers that base-expression's and spawn-local-jdk's module-info.java
-                         otherwise only advertise via a JPMS "provides" clause — needed by Spawn's own
-                         Application launch machinery.) -->
+                    <!-- keeps surefire in classpath mode for the same reason as testCompile above -->
                     <useModulePath>false</useModulePath>
                     <argLine>-XX:+EnableDynamicAgentLoading -javaagent:${org.mockito:mockito-core:jar}</argLine>
                 </configuration>
