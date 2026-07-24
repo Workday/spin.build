@@ -23,6 +23,7 @@ package build.spin.module.maven;
 import build.base.io.PathSet;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.injection.InjectionFramework;
+import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.common.injection.ProjectResourceResolver;
@@ -38,7 +39,6 @@ import org.w3c.dom.Document;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
 import java.util.Optional;
 import java.util.stream.Stream;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -143,15 +143,17 @@ class MavenPluginTests {
     /**
      * Ensure {@link MavenPlugin.Publish} uploads the jar, sources jar, javadoc jar, and pom.xml (as
      * {@code artifactId-version.pom}, not the local {@code pom.xml} filename) to the correct Maven-repository
-     * relative paths.
+     * relative paths, retrievable afterward from the repository.
      */
     @Test
     void shouldPublishArtifactsAndPomToRepository(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var server = new PutServerFixture(200)) {
+        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+            reposilite.onStart().get();
+
             final var task = createPublishTask(
-                Optional.of("http://localhost:" + server.port()), Optional.empty(), Optional.empty());
+                reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
 
             final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
             final var sourcesFile = Files.writeString(tempDir.resolve("app-1.0-sources.jar"), "sources");
@@ -168,18 +170,18 @@ class MavenPluginTests {
             assertThat(published.stream().toList())
                 .containsExactlyInAnyOrder(jarFile, sourcesFile, javadocFile, pomFile);
 
-            final var paths = server.requests().stream().map(PutServerFixture.Request::path).toList();
-
-            assertThat(paths)
-                .contains(
-                    "/group/app/1.0/app-1.0.jar",
-                    "/group/app/1.0/app-1.0.jar.sha1",
-                    "/group/app/1.0/app-1.0-sources.jar",
-                    "/group/app/1.0/app-1.0-sources.jar.sha1",
-                    "/group/app/1.0/app-1.0-javadoc.jar",
-                    "/group/app/1.0/app-1.0-javadoc.jar.sha1",
-                    "/group/app/1.0/app-1.0.pom",
-                    "/group/app/1.0/app-1.0.pom.sha1");
+            assertThat(reposilite.get("group/app/1.0/app-1.0.jar").body())
+                .isEqualTo("jar");
+            assertThat(reposilite.get("group/app/1.0/app-1.0-sources.jar").body())
+                .isEqualTo("sources");
+            assertThat(reposilite.get("group/app/1.0/app-1.0-javadoc.jar").body())
+                .isEqualTo("javadoc");
+            assertThat(reposilite.get("group/app/1.0/app-1.0.pom").body())
+                .isEqualTo("pom");
+            assertThat(reposilite.get("group/app/1.0/app-1.0.jar.sha1").statusCode())
+                .isEqualTo(200);
+            assertThat(reposilite.get("group/app/1.0/app-1.0.pom.sha1").statusCode())
+                .isEqualTo(200);
         }
     }
 
@@ -191,9 +193,11 @@ class MavenPluginTests {
     void shouldPublishSignaturesWhenPresent(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var server = new PutServerFixture(200)) {
+        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+            reposilite.onStart().get();
+
             final var task = createPublishTask(
-                Optional.of("http://localhost:" + server.port()), Optional.empty(), Optional.empty());
+                reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
 
             final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
             final var sourcesFile = Files.writeString(tempDir.resolve("app-1.0-sources.jar"), "sources");
@@ -212,56 +216,58 @@ class MavenPluginTests {
                 pomFile,
                 Optional.of(signatures));
 
-            final var paths = server.requests().stream().map(PutServerFixture.Request::path).toList();
-
-            assertThat(paths)
-                .contains("/group/app/1.0/app-1.0.jar.asc", "/group/app/1.0/app-1.0.jar.asc.sha1");
+            assertThat(reposilite.get("group/app/1.0/app-1.0.jar.asc").body())
+                .isEqualTo("sig");
+            assertThat(reposilite.get("group/app/1.0/app-1.0.jar.asc.sha1").statusCode())
+                .isEqualTo(200);
         }
     }
 
     /**
-     * Ensure {@link MavenPlugin.Publish} includes an {@code Authorization} header when both
-     * {@code repository.username} and {@code repository.password} are configured.
+     * Ensure {@link MavenPlugin.Publish} succeeds when the configured {@code repository.username}/
+     * {@code repository.password} are valid, proving the {@code Authorization} header was correctly sent
+     * and accepted (Reposilite rejects unauthenticated/incorrectly-authenticated writes).
      */
     @Test
-    void shouldIncludeAuthorizationHeaderWhenCredentialsConfigured(@TempDir final Path tempDir)
+    void shouldSucceedWhenCredentialsAreValid(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var server = new PutServerFixture(200)) {
+        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+            reposilite.onStart().get();
+
             final var task = createPublishTask(
-                Optional.of("http://localhost:" + server.port()),
-                Optional.of("alice"),
-                Optional.of("secret"));
+                reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
 
             final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
+            final var sourcesFile = Files.writeString(tempDir.resolve("app-1.0-sources.jar"), "sources");
+            final var javadocFile = Files.writeString(tempDir.resolve("app-1.0-javadoc.jar"), "javadoc");
             final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
 
-            task.publish(
+            final var published = task.publish(
                 ArtifactDescriptor.create(REFERENCE, artifact(null), jarFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("sources"), jarFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("javadoc"), jarFile),
+                ArtifactDescriptor.create(REFERENCE, artifact("sources"), sourcesFile),
+                ArtifactDescriptor.create(REFERENCE, artifact("javadoc"), javadocFile),
                 pomFile,
                 Optional.empty());
 
-            final var expectedHeader = "Basic "
-                + Base64.getEncoder().encodeToString("alice:secret".getBytes());
-
-            assertThat(server.requests())
-                .extracting(PutServerFixture.Request::authorization)
-                .containsOnly(Optional.of(expectedHeader));
+            assertThat(published.isEmpty())
+                .isFalse();
         }
     }
 
     /**
-     * Ensure {@link MavenPlugin.Publish} throws when an upload fails.
+     * Ensure {@link MavenPlugin.Publish} throws when an upload fails (here: rejected due to incorrect
+     * credentials).
      */
     @Test
     void shouldThrowWhenUploadFails(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var server = new PutServerFixture(500)) {
+        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+            reposilite.onStart().get();
+
             final var task = createPublishTask(
-                Optional.of("http://localhost:" + server.port()), Optional.empty(), Optional.empty());
+                reposilite, Optional.of(reposilite.username().get()), Optional.of("wrong-password"));
 
             final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
             final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
@@ -273,6 +279,13 @@ class MavenPluginTests {
                 pomFile,
                 Optional.empty()));
         }
+    }
+
+    private static MavenPlugin.Publish createPublishTask(final ReposiliteApplication reposilite,
+                                                         final Optional<String> username,
+                                                         final Optional<String> password) {
+
+        return createPublishTask(Optional.of(reposilite.repositoryUrl()), username, password);
     }
 
     private static MavenPlugin.Publish createPublishTask(final Optional<String> url,
