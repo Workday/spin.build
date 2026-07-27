@@ -167,9 +167,9 @@
             </plugin>
 
             <plugin>
-                <groupId>build.spin</groupId>
-                <artifactId>spin-maven-plugin</artifactId>
-                <version>${revision}</version>
+                <groupId>build.percolate</groupId>
+                <artifactId>percolate-maven-exec-plugin</artifactId>
+                <version>${percolate.version}</version>
                 <executions>
                     <!-- Maven builds spin₁; spin₁ builds spin₂ (jlink image) -->
                     <execution>

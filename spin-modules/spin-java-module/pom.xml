@@ -132,6 +132,11 @@
         </dependency>
 
         <dependency>
+            <groupId>build.percolate</groupId>
+            <artifactId>percolate-core</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>build.base</groupId>
             <artifactId>base-template-processor</artifactId>
             <scope>provided</scope>

@@ -20,7 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
-import build.spin.module.modulesystem.ModuleGraphClassifier;
+import build.percolate.core.ModuleGraphClassifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -157,7 +157,8 @@ class JmodModuleFinderTest {
             "the.root.module",
             Configuration.empty(),
             noCompilerOnBoard,
-            msg -> { }))
+            msg -> {
+            }))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("Module jdk.compiler not found")
             .hasMessageContaining("the.root.module");
@@ -182,7 +183,8 @@ class JmodModuleFinderTest {
             "the.root.module",
             Configuration.empty(),
             supplementalFinder,
-            msg -> { });
+            msg -> {
+            });
 
         assertThat(classification.modulePath()).containsExactly(rootJar);
     }

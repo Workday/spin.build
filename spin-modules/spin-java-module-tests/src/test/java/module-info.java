@@ -25,6 +25,7 @@ module build.spin.java.module.tests.test {
     requires build.base.io;
     requires build.base.option;
     requires build.base.telemetry;
+    requires build.percolate.core;
     requires build.spawn.application;
     requires build.spawn.jdk;
     requires build.spawn.platform.local;

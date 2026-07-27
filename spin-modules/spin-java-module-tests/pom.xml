@@ -145,6 +145,12 @@
         </dependency>
 
         <dependency>
+            <groupId>build.percolate</groupId>
+            <artifactId>percolate-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
             <groupId>build.spawn</groupId>
             <artifactId>spawn-application</artifactId>
             <scope>test</scope>
@@ -194,9 +200,9 @@
                  their helper siblings. Seed comes from the direct dependency module names
                  (this module has no source module-info.java of its own). -->
             <plugin>
-                <groupId>build.spin</groupId>
-                <artifactId>spin-maven-plugin</artifactId>
-                <version>${revision}</version>
+                <groupId>build.percolate</groupId>
+                <artifactId>percolate-maven-classify-plugin</artifactId>
+                <version>${percolate.version}</version>
                 <executions>
                     <execution>
                         <id>classify-test-compile</id>
@@ -228,9 +234,9 @@
                             <useModulePath>false</useModulePath>
                             <compilerArgs>
                                 <arg>--module-path</arg>
-                                <arg>${spin.classify.test.modulepath}</arg>
+                                <arg>${percolate.classify.test.modulepath}</arg>
                                 <arg>--class-path</arg>
-                                <arg>${spin.classify.test.classpath}</arg>
+                                <arg>${percolate.classify.test.classpath}</arg>
                             </compilerArgs>
                         </configuration>
                     </execution>
@@ -266,7 +272,7 @@
                          `org.junit.platform.commons.util.Preconditions`, named-module
                          strong encapsulation denies access. Opening `util` to the unnamed
                          module is the standard JPMS escape hatch for this scenario. -->
-                    <argLine>${surefire.jvm.args} --add-exports=org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED --add-exports=org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED @${project.build.directory}/spin-classify-test.args</argLine>
+                    <argLine>${surefire.jvm.args} --add-exports=org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED --add-exports=org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED @${project.build.directory}/percolate-classify-test.args</argLine>
                 </configuration>
             </plugin>
             <plugin>

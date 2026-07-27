@@ -77,6 +77,7 @@
         <jakarta.inject.version>2.0.1</jakarta.inject.version>
         <junit.version>6.0.3</junit.version>
         <mockito.version>5.23.0</mockito.version>
+        <percolate.version>0.1.0</percolate.version>
         <spawn.version>0.3.1</spawn.version>
 
         <!-- Plugin Dependency Versions -->
@@ -113,7 +114,6 @@
         <module>spin-common</module>
         <module>spin-engine</module>
         <module>spin-modules</module>
-        <module>spin-maven-plugin</module>
         <module>spin-testing</module>
         <module>spin-integration-tests</module>
     </modules>
@@ -328,6 +328,22 @@
                 <groupId>build.base</groupId>
                 <artifactId>base-template-processor</artifactId>
                 <version>${base.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>build.percolate</groupId>
+                <artifactId>percolate-core</artifactId>
+                <version>${percolate.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>build.percolate</groupId>
+                <artifactId>percolate-maven-classify-plugin</artifactId>
+                <version>${percolate.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>build.percolate</groupId>
+                <artifactId>percolate-maven-exec-plugin</artifactId>
+                <version>${percolate.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

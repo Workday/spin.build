@@ -26,6 +26,7 @@ import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.template.TextOut;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.percolate.core.ModuleGraphClassifier;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
@@ -38,7 +39,6 @@ import build.spin.Task;
 import build.spin.annotation.System;
 import build.spin.common.ProcessFailedException;
 import build.spin.module.modulesystem.Artifact;
-import build.spin.module.modulesystem.ModuleGraphClassifier;
 import build.spin.module.modulesystem.ModuleReference;
 import jakarta.inject.Inject;
 
