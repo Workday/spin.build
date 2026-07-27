@@ -36,6 +36,18 @@
 
         <dependency>
             <groupId>build.spin.module</groupId>
+            <artifactId>spin-configuration-module</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin.module</groupId>
+            <artifactId>spin-gpg-module</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin.module</groupId>
             <artifactId>spin-java-module</artifactId>
             <version>${revision}</version>
         </dependency>
@@ -106,7 +118,45 @@
             <artifactId>jakarta.inject-api</artifactId>
         </dependency>
 
+        <!-- must be at compile scope (not test): spin-api declares "requires transitive
+             build.base.flow", so javac/javadoc require base-flow on the module path even though
+             this module only uses it (StandardOutputSubscriber's Subscriber lambda) in test code -->
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-flow</artifactId>
+        </dependency>
+
         <!-- Test Dependencies -->
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-application</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-jdk</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-local-jdk</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-local-platform</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-network</artifactId>
+            <scope>test</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.assertj</groupId>
@@ -117,6 +167,12 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -131,7 +187,57 @@
                     <ignoredNonTestScopedDependencies>
                         <!-- required at compile scope; only directly used in test code -->
                         <ignoredNonTestScopedDependency>build.spin:spin-common</ignoredNonTestScopedDependency>
+                        <!-- required at compile scope (transitively required by spin-api's module-info.java);
+                             only directly used in test code -->
+                        <ignoredNonTestScopedDependency>build.base:base-flow</ignoredNonTestScopedDependency>
                     </ignoredNonTestScopedDependencies>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>dependency-properties</id>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+
+                    <execution>
+                        <!-- spin-modules/pom.xml configures this same execution id with its own
+                             ignoredUnusedDeclaredDependencies (for spin-engine); execution-level
+                             configuration replaces (rather than merges with) the parent's list, so
+                             spin-engine's entry must be repeated here alongside spawn-local-jdk's. -->
+                        <id>analyze-dependencies</id>
+                        <configuration>
+                            <ignoredUnusedDeclaredDependencies>
+                                <ignoredUnusedDeclaredDependency>build.spin:spin-engine</ignoredUnusedDeclaredDependency>
+                                <!-- referenced only by name in src/test/resources/META-INF/services/
+                                     build.spawn.application.LauncherRegistration, not from compiled bytecode -->
+                                <ignoredUnusedDeclaredDependency>build.spawn:spawn-local-jdk:jar:*</ignoredUnusedDeclaredDependency>
+                            </ignoredUnusedDeclaredDependencies>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- keeps surefire in classpath mode rather than patching test classes into the
+                         build.spin.module.maven named module: ReposiliteApplication/ReposiliteSpecification
+                         (test-only) extend types from build.spawn.jdk, which isn't (and shouldn't need to be)
+                         a "requires" of the main module, since production code never uses Spawn. Test
+                         compilation already handles this fine (maven-compiler-plugin auto-adds the necessary
+                         module reads when patching unnamed test sources into a named module), but the JVM
+                         at test-execution time enforces module reads strictly, so without this the launched
+                         ReposiliteApplication proxy throws IllegalAccessError: "module build.spin.module.maven
+                         does not read module build.spawn.jdk".
+                         (src/test/resources/META-INF/services/jakarta.el.ExpressionFactory and
+                         .../build.spawn.application.LauncherRegistration restore, for classpath-mode
+                         ServiceLoader, providers that base-expression's and spawn-local-jdk's module-info.java
+                         otherwise only advertise via a JPMS "provides" clause — needed by Spawn's own
+                         Application launch machinery.) -->
+                    <useModulePath>false</useModulePath>
+                    <argLine>-XX:+EnableDynamicAgentLoading -javaagent:${org.mockito:mockito-core:jar}</argLine>
                 </configuration>
             </plugin>
         </plugins>
