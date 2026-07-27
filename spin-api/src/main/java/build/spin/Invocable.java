@@ -153,14 +153,17 @@ public interface Invocable<T> {
     /**
      * Obtains the {@link Class} of the result produced by executing the {@link Task}.
      * <p>
-     * Should the {@link Class} of the result not be available or can't be determined, {@link Optional#empty()}
-     * is returned.
+     * A {@link Task} declared without a generic result type — {@code implements Task} rather than
+     * {@code Task<T>}, i.e. a {@link Task} whose method returns {@code void} — has no {@code Task<T>}
+     * type argument to resolve; this is reported as {@code void.class} rather than
+     * {@link Optional#empty()}, so every consumer of this method (locating the task method to invoke,
+     * locating its {@link From}-annotated dependencies, etc.) treats "no declared result" uniformly
+     * rather than each needing its own {@code void.class} fallback.
      *
-     * @return {@link Optional} {@link Class}
+     * @return {@link Optional} {@link Class}, never {@link Optional#empty()}
      */
-    @SuppressWarnings("unchecked")
     default Optional<Class<?>> getTaskResultClass() {
-        return Introspection.getAll(getTaskClass(), Class::getGenericInterfaces)
+        final Optional<Class<?>> declared = Introspection.getAll(getTaskClass(), Class::getGenericInterfaces)
             .filter(ParameterizedType.class::isInstance)
             .map(ParameterizedType.class::cast)
             .filter(type -> type.getRawType().equals(Task.class))
@@ -175,10 +178,21 @@ public interface Invocable<T> {
                 default -> null;
             })
             .filter(java.util.Objects::nonNull)
-            .findFirst()
-            .map(c -> (Class<T>) c);
+            .findFirst();
 
-        // TODO: add .orElseGet() here that logs the type isn't defined, and assumes Void?
+        return declared.isPresent() ? declared : Optional.of(void.class);
+    }
+
+    /**
+     * Determines if {@code methodReturnType} implements a {@link Task}'s declared result type,
+     * {@code taskResultClass} — either directly assignable, or the special case of a method
+     * returning primitive {@code void} for a {@code Task<Void>} (reflection has no way to declare
+     * a method returning the boxed {@link Void}, so a real {@code void} method is how
+     * {@code Task<Void>} is implemented).
+     */
+    static boolean isTaskResultMethod(final Class<?> taskResultClass, final Class<?> methodReturnType) {
+        return (methodReturnType.equals(void.class) && taskResultClass.equals(Void.class))
+            || taskResultClass.isAssignableFrom(methodReturnType);
     }
 
     /**
@@ -192,15 +206,12 @@ public interface Invocable<T> {
      */
     default Stream<Reference> dependencies() {
 
-        // determine the task result class
-        final Optional<Class<?>> optionalClass = getTaskResultClass();
-
-        if (optionalClass.isPresent()) {
-            final Class<?> taskResultClass = optionalClass.get();
+        // determine the task result class (never empty — see getTaskResultClass())
+        final Class<?> taskResultClass = getTaskResultClass().orElseThrow();
 
             // locate the first visible non-static, public method returning the a class assignable to the result class
             final Optional<Method> optionalMethod = Introspection.getVisibleMethods(getTaskClass(), method ->
-                    taskResultClass.isAssignableFrom(method.getReturnType())
+                    isTaskResultMethod(taskResultClass, method.getReturnType())
                         && !Modifier.isStatic(method.getModifiers())
                         && Modifier.isPublic(method.getModifiers()))
                 .findFirst();
@@ -236,7 +247,6 @@ public interface Invocable<T> {
                         // use a reference to the concrete Task
                         return Stream.of(Reference.of(getProject(), fromTaskClass));
                     });
-            }
         }
 
         return Stream.empty();

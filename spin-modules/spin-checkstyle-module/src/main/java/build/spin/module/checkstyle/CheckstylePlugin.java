@@ -53,7 +53,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -144,19 +144,23 @@ public class CheckstylePlugin
                 : sourceCode;
 
             // include the files in the source code
-            final AtomicInteger sourceFiles = new AtomicInteger(0);
-            allSourceCode.flatMap(PathSet::stream)
+            final List<Path> sourceFiles = allSourceCode.flatMap(PathSet::stream)
                 .map(Path::toAbsolutePath)
-                .peek(__ -> sourceFiles.incrementAndGet())
+                .toList();
+            sourceFiles.stream()
                 .map(Path::toString)
                 .map(Argument::of)
                 .forEach(optionList::add);
 
             // perform check iff there's source files
-            if (sourceFiles.get() > 0) {
+            if (!sourceFiles.isEmpty()) {
                 // Checkstyle's Main writes violations to stdout and reserves stderr for genuine
-                // tool failures (e.g. a malformed configuration) — capture both so a failure can
-                // report whichever one actually has content.
+                // tool failures (e.g. a malformed configuration) — capture both. Note stderr is
+                // never actually empty here: the spawn launcher's SpawnAgent unconditionally writes
+                // its own bootstrap diagnostics ("[SpawnAgent:N] ...") to stderr for every process
+                // it launches, successful or not, so ErrorCapture.selectOutput's "prefer stderr when
+                // non-empty" heuristic can't be used to pick between the two for a completed run —
+                // it would always pick the SpawnAgent noise over the real violations on stdout.
                 final RecordingSubscriber<String> recordingObserver = new RecordingSubscriber<>();
                 final ErrorCapture captured = new ErrorCapture();
                 optionList.add(StandardOutputSubscriber.of(recordingObserver));
@@ -175,9 +179,11 @@ public class CheckstylePlugin
 
                     final int exitValue = checkstyle.exitValue().orElse(0);
                     if (exitValue != 0) {
+                        // the process ran to completion and reported violations — that content is
+                        // on stdout, not stderr (see note above)
                         throw new ProcessFailedException(
                             "Checkstyle Failed (exit code: " + exitValue + ")",
-                            ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+                            recordingObserver.items().collect(Collectors.joining("\n")));
                     }
 
                     this.recorder.info("Checkstyle finished with exit code %d", exitValue);
@@ -219,7 +225,11 @@ public class CheckstylePlugin
                 return false;
             }
             final Path workspacePath = project.workspace().path();
-            if (Files.exists(workspacePath.resolve("checkstyle"))) {
+            // check for the actual configuration file, not just the "checkstyle" folder's
+            // existence — a workspace can have an unrelated "checkstyle" folder (e.g. a Gradle
+            // fixture's own checkstyle rules, not named checkstyle.xml) without opting in to this
+            // convention
+            if (Files.exists(workspacePath.resolve("checkstyle/checkstyle.xml"))) {
                 return true;
             }
             // also detect a project-declared maven-checkstyle-plugin <configLocation>, so a pom

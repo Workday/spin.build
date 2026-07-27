@@ -30,6 +30,7 @@ module build.spin.java.module.tests.test {
     requires build.spawn.platform.local;
     requires build.spin;
     requires build.spin.common;
+    requires build.spin.module.checkstyle;
     requires build.spin.module.clean;
     requires build.spin.module.java;
     requires build.spin.module.junit;

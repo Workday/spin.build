@@ -28,6 +28,7 @@ import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.common.DefaultAssetCache;
 import build.spin.common.ProcessFailedException;
+import build.spin.module.checkstyle.CheckstylePlugin;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.java.Java8CompilerPlugin;
@@ -266,6 +267,58 @@ public class JavaProjectTests {
                 .as("expected a ProcessFailedException in the cause chain of the compile failure")
                 .isPresent();
             assertThat(pfe.get().output()).contains("Broken.java").contains("error:");
+        }
+    }
+
+    @Test
+    @WorkspacePath("checkstyle-violation")
+    void shouldCaptureCheckstyleViolations(final Engine engine, final Workspace workspace) {
+
+        assertThat(workspace.name()).isEqualTo("checkstyle-violation");
+        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent()).isTrue();
+        assertThat(workspace.getPlugin(CheckstylePlugin.class).isPresent()).isTrue();
+
+        // create a Program to run Checkstyle on the Workspace
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("checkstyle"));
+
+        // create a Task ExecutionCache for the Program
+        final AssetCache cache = DefaultAssetCache.create();
+
+        // establish a CompletingObserver to observe the checkstyle failure
+        final CompletingSubscriber<Telemetry> observer = new CompletingSubscriber<>();
+        final CompletableFuture<Telemetry> future = observer.when(t -> t instanceof Error);
+        engine.subscribe(observer);
+
+        try {
+            program.execute(cache);
+
+            fail("The Checkstyle check of the source file should have failed");
+        }
+        catch (final ProgramExecutionException e) {
+            Eventually.assertThat(future).isCompleted();
+
+            // all task failures: thrown + suppressed
+            final var allFailures = Stream.concat(Stream.of(e), Arrays.stream(e.getSuppressed()))
+                .toList();
+
+            // extractOutput embeds the captured checkstyle output into the ProgramExecutionException
+            // message — verify it surfaced
+            final var checkstyleTaskFailure = allFailures.stream()
+                .filter(t -> t.getMessage().contains("HasUnusedImport.java")
+                    && t.getMessage().contains("Unused import"))
+                .findFirst();
+
+            assertThat(checkstyleTaskFailure)
+                .as("expected a Checkstyle violation (HasUnusedImport.java, Unused import) to be "
+                    + "embedded in a task failure message")
+                .isPresent();
+
+            // the ProcessFailedException in the cause chain should carry the raw output
+            final var pfe = causeOfType(checkstyleTaskFailure.get(), ProcessFailedException.class);
+            assertThat(pfe)
+                .as("expected a ProcessFailedException in the cause chain of the checkstyle failure")
+                .isPresent();
+            assertThat(pfe.get().output()).contains("HasUnusedImport.java").contains("Unused import");
         }
     }
 
