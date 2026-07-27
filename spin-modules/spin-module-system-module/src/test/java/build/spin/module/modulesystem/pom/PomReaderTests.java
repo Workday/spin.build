@@ -163,4 +163,67 @@ class PomReaderTests {
         assertThat(pom.get().artifactId()).isEqualTo("my-module");
         assertThat(pom.get().properties()).containsEntry("project.artifactId", "my-module");
     }
+
+    /**
+     * A plugin {@code <dependency>} redeclared under {@code <build><plugins>} with only its GA (no
+     * {@code <version>}), to inherit the version from the matching
+     * {@code <pluginManagement><plugins>} entry, should end up with that managed version —
+     * mirroring real Maven's field-level dependency merge (see
+     * {@link #read_honorsExplicitCompileScopeOverManagedScope} for the project-dependency
+     * equivalent).
+     */
+    @Test
+    void read_pluginDependencyShouldInheritManagedVersion(@TempDir final Path dir) throws Exception {
+        final Path pomXml = dir.resolve("pom.xml");
+        Files.writeString(pomXml, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>consumer</artifactId>
+              <version>1.0.0</version>
+              <build>
+                <pluginManagement>
+                  <plugins>
+                    <plugin>
+                      <groupId>org.apache.maven.plugins</groupId>
+                      <artifactId>maven-checkstyle-plugin</artifactId>
+                      <dependencies>
+                        <dependency>
+                          <groupId>com.example</groupId>
+                          <artifactId>custom-checks</artifactId>
+                          <version>2.0.0</version>
+                        </dependency>
+                      </dependencies>
+                    </plugin>
+                  </plugins>
+                </pluginManagement>
+                <plugins>
+                  <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-checkstyle-plugin</artifactId>
+                    <dependencies>
+                      <dependency>
+                        <groupId>com.example</groupId>
+                        <artifactId>custom-checks</artifactId>
+                      </dependency>
+                    </dependencies>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(pomXml);
+
+        assertThat(pom).isPresent();
+        final Plugin checkstylePlugin = pom.get()
+            .plugin(new GA("org.apache.maven.plugins", "maven-checkstyle-plugin"))
+            .orElseThrow();
+        final Dependency customChecks = checkstylePlugin.dependencies().stream()
+            .filter(d -> "custom-checks".equals(d.artifactId()))
+            .findFirst()
+            .orElseThrow();
+
+        assertThat(customChecks.version()).contains("2.0.0");
+    }
 }

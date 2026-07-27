@@ -357,7 +357,8 @@ public final class PomReader {
     private record RawPlugin(String groupId,
                              String artifactId,
                              String version,
-                             ConfigNode configuration) {
+                             ConfigNode configuration,
+                             List<RawDependency> dependencies) {
     }
 
     private record RawProfile(
@@ -533,10 +534,15 @@ public final class PomReader {
                 configuration = toConfigNode(configEl);
                 break;
             }
+            List<RawDependency> dependencies = List.of();
+            for (final Element depsEl : directChildren(plugin, "dependencies")) {
+                dependencies = readDependencies(depsEl);
+            }
             out.add(new RawPlugin(effectiveGroupId,
                 artifactId,
                 directChildText(plugin, "version"),
-                configuration));
+                configuration,
+                dependencies));
         }
         return out;
     }
@@ -605,23 +611,57 @@ public final class PomReader {
         final String artifactId = interpolate(rp.artifactId(), props);
         final Optional<String> version = optInterpolated(rp.version(), props);
         final ConfigNode interpolated = interpolateConfig(rp.configuration(), props);
-        return new DefaultPlugin(groupId, artifactId, version, interpolated);
+        final List<Dependency> dependencies = rp.dependencies().stream()
+            .map(rd -> toEffectiveDependency(rd, props, Map.of()))
+            .toList();
+        return new DefaultPlugin(groupId, artifactId, version, interpolated, dependencies);
     }
 
     /**
      * Merges an own plugin (or pluginMgmt entry) over a parent/mgmt entry, deep-merging
-     * configuration. Returns own if mgmt is null (no parent or mgmt match).
+     * configuration and merging dependencies by {@link GA} (own wins per coordinate, parent-only
+     * entries kept; a field the own entry leaves unset falls back to the parent/mgmt entry's value
+     * — see {@link #mergeDependency}). Returns own if mgmt is null (no parent or mgmt match).
      */
     private static Plugin mergePluginInto(final Plugin parent,
                                           final Plugin own) {
         if (parent == null) {
             return own;
         }
+        final Map<GA, Dependency> depsByGa = new LinkedHashMap<>();
+        parent.dependencies().forEach(d -> depsByGa.put(d.ga(), d));
+        for (final Dependency ownDep : own.dependencies()) {
+            final Dependency managed = depsByGa.get(ownDep.ga());
+            depsByGa.put(ownDep.ga(), managed == null ? ownDep : mergeDependency(managed, ownDep));
+        }
         return new DefaultPlugin(
             own.groupId(),
             own.artifactId(),
             own.version().or(parent::version),
-            mergeConfig(parent.configuration(), own.configuration()));
+            mergeConfig(parent.configuration(), own.configuration()),
+            List.copyOf(depsByGa.values()));
+    }
+
+    /**
+     * Fills in a plugin dependency's {@code version} and {@code classifier} from the matching
+     * {@code parent}/{@code pluginManagement} entry when {@code own} leaves them unset — e.g. a
+     * plugin {@code <dependency>} redeclared by GA only, to inherit its version from
+     * {@code <pluginManagement>}, as real Maven does. Unlike {@link #toEffectiveDependency}, this
+     * can't disambiguate an explicit {@code scope}/{@code type} from Maven's own default (both
+     * arguments are already-effective {@link Dependency}s, so the pre-default raw text is gone by
+     * this point), so those two fields stay own-wins-always as before.
+     */
+    private static Dependency mergeDependency(final Dependency parent,
+                                              final Dependency own) {
+        return new DefaultDependency(
+            own.groupId(),
+            own.artifactId(),
+            own.version().or(parent::version),
+            own.scope(),
+            own.type(),
+            own.classifier().or(parent::classifier),
+            own.optional(),
+            own.exclusions());
     }
 
     /**

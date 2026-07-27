@@ -20,6 +20,7 @@ package build.spin.module.modulesystem.pom;
  * #L%
  */
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -42,6 +43,15 @@ public sealed interface Plugin
     Optional<String> version();
 
     ConfigNode configuration();
+
+    /**
+     * The plugin's own {@code <dependencies>} (e.g. extra rule/check artifacts layered onto the
+     * plugin's classpath), merged with the matching {@code <pluginManagement>} entry's
+     * dependencies by {@link GA} — own wins per coordinate, parent-only entries are kept. Does
+     * <em>not</em> fall back to the project's own {@code <dependencyManagement>}: Maven resolves
+     * plugin dependency versions independently of the project's dependency graph.
+     */
+    List<Dependency> dependencies();
 
     /**
      * The {@code (groupId, artifactId)} key for this plugin.

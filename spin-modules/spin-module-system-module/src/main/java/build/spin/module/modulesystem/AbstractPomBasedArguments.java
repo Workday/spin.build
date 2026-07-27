@@ -20,48 +20,22 @@ package build.spin.module.modulesystem;
  * #L%
  */
 
-import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.dependency.injection.PostInject;
 import build.spin.Project;
-import build.spin.Resource;
 import build.spin.module.modulesystem.pom.ConfigNode;
-import build.spin.module.modulesystem.pom.GA;
 import build.spin.module.modulesystem.pom.Plugin;
-import build.spin.module.modulesystem.pom.PomReader;
-import jakarta.inject.Inject;
 
-import java.nio.file.Path;
 import java.util.stream.Stream;
 
 /**
- * Shared base for {@link Resource}s that derive CLI-argument tokens from a single plugin's
- * {@code <configuration>} block in a project's {@code pom.xml}. Concrete subclasses declare the
- * target plugin GA and the config → token mapping; this class owns the {@link PomReader}
- * lifecycle and the uniform {@code get(Project)} flow.
+ * Shared base for {@link build.spin.Resource}s that derive CLI-argument tokens from a single
+ * plugin's {@code <configuration>} block in a project's {@code pom.xml}. Concrete subclasses
+ * declare the config → token mapping; {@link AbstractPomBasedResource} owns the plugin lookup.
  *
  * @author reed.vonredwitz
  * @since Apr-2026
  */
 public abstract class AbstractPomBasedArguments
-    implements Resource {
-
-    private static final String POM_FILENAME = "pom.xml";
-
-    @Inject
-    private TelemetryRecorder recorder;
-
-    private PomReader pomReader;
-
-    @PostInject
-    private void onInjected() {
-        final Path localRepository = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        this.pomReader = new PomReader(localRepository, this.recorder);
-    }
-
-    /**
-     * The Maven plugin whose {@code <configuration>} block this resource reads.
-     */
-    protected abstract GA pluginGA();
+    extends AbstractPomBasedResource {
 
     /**
      * Maps the plugin's effective {@code <configuration>} tree to the CLI argument tokens this
@@ -70,13 +44,12 @@ public abstract class AbstractPomBasedArguments
     protected abstract Stream<String> toArgs(ConfigNode configuration);
 
     /**
-     * Reads the project's effective pom, locates {@link #pluginGA()}, and streams tokens from
+     * Reads the project's effective pom, locates the target plugin, and streams tokens from
      * {@link #toArgs(ConfigNode)}. Returns an empty stream when the pom is missing, the plugin is
      * absent, or the mapping produces nothing.
      */
     public Stream<String> get(final Project project) {
-        return this.pomReader.read(project.path().resolve(POM_FILENAME))
-            .flatMap(pom -> pom.plugin(pluginGA()))
+        return plugin(project)
             .map(Plugin::configuration)
             .map(this::toArgs)
             .orElseGet(Stream::empty);

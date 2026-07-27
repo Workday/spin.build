@@ -20,6 +20,7 @@ package build.spin.module.modulesystem.pom;
  * #L%
  */
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -31,6 +32,7 @@ import java.util.Optional;
 public record DefaultPlugin(String groupId,
                             String artifactId,
                             Optional<String> version,
-                            ConfigNode configuration
+                            ConfigNode configuration,
+                            List<Dependency> dependencies
 ) implements Plugin {
 }

@@ -40,6 +40,7 @@ module build.spin.module.modulesystem {
         build.spin.module.modulesystem.DefaultModuleCatalog.MetaClass,
         build.spin.module.modulesystem.DefaultModuleVersioning.MetaClass,
         build.spin.module.modulesystem.PomBasedModuleCatalog.MetaClass,
+        build.spin.module.modulesystem.PomBasedCheckstyleArguments.MetaClass,
         build.spin.module.modulesystem.PomBasedCompilerArguments.MetaClass,
         build.spin.module.modulesystem.PomBasedJavadocArguments.MetaClass,
         build.spin.module.modulesystem.PomBasedModuleVersioning.MetaClass,
