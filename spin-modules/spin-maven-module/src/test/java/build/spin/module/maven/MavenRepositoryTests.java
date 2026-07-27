@@ -13,8 +13,8 @@ import build.spin.module.modulesystem.ModuleCatalog;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
-import build.codemodel.injection.Context;
-import build.codemodel.injection.InjectionFramework;
+import build.codemodel.dependency.injection.Context;
+import build.codemodel.dependency.injection.InjectionFramework;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

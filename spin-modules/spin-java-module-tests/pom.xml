@@ -127,7 +127,7 @@
 
         <dependency>
             <groupId>build.codemodel</groupId>
-            <artifactId>jdk-codemodel</artifactId>
+            <artifactId>codemodel-jdk</artifactId>
             <scope>test</scope>
         </dependency>
 

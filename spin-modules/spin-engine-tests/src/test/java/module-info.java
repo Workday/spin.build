@@ -26,7 +26,7 @@ module build.spin.engine.tests.test {
 
     opens build.spin.engine.tests to org.junit.platform.commons;
 
-    exports build.spin.engine.tests to build.codemodel.injection, build.spin;
+    exports build.spin.engine.tests to build.codemodel.dependency.injection, build.spin;
 
     provides build.spin.Extension.MetaClass with
         build.spin.engine.tests.CyclicTestPlugin.MetaClass,

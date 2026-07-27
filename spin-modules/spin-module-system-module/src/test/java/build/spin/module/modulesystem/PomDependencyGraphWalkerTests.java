@@ -229,7 +229,7 @@ class PomDependencyGraphWalkerTests {
               <dependencies>
                 <dependency>
                   <groupId>build.codemodel</groupId>
-                  <artifactId>jdk-codemodel</artifactId>
+                  <artifactId>codemodel-jdk</artifactId>
                   <version>0.19.0</version>
                 </dependency>
               </dependencies>
@@ -240,7 +240,7 @@ class PomDependencyGraphWalkerTests {
         PomDependencyGraphWalker.walk(workspace, missingRepo(workspace), RECORDER, CODE_MODEL, visitor);
 
         // build.codemodel + artifactId-minus-groupId-suffix -> build.codemodel.jdk
-        assertThat(visitor.forCoordinate("build.codemodel", "jdk-codemodel").names)
+        assertThat(visitor.forCoordinate("build.codemodel", "codemodel-jdk").names)
             .contains("build.codemodel.jdk");
     }
 
@@ -511,7 +511,7 @@ class PomDependencyGraphWalkerTests {
               <dependencies>
                 <dependency>
                   <groupId>build.codemodel</groupId>
-                  <artifactId>jdk-codemodel</artifactId>
+                  <artifactId>codemodel-jdk</artifactId>
                   <version>0.19.0</version>
                 </dependency>
               </dependencies>
@@ -523,7 +523,7 @@ class PomDependencyGraphWalkerTests {
         writePom(jdkDir.resolve("jdk-codemodel-0.19.0.pom"), """
             <project>
               <groupId>build.codemodel</groupId>
-              <artifactId>jdk-codemodel</artifactId>
+              <artifactId>codemodel-jdk</artifactId>
               <version>0.19.0</version>
               <dependencies>
                 <dependency>

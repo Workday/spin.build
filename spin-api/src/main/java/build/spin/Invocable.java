@@ -21,7 +21,7 @@ package build.spin;
  */
 
 import build.base.foundation.Introspection;
-import build.codemodel.injection.Context;
+import build.codemodel.dependency.injection.Context;
 import build.spin.annotation.After;
 import build.spin.annotation.Automatic;
 import build.spin.annotation.Before;

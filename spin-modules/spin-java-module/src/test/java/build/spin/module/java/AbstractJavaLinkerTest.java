@@ -20,14 +20,29 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.foundation.UniformResource;
+import build.base.telemetry.TelemetryRecorder;
 import build.spawn.jdk.Architecture;
 import build.spawn.jdk.OperatingSystem;
+import build.spin.common.telemetry.TelemetryPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedOutputStream;
+import java.io.IOException;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.attribute.ModuleAttribute;
+import java.lang.constant.ModuleDesc;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -321,5 +336,122 @@ class AbstractJavaLinkerTest {
         final var jar = buildJar("org/example/Foo.class", "com/foo/Bar.class");
         assertThat(AbstractJavaLinker.stripForeignNatives(jar, "Linux", "x86_64")).isFalse();
         assertThat(jarEntryNames(jar)).containsExactlyInAnyOrder("org/example/Foo.class", "com/foo/Bar.class");
+    }
+
+    // --- classifyCached ---
+    //
+    // Regression coverage for AbstractJavaLinker#jlink: classification (and its "N module-path
+    // jar(s) depend on automatic modules" diagnostic) must run once per distinct target module
+    // set, not once per target — targets that expose an identical module set (the common case)
+    // must share a single classification rather than repeating the work and the diagnostic.
+
+    @Test
+    void classifyCached_reusesClassificationForTargetsSharingAnIdenticalModuleSet() throws Exception {
+        final Path rootJar = properModuleRequiring("root.jar", "the.root.module", "autolib");
+        final Path autoJar = automaticJar("autolib.jar");
+        final List<Path> candidatePaths = List.of(rootJar, autoJar);
+
+        final Path jmodsDirA = Files.createDirectory(this.tempDir.resolve("jmods-a"));
+        jmod(jmodsDirA, "java.base.jmod", "java.base");
+        final Path jmodsDirB = Files.createDirectory(this.tempDir.resolve("jmods-b"));
+        jmod(jmodsDirB, "java.base.jmod", "java.base");
+
+        final List<String> messages = new ArrayList<>();
+        final AbstractJavaLinker linker = newLinker(capturingRecorder(messages));
+        final Map<Set<String>, AbstractJavaLinker.ClassificationResult> cache = new LinkedHashMap<>();
+
+        // two different targets whose jmods/ happen to expose the same module names
+        final var resultA = linker.classifyCached(
+            cache, Set.of("java.base"), candidatePaths, "the.root.module", jmodsDirA);
+        final var resultB = linker.classifyCached(
+            cache, Set.of("java.base"), candidatePaths, "the.root.module", jmodsDirB);
+
+        assertThat(resultB).isSameAs(resultA);
+        assertThat(messages.stream().filter(m -> m.contains("depend on automatic modules"))).hasSize(1);
+    }
+
+    @Test
+    void classifyCached_reclassifiesForTargetsWithDifferentModuleSets() throws Exception {
+        final Path rootJar = properModuleRequiring("root.jar", "the.root.module", "autolib");
+        final Path autoJar = automaticJar("autolib.jar");
+        final List<Path> candidatePaths = List.of(rootJar, autoJar);
+
+        final Path jmodsDirA = Files.createDirectory(this.tempDir.resolve("jmods-a"));
+        jmod(jmodsDirA, "java.base.jmod", "java.base");
+        final Path jmodsDirB = Files.createDirectory(this.tempDir.resolve("jmods-b"));
+        jmod(jmodsDirB, "java.base.jmod", "java.base");
+        jmod(jmodsDirB, "jdk.compiler.jmod", "jdk.compiler");
+
+        final List<String> messages = new ArrayList<>();
+        final AbstractJavaLinker linker = newLinker(capturingRecorder(messages));
+        final Map<Set<String>, AbstractJavaLinker.ClassificationResult> cache = new LinkedHashMap<>();
+
+        linker.classifyCached(cache, Set.of("java.base"), candidatePaths, "the.root.module", jmodsDirA);
+        linker.classifyCached(
+            cache, Set.of("java.base", "jdk.compiler"), candidatePaths, "the.root.module", jmodsDirB);
+
+        assertThat(messages.stream().filter(m -> m.contains("depend on automatic modules"))).hasSize(2);
+    }
+
+    private static AbstractJavaLinker newLinker(final TelemetryRecorder recorder) throws Exception {
+        final AbstractJavaLinker linker = new AbstractJavaLinker() {
+        };
+        final Field field = AbstractJavaLinker.class.getDeclaredField("recorder");
+        field.setAccessible(true);
+        field.set(linker, recorder);
+        return linker;
+    }
+
+    private static TelemetryRecorder capturingRecorder(final List<String> messages) {
+        return new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractJavaLinkerTest"),
+            telemetry -> messages.add(telemetry.message()));
+    }
+
+    // a non-modular jar: ModuleFinder derives its automatic module name from the filename alone
+    private Path automaticJar(final String fileName) throws IOException {
+        final Path jar = this.tempDir.resolve(fileName);
+        try (var jos = new JarOutputStream(Files.newOutputStream(jar))) {
+            jos.putNextEntry(new JarEntry("some/Class.class"));
+            jos.write(new byte[]{0x42});
+            jos.closeEntry();
+        }
+        return jar;
+    }
+
+    private Path properModuleRequiring(final String fileName, final String moduleName, final String... requires)
+        throws IOException {
+        final byte[] moduleInfoBytes = ClassFile.of().buildModule(
+            ModuleAttribute.of(
+                ModuleDesc.of(moduleName),
+                mb -> {
+                    mb.requires(ModuleDesc.of("java.base"), 0, null);
+                    for (final String req : requires) {
+                        mb.requires(ModuleDesc.of(req), 0, null);
+                    }
+                }));
+
+        final Path jar = this.tempDir.resolve(fileName);
+        try (var jos = new JarOutputStream(Files.newOutputStream(jar))) {
+            jos.putNextEntry(new JarEntry("module-info.class"));
+            jos.write(moduleInfoBytes);
+            jos.closeEntry();
+        }
+        return jar;
+    }
+
+    // writes a minimal .jmod-shaped zip, same approach as JmodModuleFinderTest's helper of the
+    // same name — only the classes/module-info.class entry matters to what's under test here
+    private Path jmod(final Path dir, final String fileName, final String moduleName) throws IOException {
+        final byte[] moduleInfoBytes = ClassFile.of().buildModule(
+            ModuleAttribute.of(ModuleDesc.of(moduleName), mb -> { }));
+
+        final Path jmod = dir.resolve(fileName);
+        try (var zos = new ZipOutputStream(Files.newOutputStream(jmod))) {
+            zos.putNextEntry(new ZipEntry("classes/module-info.class"));
+            zos.write(moduleInfoBytes);
+            zos.closeEntry();
+        }
+        return jmod;
     }
 }

@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.configuration.Option;
 import build.base.flow.RecordingSubscriber;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
@@ -59,6 +60,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -126,18 +128,34 @@ public abstract class AbstractJavaLinker
         // - no special-cased flat path, so targets never collide or nest inside one another
         final var hostTarget = JavaPlatform.hostTarget();
 
+        // Classification (which app jars can link straight into the image vs. must stay external)
+        // only depends on the target's module set, not on the target itself, so targets sharing an
+        // identical module set (the common case — cross-compiled targets are usually built from the
+        // same JDK version) share one classification instead of repeating the classification work
+        // and its "N module-path jar(s) depend on automatic modules" diagnostic once per target.
+        final Map<Set<String>, ClassificationResult> classificationCache = new LinkedHashMap<>();
+
         final Set<Path> images = new LinkedHashSet<>();
         for (final var target : targets) {
-            images.add(linkForTarget(buildPath, analysis, mainClass.get(), target, target.equals(hostTarget)));
+            images.add(linkForTarget(buildPath, analysis, mainClass.get(), target, target.equals(hostTarget),
+                classificationCache));
         }
         return images;
+    }
+
+    // Package-private (rather than private) so classifyCached()'s test can reference it directly.
+    record ClassificationResult(List<Path> linkableJars,
+                                Set<Path> tainted,
+                                List<Path> classPath,
+                                Map<Path, ModuleDescriptor> descriptorsByPath) {
     }
 
     private Path linkForTarget(final Path buildPath,
                                final DependencyAnalysis analysis,
                                final String mainClass,
                                final TargetPlatform target,
-                               final boolean isHostTarget)
+                               final boolean isHostTarget,
+                               final Map<Set<String>, ClassificationResult> classificationCache)
         throws Exception {
 
         // establish the name of the package and script
@@ -219,72 +237,11 @@ public abstract class AbstractJavaLinker
 
         final var rootModule = this.descriptor.moduleName().toString();
 
-        // Prefer classifyAndResolve so unreachable jars are pruned from the module-path.
-        // When spin runs from its own jlink image ModuleFinder.ofSystem() only covers
-        // spin's modules, so resolving an app that requires JDK modules outside that
-        // image (e.g. java.net.http) will fail — fall back to classify-only in that case.
-        ModuleGraphClassifier.Classification classification;
-        try {
-            classification = ModuleGraphClassifier.classifyAndResolve(
-                candidatePaths,
-                Set.of(rootModule),
-                rootModule,
-                Configuration.empty(),
-                ModuleFinder.ofSystem(),
-                msg -> this.recorder.info("[classify] %s", msg));
-        } catch (final IllegalStateException e) {
-            this.recorder.warn("[classify] classifyAndResolve failed (%s) — falling back to classify-only; "
-                + "unreachable jars will NOT be pruned from the module-path", e.getMessage());
-            classification = ModuleGraphClassifier.classify(
-                candidatePaths,
-                Set.of(rootModule),
-                msg -> this.recorder.info("[classify] %s", msg));
-        }
-        final List<Path> modulePathJars = classification.modulePath();
-
-        // -----
-        // Partition the module-path jars into "linkable" (jlink can link them straight into
-        // lib/modules) and "tainted" (must stay on an external runtime --module-path).
-        //
-        // jlink cannot link automatic modules into a runtime image at all — any module that
-        // is itself automatic, or that transitively requires one, has to be excluded from
-        // --add-modules and copied to an external module-path directory instead, exactly like
-        // spin did before full-image linking existed. Everything else gets linked in, so an
-        // application with a perfectly clean module graph (e.g. spin itself) still gets a
-        // fully self-contained image, while one with automatic-module dependencies degrades
-        // gracefully instead of failing jlink outright.
-        // readDescriptor returns null for jars ModuleFinder can't interpret as a module, so this
-        // is built with a plain loop rather than Collectors.toMap (which rejects null values)
-        final Map<Path, ModuleDescriptor> descriptorsByPath = new LinkedHashMap<>();
-        for (final var jar : modulePathJars) {
-            descriptorsByPath.put(jar, ModuleGraphClassifier.readDescriptor(jar));
-        }
-
-        final Set<String> automaticNames = descriptorsByPath.values().stream()
-            .filter(Objects::nonNull)
-            .filter(ModuleDescriptor::isAutomatic)
-            .map(ModuleDescriptor::name)
-            .collect(Collectors.toCollection(LinkedHashSet::new));
-
-        final Set<Path> tainted = new LinkedHashSet<>();
-        for (final var jar : modulePathJars) {
-            final var descriptor = descriptorsByPath.get(jar);
-            if (descriptor == null || descriptor.isAutomatic()) {
-                tainted.add(jar);
-                continue;
-            }
-            final var closure = ModuleGraphClassifier.closeOverRequires(modulePathJars, Set.of(descriptor.name()));
-            if (closure.stream().anyMatch(automaticNames::contains)) {
-                tainted.add(jar);
-            }
-        }
-
-        final List<Path> linkableJars = modulePathJars.stream().filter(jar -> !tainted.contains(jar)).toList();
-        if (!tainted.isEmpty()) {
-            this.recorder.info("[jlink] %d module-path jar(s) depend on automatic modules and will stay "
-                + "external to the image: %s", tainted.size(),
-                tainted.stream().map(p -> p.getFileName().toString()).toList());
-        }
+        final var classificationResult = classifyCached(
+            classificationCache, jdkModuleNames, candidatePaths, rootModule, jmodsDir);
+        final List<Path> linkableJars = classificationResult.linkableJars();
+        final Set<Path> tainted = classificationResult.tainted();
+        final Map<Path, ModuleDescriptor> descriptorsByPath = classificationResult.descriptorsByPath();
 
         final var nativePlatform = nativePlatformFor(target);
 
@@ -333,8 +290,18 @@ public abstract class AbstractJavaLinker
 
             // jlink's --strip-debug shells out to the host's native objcopy, which can't parse a foreign
             // target's binaries (e.g. running x86_64 objcopy against aarch64 or Mach-O native libraries) —
-            // only strip when linking the host's own target
-            final List<build.base.configuration.Option> jlinkOptions = new ArrayList<>(List.of(
+            // only strip when linking the host's own target.
+            //
+            // Deliberately NOT using jlink's own --generate-cds-archive plugin: it dumps the base archive
+            // generically, with no knowledge of how the image is actually launched, so it records
+            // jdk.module.main as unset. Since every generated script launches with -m rootModule/mainClass,
+            // that mismatches at runtime and permanently disables CDS's "optimized module handling" / "full
+            // module graph" optimization on every single launch (dynamic archive or not) — confirmed via
+            // -Xlog:cds. dumpBaseCdsArchive() below re-derives the same archive ourselves, passing -m so the
+            // recorded module-main property actually matches the launch script, which measured ~20% faster
+            // than the jlink-plugin version. Same foreign-target restriction as --strip-debug applies: it
+            // executes the freshly-linked image's own java, which can't run a foreign target's binary.
+            final List<Option> jlinkOptions = new ArrayList<>(List.of(
                 Executable.of(jlinkPath.toString()),
                 Name.of("jlink"),
                 Argument.of("--module-path"), Argument.of(jlinkModulePath),
@@ -352,7 +319,7 @@ public abstract class AbstractJavaLinker
                 captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)));
 
             try (var jlink = this.machine.launch(Application.class,
-                jlinkOptions.toArray(build.base.configuration.Option[]::new))) {
+                jlinkOptions.toArray(Option[]::new))) {
 
                 try {
                     jlink.onExit().get();
@@ -379,7 +346,7 @@ public abstract class AbstractJavaLinker
                 final var modulePath = packagePath.resolve("modules");
                 final var classPathDir = packagePath.resolve("classpath");
 
-                final Set<Path> classPathJars = new LinkedHashSet<>(classification.classPath());
+                final Set<Path> classPathJars = new LinkedHashSet<>(classificationResult.classPath());
                 final List<Path> classPathTargets = new ArrayList<>();
                 for (final var source : candidatePaths) {
                     final boolean isClassPath = classPathJars.contains(source);
@@ -402,6 +369,10 @@ public abstract class AbstractJavaLinker
                     if (isClassPath) {
                         classPathTargets.add(destination);
                     }
+                }
+
+                if (isHostTarget) {
+                    dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets);
                 }
 
                 // ---------
@@ -432,6 +403,195 @@ public abstract class AbstractJavaLinker
         }
 
         return packagePath;
+    }
+
+    // Package-private (rather than private) so tests can exercise the cache hit/miss decision
+    // directly, without going through linkForTarget()'s real jlink-executable invocation.
+    ClassificationResult classifyCached(final Map<Set<String>, ClassificationResult> classificationCache,
+                                        final Set<String> jdkModuleNames,
+                                        final List<Path> candidatePaths,
+                                        final String rootModule,
+                                        final Path jmodsDir) throws IOException {
+        var result = classificationCache.get(jdkModuleNames);
+        if (result == null) {
+            result = classify(candidatePaths, rootModule, jmodsDir);
+            classificationCache.put(jdkModuleNames, result);
+        }
+        return result;
+    }
+
+    // -----
+    // Classify application jars into module-path vs classpath candidates, then partition the
+    // module-path jars into "linkable" (jlink can link them straight into lib/modules) and
+    // "tainted" (must stay on an external runtime --module-path).
+    //
+    // Classification uses ModuleFinder + Configuration.resolve on the real on-disk jars — the
+    // same approach {@code build.spin.application.Launcher} uses for the spin1 Maven-exec launch.
+    // Split-package conflicts are iteratively demoted to classpath where the JPMS
+    // package-uniqueness rule doesn't apply; automatic modules on --module-path still reach the
+    // demoted classes via ALL-UNNAMED.
+    //
+    // Dependency dedupe (both by Maven (groupId, artifactId) and by JPMS module name) already
+    // happened upstream in {@link AbstractJavaDependencyAnalysis}, so candidatePaths is a clean
+    // canonical set here.
+    private ClassificationResult classify(final List<Path> candidatePaths, final String rootModule,
+                                          final Path jmodsDir) throws IOException {
+
+        // Prefer classifyAndResolve so unreachable jars are pruned from the module-path.
+        // The supplemental finder must reflect the *target* JDK's full module set, not
+        // ModuleFinder.ofSystem() -- spin itself typically runs from its own jlinked runtime
+        // image, which only contains the modules spin needs, so resolving an app that requires
+        // JDK modules outside that image would otherwise fail. JmodModuleFinder reads real
+        // descriptors straight out of the target's jmods/ (falling back to ModuleFinder.ofSystem()
+        // only when there's no jmods/ dir to read, e.g. a JRE).
+        final var targetJdkFinder = Files.isDirectory(jmodsDir)
+            ? JmodModuleFinder.of(jmodsDir)
+            : ModuleFinder.ofSystem();
+
+        ModuleGraphClassifier.Classification classification;
+        try {
+            classification = ModuleGraphClassifier.classifyAndResolve(
+                candidatePaths,
+                Set.of(rootModule),
+                rootModule,
+                Configuration.empty(),
+                targetJdkFinder,
+                msg -> this.recorder.info("[classify] %s", msg));
+        } catch (final IllegalStateException e) {
+            this.recorder.warn("[classify] classifyAndResolve failed (%s) — falling back to classify-only; "
+                + "unreachable jars will NOT be pruned from the module-path", e.getMessage());
+            classification = ModuleGraphClassifier.classify(
+                candidatePaths,
+                Set.of(rootModule),
+                msg -> this.recorder.info("[classify] %s", msg));
+        }
+        final List<Path> modulePathJars = classification.modulePath();
+
+        // jlink cannot link automatic modules into a runtime image at all — any module that
+        // is itself automatic, or that transitively requires one, has to be excluded from
+        // --add-modules and copied to an external module-path directory instead, exactly like
+        // spin did before full-image linking existed. Everything else gets linked in, so an
+        // application with a perfectly clean module graph (e.g. spin itself) still gets a
+        // fully self-contained image, while one with automatic-module dependencies degrades
+        // gracefully instead of failing jlink outright.
+        // readDescriptor returns null for jars ModuleFinder can't interpret as a module, so this
+        // is built with a plain loop rather than Collectors.toMap (which rejects null values)
+        final Map<Path, ModuleDescriptor> descriptorsByPath = new LinkedHashMap<>();
+        for (final var jar : modulePathJars) {
+            descriptorsByPath.put(jar, ModuleGraphClassifier.readDescriptor(jar));
+        }
+
+        final Set<String> automaticNames = descriptorsByPath.values().stream()
+            .filter(Objects::nonNull)
+            .filter(ModuleDescriptor::isAutomatic)
+            .map(ModuleDescriptor::name)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        final Set<Path> tainted = new LinkedHashSet<>();
+        for (final var jar : modulePathJars) {
+            final var descriptor = descriptorsByPath.get(jar);
+            if (descriptor == null || descriptor.isAutomatic()) {
+                tainted.add(jar);
+                continue;
+            }
+            final var closure = ModuleGraphClassifier.closeOverRequires(modulePathJars, Set.of(descriptor.name()));
+            if (closure.stream().anyMatch(automaticNames::contains)) {
+                tainted.add(jar);
+            }
+        }
+
+        final List<Path> linkableJars = modulePathJars.stream().filter(jar -> !tainted.contains(jar)).toList();
+        if (!tainted.isEmpty()) {
+            this.recorder.info("[jlink] %d module-path jar(s) depend on automatic modules and will stay "
+                + "external to the image: %s", tainted.size(),
+                tainted.stream().map(p -> p.getFileName().toString()).toList());
+        }
+
+        return new ClassificationResult(linkableJars, tainted, classification.classPath(), descriptorsByPath);
+    }
+
+    // Dumps the base (static) CDS archive for a just-linked image ourselves, instead of using jlink's own
+    // --generate-cds-archive plugin.
+    //
+    // Why: that plugin (jdk.jlink's CDSPlugin, see jdk.jlink/jdk/tools/jlink/internal/plugins/CDSPlugin.java
+    // in the JDK source) always dumps with a bare `java -Xshare:dump` — no -m, no module, no main class, and
+    // it has no notion of --launcher either, so it can never know that every image spin links gets launched
+    // with `-m rootModule/mainClass` (see ScriptTemplate.jt). That leaves the archived jdk.module.main
+    // property unset. At every subsequent launch the JVM detects that the (unset) archived value doesn't
+    // match the `-m` argument actually supplied, logs a "Mismatched values for property jdk.module.main"
+    // warning, and permanently disables CDS's "full module graph" optimization for that run — confirmed
+    // directly against JDK 25 and current (post-25) jdk.jlink mainline via -Xlog:cds; this is not fixed
+    // upstream. Since spin already knows the exact `-m` invocation the generated script will use, dumping
+    // the archive here with that same rootModule/mainClass avoids the mismatch entirely and lets CDS's full
+    // optimization kick in — measured ~20% faster than the mismatched jlink-plugin archive in practice.
+    //
+    // This produces the same lib/server/classes.jsa location and dump mechanism (`-Xshare:dump`) as the
+    // jlink plugin — just with -m added — so ScriptTemplate.jt's -XX:+AutoCreateSharedArchive (which builds
+    // a dynamic app.jsa layered on top of this base archive at first real run) keeps working unchanged.
+    //
+    // Best-effort: CDS is a startup-time optimization, not a correctness requirement, so a failure here
+    // (e.g. an unusual JDK build without CDS support) is logged and swallowed rather than failing the link.
+    //
+    // rootModule can itself be a tainted module-path jar (or its main class can live on the classpath) that
+    // jlink left external to the image rather than packed into lib/modules -- the same reason ScriptTemplate.jt
+    // conditionally adds --module-path $MP / -cp $LIB to the real launch command. Passing modulePath and
+    // classPathTargets here mirrors that so the dump's `-m rootModule/mainClass` can actually resolve the
+    // module instead of failing with FindException.
+    private void dumpBaseCdsArchive(final Path packagePath,
+                                    final String rootModule,
+                                    final String mainClass,
+                                    final Path modulePath,
+                                    final List<Path> classPathTargets) {
+        final var javaPath = packagePath.resolve("bin/java");
+        final var recordingObserver = new RecordingSubscriber<String>();
+        final ErrorCapture captured = new ErrorCapture();
+
+        final List<Option> options = new ArrayList<>(List.of(
+            Executable.of(javaPath.toString()),
+            Name.of("java"),
+            Argument.of("--enable-preview"),
+            Argument.of("-Xshare:dump")
+        ));
+        if (Files.isDirectory(modulePath)) {
+            options.add(Argument.of("--module-path"));
+            options.add(Argument.of(modulePath.toString()));
+        }
+        if (!classPathTargets.isEmpty()) {
+            options.add(Argument.of("-cp"));
+            options.add(Argument.of(classPathTargets.stream()
+                .map(Path::toString)
+                .collect(Collectors.joining((File.pathSeparator)))
+            ));
+        }
+        options.addAll(List.of(
+            Argument.of("-m"), Argument.of(rootModule + "/" + mainClass),
+            StandardOutputSubscriber.of(recordingObserver),
+            captured.triageSubscriber(
+                ((Predicate<String>) ErrorCapture::isJvmNoise).or(ErrorCapture::isCdsDumpNoise),
+                this.recorder::warn, this.recorder::error)
+        ));
+
+        try (var dump = this.machine.launch(Application.class, options.toArray(Option[]::new))) {
+
+            try {
+                dump.onExit().get();
+            } catch (final Exception e) {
+                throw new ProcessFailedException("CDS Base Archive Dump Failed",
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
+            }
+            if (dump.exitValue().orElse(0) != 0) {
+                throw new ProcessFailedException(
+                    "CDS Base Archive Dump Failed (exit code: " + dump.exitValue().orElse(-1) + ")",
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+            }
+        } catch (final Exception e) {
+            final Throwable unwrapped = ProcessFailedException.unwrap(e);
+            final var detail = unwrapped instanceof ProcessFailedException p && !p.output().isEmpty()
+                ? "%n%s".formatted(p.output())
+                : "";
+            this.recorder.warn("[jlink] failed to dump CDS base archive for %s — startup will not benefit "
+                + "from class data sharing: %s%s", packagePath, e.getMessage(), detail);
+        }
     }
 
     private static void deleteDirectory(final Path dir) throws IOException {

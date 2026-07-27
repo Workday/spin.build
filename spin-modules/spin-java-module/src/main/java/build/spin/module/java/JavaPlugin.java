@@ -21,7 +21,7 @@ package build.spin.module.java;
  */
 
 import build.base.option.JDKVersion;
-import build.codemodel.injection.Provides;
+import build.codemodel.dependency.injection.Provides;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.jdk.JDK;
 import build.spin.Plugin;

@@ -22,9 +22,9 @@ package build.spin.common.util;
 
 import build.base.foundation.Introspection;
 import build.base.foundation.UniformResource;
-import build.codemodel.injection.Context;
-import build.codemodel.injection.InjectionFramework;
-import build.codemodel.injection.ProvidesResolver;
+import build.codemodel.dependency.injection.Context;
+import build.codemodel.dependency.injection.InjectionFramework;
+import build.codemodel.dependency.injection.ProvidesResolver;
 import build.spin.Invocable;
 import build.spin.Plugin;
 import build.spin.Project;

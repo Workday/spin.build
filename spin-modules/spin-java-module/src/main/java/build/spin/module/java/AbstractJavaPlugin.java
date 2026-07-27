@@ -23,12 +23,13 @@ package build.spin.module.java;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.dependency.injection.Provides;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.foundation.naming.ModuleName;
-import build.codemodel.injection.Provides;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.ModuleModifier;
 import build.codemodel.jdk.descriptor.OpenModule;
+import build.codemodel.jdk.descriptor.VersionTrait;
 import build.spawn.jdk.JDK;
 import build.spin.Invocable;
 import build.spin.Plugin;
@@ -48,6 +49,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -178,7 +180,7 @@ public abstract class AbstractJavaPlugin
 
                 final String normalizedProjectName = this.project.name().replace("-", ".");
 
-                return moduleInfoPaths.stream()
+                final JDKModuleDescriptor result = moduleInfoPaths.stream()
                     .findFirst()
                     .map(path -> {
                         try (BufferedReader reader = Files.newBufferedReader(path)) {
@@ -196,9 +198,33 @@ public abstract class AbstractJavaPlugin
                             this.project.name());
                         return automaticDescriptor(normalizedProjectName);
                     });
+
+                // module-info.java source has no version syntax, so a parsed (or synthesized)
+                // descriptor never carries one; attach the Project's actual version here so
+                // downstream consumers don't report an unknown version for workspace-local modules.
+                stampVersion(result, this.versioning.getVersion(result.moduleName().toString()));
+
+                return result;
             }
 
             return descriptor;
+        });
+    }
+
+    /**
+     * Stamps {@code version}, if present, onto {@code descriptor} as a {@link VersionTrait}.
+     * <p>
+     * {@code descriptor} may be a shared instance from the CodeModel registry (multiple sibling
+     * plugins for the same module name can each obtain and stamp it), so any existing
+     * {@link VersionTrait} is removed first to keep re-stamping idempotent.
+     *
+     * @param descriptor the {@link JDKModuleDescriptor} to stamp
+     * @param version the {@link Version} to stamp, if known
+     */
+    static void stampVersion(final JDKModuleDescriptor descriptor, final Optional<Version> version) {
+        version.ifPresent(v -> {
+            descriptor.getTrait(VersionTrait.class).ifPresent(descriptor::removeTrait);
+            descriptor.addTrait(VersionTrait.of(v));
         });
     }
 

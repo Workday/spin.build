@@ -10,7 +10,7 @@ total_tokens: 75986
 
 ## System Overview
 
-**spin** is a script-free Java 25 build system. It infers what to build by inspecting project structure via pluggable `Extension`s discovered through JPMS `ServiceLoader`. Extensions auto-detect applicability, declare task dependencies via annotations (`@From`, `@After`, `@Before`), and are composed via a DI framework (`build.codemodel.injection`). No build scripts are required.
+**spin** is a script-free Java 25 build system. It infers what to build by inspecting project structure via pluggable `Extension`s discovered through JPMS `ServiceLoader`. Extensions auto-detect applicability, declare task dependencies via annotations (`@From`, `@After`, `@Before`), and are composed via a DI framework (`build.codemodel.dependency.injection`). No build scripts are required.
 
 ```mermaid
 graph TB
@@ -114,7 +114,7 @@ spin.build/
 ### `spin-api` — Public Contract
 
 **JPMS module:** `build.spin`
-**Purpose:** Every interface, annotation, and option type that extension authors need. No implementation classes. Transitively re-exports `build.codemodel.injection`, `build.base.*`, and `jakarta.inject`.
+**Purpose:** Every interface, annotation, and option type that extension authors need. No implementation classes. Transitively re-exports `build.codemodel.dependency.injection`, `build.base.*`, and `jakarta.inject`.
 
 **Key interfaces:**
 
@@ -679,7 +679,7 @@ sequenceDiagram
 - **Getters:** `age()` not `getAge()`; `Stream`-returning methods have no `get` prefix.
 - **Interface names:** no `I` prefix. **Implementation classes:** `Default` prefix, never `Impl` suffix.
 - **Constructors:** private or package-private; use `Builder` or static factory for public construction.
-- **DI:** `build.codemodel.injection` everywhere; `@Inject` constructors, `@PostInject` for post-construction.
+- **DI:** `build.codemodel.dependency.injection` everywhere; `@Inject` constructors, `@PostInject` for post-construction.
 - **Tasks** must be `public static` non-abstract inner classes of their `Plugin` to be discovered by `Invocables.stream()`.
 - **JPMS extension registration:** `provides build.spin.Extension$MetaClass with ...` in `module-info.java`. No `META-INF/services` files.
 - **Version management:** versions live in `pom.xml` properties, `version.properties` (glob-keyed), and `module-catalog.properties`; `module-info.java` `requires` statements must also be updated when dependencies change. All version types use `build.base.version.Version` / `build.base.version.VersionConstraint`.

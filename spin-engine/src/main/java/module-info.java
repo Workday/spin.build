@@ -29,14 +29,14 @@ module build.spin.engine {
     requires build.base.foundation;
     requires build.base.option;
     requires build.base.telemetry;
-    requires build.codemodel.injection;
+    requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
     requires build.spawn.platform.local;
     requires java.xml;
 
     uses build.spin.Extension.MetaClass;
 
-    opens build.spin.engine to build.codemodel.injection;
+    opens build.spin.engine to build.codemodel.dependency.injection;
 
     exports build.spin.engine;
 

@@ -28,7 +28,7 @@ import build.base.io.PathSet;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
-import build.codemodel.injection.PostInject;
+import build.codemodel.dependency.injection.PostInject;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.spin.Plugin;

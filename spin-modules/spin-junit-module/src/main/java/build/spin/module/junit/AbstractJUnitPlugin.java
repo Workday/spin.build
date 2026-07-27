@@ -21,8 +21,8 @@ package build.spin.module.junit;
  */
 
 import build.base.option.JDKVersion;
+import build.codemodel.dependency.injection.Provides;
 import build.codemodel.foundation.CodeModel;
-import build.codemodel.injection.Provides;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.Project;
 import build.spin.module.java.AbstractJavaPlugin;

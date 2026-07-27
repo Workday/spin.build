@@ -32,7 +32,7 @@ module build.spin.module.checkstyle {
     requires build.spin;
     requires jakarta.inject;
 
-    opens build.spin.module.checkstyle to build.codemodel.injection;
+    opens build.spin.module.checkstyle to build.codemodel.dependency.injection;
 
     exports build.spin.module.checkstyle;
 

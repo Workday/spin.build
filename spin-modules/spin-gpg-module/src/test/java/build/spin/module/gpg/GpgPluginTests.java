@@ -23,7 +23,7 @@ package build.spin.module.gpg;
 import build.base.configuration.ConfigurationBuilder;
 import build.base.telemetry.Activity;
 import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.injection.InjectionFramework;
+import build.codemodel.dependency.injection.InjectionFramework;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
 import build.spawn.platform.local.LocalMachine;

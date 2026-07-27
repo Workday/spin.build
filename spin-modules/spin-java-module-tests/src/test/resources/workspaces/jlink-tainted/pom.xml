@@ -1,0 +1,46 @@
+<!--
+  #%L
+  Spin Java Module Tests
+  %%
+  Copyright (C) 2026 Workday, Inc.
+  %%
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+  #L%
+  -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>jlink-tainted-fixture</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <!--
+      javax.inject:javax.inject:1 has no module-info.class, so the JDK derives its module name
+      purely from the jar filename ("javax.inject"). That makes it a real automatic module: jlink
+      cannot link it into lib/modules, so AbstractJavaLinker must classify it as "tainted" and leave
+      it on an external runtime module-path. This fixture exists to exercise that path end to end,
+      including the dumpBaseCdsArchive() call that must resolve the root module against it.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>javax.inject</groupId>
+            <artifactId>javax.inject</artifactId>
+            <version>1</version>
+        </dependency>
+    </dependencies>
+
+</project>

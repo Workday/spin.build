@@ -26,7 +26,7 @@ module build.spin.module.junit {
     requires build.base.io;
     requires build.base.option;
     requires build.base.telemetry;
-    requires build.codemodel.injection;
+    requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
     requires build.spawn.application;
     requires build.spawn.jdk;
@@ -35,7 +35,7 @@ module build.spin.module.junit {
     requires build.spin.common;
     requires jakarta.inject;
 
-    opens build.spin.module.junit to build.codemodel.injection;
+    opens build.spin.module.junit to build.codemodel.dependency.injection;
 
     exports build.spin.module.junit;
 

@@ -23,7 +23,7 @@ module build.spin {
     requires transitive build.base.configuration;
     requires transitive build.base.flow;
     requires transitive build.base.foundation;
-    requires transitive build.codemodel.injection;
+    requires transitive build.codemodel.dependency.injection;
     requires transitive jakarta.inject;
 
     requires build.base.telemetry;
