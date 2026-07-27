@@ -22,7 +22,7 @@ package build.spin.module.maven;
 
 import build.base.io.PathSet;
 import build.base.telemetry.TelemetryRecorder;
-import build.codemodel.injection.InjectionFramework;
+import build.codemodel.dependency.injection.InjectionFramework;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Resource;
