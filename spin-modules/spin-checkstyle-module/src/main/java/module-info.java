@@ -30,6 +30,7 @@ module build.spin.module.checkstyle {
     requires build.spawn.jdk;
     requires build.spawn.platform.local;
     requires build.spin;
+    requires build.spin.common;
     requires jakarta.inject;
 
     opens build.spin.module.checkstyle to build.codemodel.dependency.injection;

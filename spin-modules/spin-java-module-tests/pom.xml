@@ -44,6 +44,13 @@
         <!-- ServiceLoader-discovered plugin modules -->
         <dependency>
             <groupId>build.spin.module</groupId>
+            <artifactId>spin-checkstyle-module</artifactId>
+            <version>${revision}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>build.spin.module</groupId>
             <artifactId>spin-clean-module</artifactId>
             <version>${revision}</version>
             <scope>test</scope>
@@ -268,6 +275,7 @@
                 <configuration>
                     <ignoredUnusedDeclaredDependencies>
                         <!-- ServiceLoader-discovered plugin modules; no direct class imports -->
+                        <ignoredUnusedDeclaredDependency>build.spin.module:spin-checkstyle-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-clean-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-java-module</ignoredUnusedDeclaredDependency>
                         <ignoredUnusedDeclaredDependency>build.spin.module:spin-junit-module</ignoredUnusedDeclaredDependency>

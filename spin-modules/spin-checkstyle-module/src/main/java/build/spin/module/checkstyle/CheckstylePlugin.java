@@ -21,11 +21,13 @@ package build.spin.module.checkstyle;
  */
 
 import build.base.configuration.Option;
+import build.base.flow.RecordingSubscriber;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.spawn.application.option.Argument;
 import build.spawn.application.option.Name;
+import build.spawn.application.option.StandardOutputSubscriber;
 import build.spawn.jdk.JDKApplication;
 import build.spawn.jdk.option.ClassPath;
 import build.spawn.jdk.option.MainClass;
@@ -37,8 +39,12 @@ import build.spin.annotation.After;
 import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
+import build.spin.common.ProcessFailedException;
+import build.spin.module.java.AbstractDetectSourceFiles;
+import build.spin.module.java.ErrorCapture;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.CheckstyleArguments;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 
@@ -47,7 +53,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -84,13 +90,26 @@ public class CheckstylePlugin
         @System
         private JDKVersion javaVersion;
 
+        /**
+         * Used only when the project declares no {@code maven-checkstyle-plugin} {@code
+         * <dependencies>} of its own (see {@link CheckstyleArguments#additionalCheckArtifacts}) —
+         * i.e. it isn't pinning a Checkstyle version itself.
+         */
+        private static final String DEFAULT_CHECKSTYLE_COORDINATE = "com.puppycrawl.tools:checkstyle:13.9.0";
+
         public void check(final @From(JavaCompilerPlugin.DetectSourceFiles.class) Stream<PathSet> sourceCode) {
+
+            final List<String> declaredArtifacts = this.project.findResource(CheckstyleArguments.class)
+                .map(args -> args.additionalCheckArtifacts(this.project).toList())
+                .orElseGet(List::of);
+            final boolean declaresCheckstyleCore = declaredArtifacts.stream()
+                .anyMatch(coordinate -> coordinate.startsWith("com.puppycrawl.tools:checkstyle:"));
 
             // determine the paths to launch Checkstyle (resolve transitively for each top-level artifact)
             final LinkedHashSet<Path> checkstyleArtifactPaths = new LinkedHashSet<>();
-            Stream.of(
-                    "com.puppycrawl.tools:checkstyle:8.8",
-                    "com.workday:checkstyle-checks:4.0.13")
+            (declaresCheckstyleCore
+                    ? declaredArtifacts.stream()
+                    : Stream.concat(Stream.of(DEFAULT_CHECKSTYLE_COORDINATE), declaredArtifacts.stream()))
                 .map(Artifact::parse)
                 .flatMap(artifact -> this.resolver.resolveTransitive(artifact)
                     .map(List::stream)
@@ -99,9 +118,12 @@ public class CheckstylePlugin
 
             final Stream<Path> checkstyleArtifacts = checkstyleArtifactPaths.stream();
 
-            // the path containing the checkstyle configuration
+            // the checkstyle configuration: the project's own maven-checkstyle-plugin <configLocation>
+            // if declared, otherwise the workspace-level "checkstyle/checkstyle.xml" convention
             final Path workspacePath = this.project.workspace().path();
-            final Path configurationPath = workspacePath.resolve("checkstyle/checkstyle.xml");
+            final Path configurationPath = this.project.findResource(CheckstyleArguments.class)
+                .flatMap(args -> args.configurationPath(this.project))
+                .orElseGet(() -> workspacePath.resolve("checkstyle/checkstyle.xml"));
 
             // create the Options to launch Checkstyle
             final List<Option> optionList = new ArrayList<>();
@@ -110,32 +132,77 @@ public class CheckstylePlugin
             optionList.add(MainClass.of("com.puppycrawl.tools.checkstyle.Main"));
             optionList.add(Argument.of("-c"));
             optionList.add(Argument.of(configurationPath.toString()));
+
+            // src/test/java is out of scope for JavaCompilerPlugin.DetectSourceFiles (that task is
+            // explicitly main-source-only), so it's only included here when the project's pom opts
+            // in via <includeTestSourceDirectory> — same opt-in maven-checkstyle-plugin itself uses.
+            final boolean includeTestSourceDirectory = this.project.findResource(CheckstyleArguments.class)
+                .map(args -> args.includeTestSourceDirectory(this.project))
+                .orElse(false);
+            final Stream<PathSet> allSourceCode = includeTestSourceDirectory
+                ? Stream.concat(sourceCode, Stream.of(testSourceFiles(this.project)))
+                : sourceCode;
+
             // include the files in the source code
-            final AtomicInteger sourceFiles = new AtomicInteger(0);
-            sourceCode.flatMap(PathSet::stream)
+            final List<Path> sourceFiles = allSourceCode.flatMap(PathSet::stream)
                 .map(Path::toAbsolutePath)
-                .peek(__ -> sourceFiles.incrementAndGet())
+                .toList();
+            sourceFiles.stream()
                 .map(Path::toString)
                 .map(Argument::of)
                 .forEach(optionList::add);
 
             // perform check iff there's source files
-            if (sourceFiles.get() > 0) {
+            if (!sourceFiles.isEmpty()) {
+                // Checkstyle's Main writes violations to stdout and reserves stderr for genuine
+                // tool failures (e.g. a malformed configuration) — capture both. Note stderr is
+                // never actually empty here: the spawn launcher's SpawnAgent unconditionally writes
+                // its own bootstrap diagnostics ("[SpawnAgent:N] ...") to stderr for every process
+                // it launches, successful or not, so ErrorCapture.selectOutput's "prefer stderr when
+                // non-empty" heuristic can't be used to pick between the two for a completed run —
+                // it would always pick the SpawnAgent noise over the real violations on stdout.
+                final RecordingSubscriber<String> recordingObserver = new RecordingSubscriber<>();
+                final ErrorCapture captured = new ErrorCapture();
+                optionList.add(StandardOutputSubscriber.of(recordingObserver));
+                optionList.add(captured.subscriber(this.recorder::error));
+
                 try (JDKApplication checkstyle = this.machine.launch(JDKApplication.class,
                         optionList.toArray(new Option[0]))) {
-                    checkstyle.onExit().get();
 
-                    // output the exit value
-                    checkstyle
-                        .exitValue()
-                        .ifPresent(value -> this.recorder.info("Checkstyle finished with exit code %d", value));
-                }
-                catch (final Exception e) {
-                    this.recorder.error(e, "Failed to execute Checkstyle");
+                    try {
+                        checkstyle.onExit().get();
+                    }
+                    catch (final Exception e) {
+                        throw new ProcessFailedException("Checkstyle Execution Failed",
+                            ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
+                    }
 
-                    throw new RuntimeException("Checkstyle Failure", e);
+                    final int exitValue = checkstyle.exitValue().orElse(0);
+                    if (exitValue != 0) {
+                        // the process ran to completion and reported violations — that content is
+                        // on stdout, not stderr (see note above)
+                        throw new ProcessFailedException(
+                            "Checkstyle Failed (exit code: " + exitValue + ")",
+                            recordingObserver.items().collect(Collectors.joining("\n")));
+                    }
+
+                    this.recorder.info("Checkstyle finished with exit code %d", exitValue);
                 }
             }
+        }
+
+        /**
+         * Walks {@code src/test/java} for {@code .java} files, mirroring the fixed relative path
+         * {@code Java25JUnitPlugin.DetectSourcePaths}/{@code Java8JUnitPlugin.DetectSourcePaths}
+         * use, without taking a task-graph dependency on the JUnit module (test frameworks other
+         * than JUnit may be present, or none at all).
+         */
+        private static PathSet testSourceFiles(final Project project) {
+            final Path testSourcePath = project.path().resolve("src/test/java");
+            if (!Files.isDirectory(testSourcePath)) {
+                return PathSet.empty();
+            }
+            return new AbstractDetectSourceFiles() { }.detect(PathSet.of(testSourcePath));
         }
     }
 
@@ -154,9 +221,24 @@ public class CheckstylePlugin
 
         @Override
         public boolean isDetectedIn(final Project project) {
+            if (project.plugins(JavaCompilerPlugin.class).findAny().isEmpty()) {
+                return false;
+            }
             final Path workspacePath = project.workspace().path();
-            return project.plugins(JavaCompilerPlugin.class).findAny().isPresent()
-                && Files.exists(workspacePath.resolve("checkstyle"));
+            // check for the actual configuration file, not just the "checkstyle" folder's
+            // existence — a workspace can have an unrelated "checkstyle" folder (e.g. a Gradle
+            // fixture's own checkstyle rules, not named checkstyle.xml) without opting in to this
+            // convention
+            if (Files.exists(workspacePath.resolve("checkstyle/checkstyle.xml"))) {
+                return true;
+            }
+            // also detect a project-declared maven-checkstyle-plugin <configLocation>, so a pom
+            // that configures Checkstyle its own way doesn't additionally need the workspace
+            // "checkstyle" folder convention
+            return project.findResource(CheckstyleArguments.class)
+                .flatMap(args -> args.configurationPath(project))
+                .filter(Files::exists)
+                .isPresent();
         }
     }
 }

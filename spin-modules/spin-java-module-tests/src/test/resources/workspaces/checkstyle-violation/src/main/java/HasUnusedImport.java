@@ -1,8 +1,6 @@
-package build.spin.module.modulesystem.pom;
-
 /*-
  * #%L
- * Spin Module System Module
+ * Spin Java Module Tests
  * %%
  * Copyright (C) 2026 Workday, Inc.
  * %%
@@ -19,20 +17,17 @@ package build.spin.module.modulesystem.pom;
  * limitations under the License.
  * #L%
  */
-
 import java.util.List;
-import java.util.Optional;
 
 /**
- * Record implementation of {@link Plugin}.
+ * A simple Java class with an unused import, to trigger a Checkstyle violation.
  *
  * @author reed.vonredwitz
- * @since Apr-2026
+ * @since Jul-2026
  */
-public record DefaultPlugin(String groupId,
-                            String artifactId,
-                            Optional<String> version,
-                            ConfigNode configuration,
-                            List<Dependency> dependencies
-) implements Plugin {
+public class HasUnusedImport {
+
+    public static void main(String[] args) {
+        System.out.println("This compiles, but should fail Checkstyle");
+    }
 }

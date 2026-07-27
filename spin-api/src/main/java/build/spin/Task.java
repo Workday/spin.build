@@ -80,7 +80,7 @@ public interface Task<T> {
     @SuppressWarnings("unchecked")
     default T execute(final Invocable<?> invocable, final Context context, final InjectionFramework framework) {
 
-        final Class<?> taskResultClass = invocable.getTaskResultClass().orElse(void.class);
+        final Class<?> taskResultClass = invocable.getTaskResultClass().orElseThrow();
 
         final var codemodel = framework.codeModel();
 
