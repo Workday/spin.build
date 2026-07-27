@@ -33,6 +33,7 @@ module build.spin.module.java {
     requires build.base.telemetry;
     requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;
+    requires build.percolate.core;
     requires build.spawn.application;
     requires build.spawn.jdk;
     requires build.spawn.platform.local;
