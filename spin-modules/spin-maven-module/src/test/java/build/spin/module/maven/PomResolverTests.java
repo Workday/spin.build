@@ -35,8 +35,12 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -429,6 +433,66 @@ public class PomResolverTests {
     }
 
     /**
+     * A SNAPSHOT artifact placed in the local repository by a plain {@code mvn install} (i.e. with no
+     * spin-specific bookkeeping alongside it) must be trusted as up to date as long as its own file
+     * mtime is within the snapshot update-policy TTL. This is the regression case for the bug where
+     * spin unconditionally re-fetched (and clobbered) any snapshot it hadn't itself downloaded,
+     * because freshness was tracked in a separate {@code .spin-lastUpdated-*} marker file that only
+     * spin's own downloader ever wrote.
+     */
+    @Test
+    void shouldTreatFreshLocallyInstalledSnapshotAsUpToDateWithoutSpinsOwnMarker(
+        @org.junit.jupiter.api.io.TempDir final Path tempDir) throws IOException {
+        final Path target = tempDir.resolve("test/artifact/1.0-SNAPSHOT/artifact-1.0-SNAPSHOT.jar");
+        Files.createDirectories(target.getParent());
+        Files.writeString(target, "locally-installed-bytes");
+
+        try (SnapshotTestRepoServer server =
+                 new SnapshotTestRepoServer("20260729.120000", "1", "remote-bytes".getBytes(StandardCharsets.UTF_8))) {
+            final PomResolver resolver = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://snapshot-freshness-test"), System.out::println),
+                tempDir,
+                false,
+                List.of(RemoteRepo.of("test", "http://localhost:" + server.port())));
+
+            final Optional<Path> resolved = resolver.resolveArtifact("test:artifact:1.0-SNAPSHOT");
+
+            assertThat(resolved).contains(target);
+            assertThat(Files.readString(target)).isEqualTo("locally-installed-bytes");
+            assertThat(server.requestCount()).isZero();
+        }
+    }
+
+    /**
+     * Conversely, a SNAPSHOT whose local copy has genuinely aged past the update-policy TTL must
+     * still be re-fetched from the remote repository — the fix for the marker-file bug must not
+     * regress into never re-checking snapshots at all.
+     */
+    @Test
+    void shouldRefetchSnapshotOnceLocalCopyAgesPastTheUpdatePolicyTtl(
+        @org.junit.jupiter.api.io.TempDir final Path tempDir) throws IOException {
+        final Path target = tempDir.resolve("test/artifact/1.0-SNAPSHOT/artifact-1.0-SNAPSHOT.jar");
+        Files.createDirectories(target.getParent());
+        Files.writeString(target, "stale-local-bytes");
+        Files.setLastModifiedTime(target, FileTime.from(Instant.now().minus(Duration.ofDays(2))));
+
+        try (SnapshotTestRepoServer server = new SnapshotTestRepoServer(
+                "20260729.120000", "1", "fresh-remote-bytes".getBytes(StandardCharsets.UTF_8))) {
+            final PomResolver resolver = new PomResolver(
+                new TelemetryPublisher(URI.create("maven://snapshot-staleness-test"), System.out::println),
+                tempDir,
+                false,
+                List.of(RemoteRepo.of("test", "http://localhost:" + server.port())));
+
+            final Optional<Path> resolved = resolver.resolveArtifact("test:artifact:1.0-SNAPSHOT");
+
+            assertThat(resolved).contains(target);
+            assertThat(Files.readString(target)).isEqualTo("fresh-remote-bytes");
+            assertThat(server.requestCount()).isGreaterThan(0);
+        }
+    }
+
+    /**
      * A checksum sidecar request that fails for a reason other than "not found" (here, an HTTP 500)
      * must reject the download rather than silently trusting the unverified file — unlike a
      * {@code 404}, which legitimately means the repository never published a checksum for this
@@ -505,6 +569,94 @@ public class PomResolverTests {
                     .getBytes(StandardCharsets.US_ASCII));
                 out.write(body);
             }
+            out.flush();
+        }
+
+        @Override
+        public void close() {
+            this.running = false;
+            try {
+                this.serverSocket.close();
+            } catch (final IOException ignored) {
+                // best-effort shutdown
+            }
+        }
+    }
+
+    /**
+     * A minimal single-purpose HTTP/1.1 server modeling a SNAPSHOT-enabled Maven repository: serves
+     * a synthetic {@code maven-metadata.xml} (with the given {@code timestamp}/{@code buildNumber})
+     * for any request ending in it, the given artifact bytes for any {@code .jar} request, and a
+     * {@code 404} for any {@code .sha1} request (i.e. no checksum sidecar published, which
+     * {@link PomResolver#verifySha1} treats as "accept unverified"). Counts every request received so
+     * tests can assert whether the resolver contacted the network at all.
+     */
+    private static final class SnapshotTestRepoServer implements AutoCloseable {
+
+        private final ServerSocket serverSocket;
+        private final Thread thread;
+        private final AtomicInteger requestCount = new AtomicInteger();
+        private final String metadataXml;
+        private final byte[] artifactBytes;
+        private volatile boolean running = true;
+
+        SnapshotTestRepoServer(final String timestamp, final String buildNumber, final byte[] artifactBytes)
+            throws IOException {
+            this.serverSocket = new ServerSocket(0, 0, InetAddress.getLoopbackAddress());
+            this.metadataXml = "<metadata><versioning><snapshot><timestamp>" + timestamp
+                + "</timestamp><buildNumber>" + buildNumber + "</buildNumber></snapshot></versioning></metadata>";
+            this.artifactBytes = artifactBytes;
+            this.thread = new Thread(this::serve);
+            this.thread.setDaemon(true);
+            this.thread.start();
+        }
+
+        int port() {
+            return this.serverSocket.getLocalPort();
+        }
+
+        int requestCount() {
+            return this.requestCount.get();
+        }
+
+        private void serve() {
+            while (this.running) {
+                try (Socket socket = this.serverSocket.accept()) {
+                    handle(socket);
+                } catch (final IOException e) {
+                    // expected once close() closes the server socket to unblock accept()
+                }
+            }
+        }
+
+        private void handle(final Socket socket) throws IOException {
+            this.requestCount.incrementAndGet();
+            final BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+            final String requestLine = in.readLine();
+            String header;
+            while ((header = in.readLine()) != null && !header.isEmpty()) {
+                // discard request headers
+            }
+            final String path = requestLine.split(" ")[1];
+            final OutputStream out = socket.getOutputStream();
+            if (path.endsWith(".sha1")) {
+                respond(out, 404, new byte[0]);
+            } else if (path.endsWith("maven-metadata.xml")) {
+                respond(out, 200, this.metadataXml.getBytes(StandardCharsets.UTF_8));
+            } else if (path.endsWith(".jar")) {
+                respond(out, 200, this.artifactBytes);
+            } else {
+                respond(out, 404, new byte[0]);
+            }
+        }
+
+        private static void respond(final OutputStream out, final int statusCode, final byte[] body)
+            throws IOException {
+            final String statusLine = statusCode == 200 ? "200 OK" : "404 Not Found";
+            out.write(("HTTP/1.1 " + statusLine + "\r\nContent-Length: " + body.length + "\r\nConnection: close\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+            out.write(body);
             out.flush();
         }
 
