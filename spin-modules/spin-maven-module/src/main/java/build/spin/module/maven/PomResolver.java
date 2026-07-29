@@ -402,9 +402,7 @@ class PomResolver {
     private Optional<Path> resolveSnapshot(final Coordinates coords,
                                            final Path target) {
         final Gav gav = coords.gav();
-        final Path marker = target.getParent()
-            .resolve(".spin-lastUpdated-" + target.getFileName());
-        if (Files.exists(target) && isSnapshotFresh(marker, effectiveSnapshotUpdateTtlMs())) {
+        if (Files.exists(target) && isSnapshotFresh(target, effectiveSnapshotUpdateTtlMs())) {
             return Optional.of(target);
         }
         if (this.offline) {
@@ -421,18 +419,18 @@ class PomResolver {
         }
         final String version = gav.version();
         final String baseVersion = version.substring(0, version.length() - "-SNAPSHOT".length());
-        final Optional<Path> result = downloadSnapshot(coords, baseVersion + "-" + suffix.get(), target);
-        result.ifPresent(__ -> writeLastUpdated(marker));
-        return result;
+        return downloadSnapshot(coords, baseVersion + "-" + suffix.get(), target);
     }
 
-    private boolean isSnapshotFresh(final Path marker, final long ttlMs) {
+    /**
+     * A snapshot is fresh if the artifact already in the local repository was last modified within
+     * {@code ttlMs} — whether it was placed there by spin's own resolver or by a plain
+     * {@code mvn install}, since either way the file's mtime reflects when it was actually produced.
+     */
+    private boolean isSnapshotFresh(final Path target, final long ttlMs) {
         try {
-            if (!Files.exists(marker)) {
-                return false;
-            }
-            return (System.currentTimeMillis() - Long.parseLong(Files.readString(marker).trim())) < ttlMs;
-        } catch (final Exception e) {
+            return (System.currentTimeMillis() - Files.getLastModifiedTime(target).toMillis()) < ttlMs;
+        } catch (final IOException e) {
             return false;
         }
     }
@@ -477,14 +475,6 @@ class PomResolver {
         }
         // "daily" or unrecognized: fall back to the default daily TTL
         return SNAPSHOT_TTL_MS;
-    }
-
-    private void writeLastUpdated(final Path marker) {
-        try {
-            Files.writeString(marker, String.valueOf(System.currentTimeMillis()));
-        } catch (final IOException e) {
-            this.recorder.warn(e, "Could not write snapshot update marker %s", marker);
-        }
     }
 
     private Optional<String> fetchSnapshotSuffix(final Gav gav) {
