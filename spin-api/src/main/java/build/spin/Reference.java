@@ -67,7 +67,7 @@ public interface Reference {
             @Override
             public boolean equals(final Object object) {
                 return object instanceof Reference
-                    && project().name().equals(((Reference) object).project().name())
+                    && project().equals(((Reference) object).project())
                     && Objects.equals(getPluginClass(), ((Reference) object).getPluginClass())
                     && getTaskClass().equals(((Reference) object).getTaskClass());
             }
