@@ -210,13 +210,11 @@ public class MavenPlugin
          * @param manifest  the {@link Manifest}
          * @param buildPath the {@link Path} for build output
          * @param pathSets  the {@link Stream} of compilation {@link PathSet}s
-         * @param pomPath   the pom.xml {@link Path}
          * @return a new {@link JarBuilder}
          */
         public JarBuilder create(final @From(CreateModuleManifest.class) Manifest manifest,
                                  final @From(CleanPlugin.CreateBuildPath.class) Path buildPath,
-                                 final @From(JavaCompilerPlugin.Compile.class) Stream<PathSet> pathSets,
-                                 final @From(CreatePOMFile.class) Path pomPath)
+                                 final @From(JavaCompilerPlugin.Compile.class) Stream<PathSet> pathSets)
             throws IOException {
 
             final JarBuilder builder = new JarBuilder(manifest);

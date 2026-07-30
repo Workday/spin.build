@@ -35,7 +35,7 @@ import build.spawn.platform.local.LocalMachine;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
-import build.spin.annotation.After;
+import build.spin.annotation.Category;
 import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
@@ -70,7 +70,7 @@ public class CheckstylePlugin
      */
     @Named("checkstyle")
     @Description("Run Checkstyle static analysis")
-    @After(JavaCompilerPlugin.Compile.class)
+    @Category("build")
     public static class Checkstyle
         implements Task {
 
