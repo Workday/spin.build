@@ -1,8 +1,6 @@
-package build.spin.common.task;
-
 /*-
  * #%L
- * Spin Common Library
+ * Spin Java Module Tests
  * %%
  * Copyright (C) 2026 Workday, Inc.
  * %%
@@ -19,27 +17,18 @@ package build.spin.common.task;
  * limitations under the License.
  * #L%
  */
-
-import build.base.io.PathSet;
-import build.spin.Task;
+import java.util.List;
 
 /**
- * A {@link Task} that detects annotation-processor generated source root directories from a prior build.
- *
- * <p>Only surfaces directories that already exist on disk — never participates in compilation.
+ * A {@code src/test/java} class with an unused import, to trigger a Checkstyle violation that is
+ * only in scope when {@code includeTestSourceDirectory} is honored.
  *
  * @author reed.vonredwitz
- * @see DetectSourcePaths
- * @see DetectAllSourcePaths
- * @since May-2026
+ * @since Jul-2026
  */
-public interface DetectGeneratedSourcePaths
-    extends Task<PathSet> {
+public class HasUnusedImportInTest {
 
-    /**
-     * Creates a {@link PathSet} containing the generated source root directories for a project.
-     *
-     * @return the {@link PathSet}
-     */
-    PathSet detect();
+    public static void main(String[] args) {
+        System.out.println("This test source has an unused import to trigger Checkstyle");
+    }
 }

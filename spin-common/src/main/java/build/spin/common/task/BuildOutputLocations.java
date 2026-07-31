@@ -1,8 +1,8 @@
-package build.spin.module.java;
+package build.spin.common.task;
 
 /*-
  * #%L
- * Spin Java Module
+ * Spin Common Library
  * %%
  * Copyright (C) 2026 Workday, Inc.
  * %%
@@ -30,7 +30,7 @@ import java.util.Optional;
  * <p>Knows about spin ({@code .build/main/}), Maven ({@code target/}), and
  * Gradle ({@code build/}) layouts so callers don't have to hardcode paths.
  */
-final class BuildOutputLocations {
+public final class BuildOutputLocations {
 
     private BuildOutputLocations() {
     }
@@ -39,7 +39,7 @@ final class BuildOutputLocations {
      * Returns the spin output path for {@code relPath} under {@code buildDir/main/},
      * if that path exists on disk.
      */
-    static Optional<Path> spin(final Path project, final String buildDir, final String relPath) {
+    public static Optional<Path> spin(final Path project, final String buildDir, final String relPath) {
         return existing(project.resolve(buildDir + "/main/" + relPath));
     }
 
@@ -47,7 +47,7 @@ final class BuildOutputLocations {
      * Returns the Maven output path for {@code relPath} under {@code target/},
      * if that path exists on disk.
      */
-    static Optional<Path> maven(final Path project, final String relPath) {
+    public static Optional<Path> maven(final Path project, final String relPath) {
         return existing(project.resolve("target/" + relPath));
     }
 
@@ -55,7 +55,7 @@ final class BuildOutputLocations {
      * Returns the Gradle output path for {@code relPath} under {@code build/},
      * if that path exists on disk.
      */
-    static Optional<Path> gradle(final Path project, final String relPath) {
+    public static Optional<Path> gradle(final Path project, final String relPath) {
         return existing(project.resolve("build/" + relPath));
     }
 

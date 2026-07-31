@@ -323,6 +323,94 @@ public class JavaProjectTests {
     }
 
     @Test
+    @WorkspacePath("checkstyle-test-sources")
+    void shouldIncludeTestSourceDirectoryWhenConfigured(final Engine engine, final Workspace workspace) {
+
+        assertThat(workspace.name()).isEqualTo("checkstyle-test-sources");
+        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent()).isTrue();
+        assertThat(workspace.getPlugin(Java25JUnitPlugin.class).isPresent()).isTrue();
+        assertThat(workspace.getPlugin(CheckstylePlugin.class).isPresent()).isTrue();
+
+        // create a Program to run Checkstyle on the Workspace
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("checkstyle"));
+
+        // create a Task ExecutionCache for the Program
+        final AssetCache cache = DefaultAssetCache.create();
+
+        // establish a CompletingObserver to observe the checkstyle failure
+        final CompletingSubscriber<Telemetry> observer = new CompletingSubscriber<>();
+        final CompletableFuture<Telemetry> future = observer.when(t -> t instanceof Error);
+        engine.subscribe(observer);
+
+        try {
+            program.execute(cache);
+
+            fail("The Checkstyle check of the test source file should have failed");
+        } catch (final ProgramExecutionException e) {
+            Eventually.assertThat(future).isCompleted();
+
+            // all task failures: thrown + suppressed
+            final var allFailures = Stream.concat(Stream.of(e), Arrays.stream(e.getSuppressed()))
+                .toList();
+
+            // the fixture's only violation lives in src/test/java (main is clean) — this only
+            // surfaces if CheckstylePlugin.check's @From(DetectSourcePaths.class) merged
+            // Java25JUnitPlugin.DetectSourcePaths's TEST-kind paths in alongside the compiler's
+            // MAIN-kind ones, driven by <includeTestSourceDirectory>true</includeTestSourceDirectory>
+            final var checkstyleTaskFailure = allFailures.stream()
+                .filter(t -> t.getMessage().contains("HasUnusedImportInTest.java")
+                    && t.getMessage().contains("Unused import"))
+                .findFirst();
+
+            assertThat(checkstyleTaskFailure)
+                .as("expected a Checkstyle violation (HasUnusedImportInTest.java, Unused import) to be "
+                    + "embedded in a task failure message, proving TEST-kind source paths were merged in")
+                .isPresent();
+        }
+    }
+
+    @Test
+    @WorkspacePath("external-generated-sources")
+    void shouldCompileWithExternalGeneratedSources(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        assertThat(workspace.name()).isEqualTo("external-generated-sources");
+        assertThat(workspace.getPlugin(Java25CompilerPlugin.class).isPresent()).isTrue();
+
+        // simulate Maven-style generated sources from a prior build (target/generated-sources/<processor>/*).
+        // Written here rather than checked in as a fixture file since target/ is gitignored repo-wide
+        // (real generated-source output is never committed either) — SourcePathKind.EXTERNAL_GENERATED
+        // detects this directory and Java25CompilerPlugin.Compile is expected to feed it into javac as
+        // an ordinary source root.
+        final Path generatedSourceDir = workspace.path().resolve("target/generated-sources/protobuf");
+        Files.createDirectories(generatedSourceDir);
+        Files.writeString(generatedSourceDir.resolve("Generated.java"), """
+            public class Generated {
+                public static final String VALUE = "generated";
+            }
+            """);
+
+        // create a Program to compile the Workspace
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("compile"));
+
+        // create a Task ExecutionCache for the Program
+        final AssetCache cache = DefaultAssetCache.create();
+
+        program.execute(cache);
+
+        // Main.java references Generated.VALUE, so Main.class only exists if compilation succeeded,
+        // and Generated.class only exists if the generated-sources directory was actually compiled
+        // (rather than merely detected and then dropped) — together they confirm EXTERNAL_GENERATED
+        // paths flowed all the way from SourcePathKind.detect() through the @From-injected
+        // Map<SourcePathKind, PathSet> into the javac invocation.
+        final Path targetPath = workspace.path().resolve(".build/main/target");
+        assertThat(targetPath.resolve("Main.class")).exists();
+        assertThat(targetPath.resolve("Generated.class"))
+            .as("expected Generated.class compiled from target/generated-sources/protobuf")
+            .exists();
+    }
+
+    @Test
     @WorkspacePath("jlink-tainted")
     void shouldDumpCdsBaseArchiveAlongsideTaintedRootModule(final Engine engine, final Workspace workspace)
         throws Exception {

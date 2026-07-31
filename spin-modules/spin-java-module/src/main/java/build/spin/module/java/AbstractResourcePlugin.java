@@ -24,8 +24,8 @@ import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
 import build.spin.Plugin;
 import build.spin.Project;
+import build.spin.Task;
 import build.spin.common.task.AbstractCopy;
-import build.spin.common.task.DetectSourcePaths;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
@@ -45,10 +45,10 @@ import java.nio.file.Path;
 public abstract class AbstractResourcePlugin {
 
     /**
-     * An abstract base for a {@link DetectSourcePaths} task that detects a single resource directory.
+     * An abstract base for a {@link Task} that detects a single resource directory.
      */
     public abstract static class DetectResourcePaths
-        implements DetectSourcePaths {
+        implements Task<PathSet> {
 
         @Inject
         private Path projectPath;
@@ -58,7 +58,6 @@ public abstract class AbstractResourcePlugin {
          */
         protected abstract String sourcePath();
 
-        @Override
         public PathSet detect() {
             return PathSetBuilder.create()
                 .add(this.projectPath.resolve(sourcePath()))

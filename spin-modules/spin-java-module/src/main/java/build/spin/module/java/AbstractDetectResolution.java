@@ -28,6 +28,7 @@ import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.percolate.core.ModuleGraphClassifier;
 import build.spin.Project;
 import build.spin.Task;
+import build.spin.common.task.BuildOutputLocations;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.ModuleCatalog;

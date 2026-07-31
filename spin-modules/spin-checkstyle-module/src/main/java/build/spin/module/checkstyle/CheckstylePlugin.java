@@ -40,7 +40,8 @@ import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
 import build.spin.common.ProcessFailedException;
-import build.spin.module.java.AbstractDetectSourceFiles;
+import build.spin.common.task.DetectSourcePaths;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.java.ErrorCapture;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.modulesystem.Artifact;
@@ -53,6 +54,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -97,7 +99,21 @@ public class CheckstylePlugin
          */
         private static final String DEFAULT_CHECKSTYLE_COORDINATE = "com.puppycrawl.tools:checkstyle:13.9.0";
 
-        public void check(final @From(JavaCompilerPlugin.DetectSourceFiles.class) Stream<PathSet> sourceCode) {
+        public void check(final @From(DetectSourcePaths.class) Map<SourcePathKind, PathSet> sourcePaths) {
+
+            // main is always in scope; test is only in scope when the project's pom opts in via
+            // <includeTestSourceDirectory> — same opt-in maven-checkstyle-plugin itself uses. The
+            // injected Map is already merged across every DetectSourcePaths implementor in the
+            // project, so it only has a TEST entry if a JUnitPlugin is actually present; asking for
+            // a kind that's absent is a no-op rather than an error.
+            final boolean includeTestSourceDirectory = this.project.findResource(CheckstyleArguments.class)
+                .map(args -> args.includeTestSourceDirectory(this.project))
+                .orElse(false);
+            final SourcePathKind[] kinds = includeTestSourceDirectory
+                ? new SourcePathKind[] { SourcePathKind.MAIN, SourcePathKind.TEST }
+                : new SourcePathKind[] { SourcePathKind.MAIN };
+
+            final PathSet allSourceCode = DetectSourcePaths.filesOf(sourcePaths, kinds);
 
             final List<String> declaredArtifacts = this.project.findResource(CheckstyleArguments.class)
                 .map(args -> args.additionalCheckArtifacts(this.project).toList())
@@ -133,18 +149,8 @@ public class CheckstylePlugin
             optionList.add(Argument.of("-c"));
             optionList.add(Argument.of(configurationPath.toString()));
 
-            // src/test/java is out of scope for JavaCompilerPlugin.DetectSourceFiles (that task is
-            // explicitly main-source-only), so it's only included here when the project's pom opts
-            // in via <includeTestSourceDirectory> — same opt-in maven-checkstyle-plugin itself uses.
-            final boolean includeTestSourceDirectory = this.project.findResource(CheckstyleArguments.class)
-                .map(args -> args.includeTestSourceDirectory(this.project))
-                .orElse(false);
-            final Stream<PathSet> allSourceCode = includeTestSourceDirectory
-                ? Stream.concat(sourceCode, Stream.of(testSourceFiles(this.project)))
-                : sourceCode;
-
             // include the files in the source code
-            final List<Path> sourceFiles = allSourceCode.flatMap(PathSet::stream)
+            final List<Path> sourceFiles = allSourceCode.stream()
                 .map(Path::toAbsolutePath)
                 .toList();
             sourceFiles.stream()
@@ -189,20 +195,6 @@ public class CheckstylePlugin
                     this.recorder.info("Checkstyle finished with exit code %d", exitValue);
                 }
             }
-        }
-
-        /**
-         * Walks {@code src/test/java} for {@code .java} files, mirroring the fixed relative path
-         * {@code Java25JUnitPlugin.DetectSourcePaths}/{@code Java8JUnitPlugin.DetectSourcePaths}
-         * use, without taking a task-graph dependency on the JUnit module (test frameworks other
-         * than JUnit may be present, or none at all).
-         */
-        private static PathSet testSourceFiles(final Project project) {
-            final Path testSourcePath = project.path().resolve("src/test/java");
-            if (!Files.isDirectory(testSourcePath)) {
-                return PathSet.empty();
-            }
-            return new AbstractDetectSourceFiles() { }.detect(PathSet.of(testSourcePath));
         }
     }
 
