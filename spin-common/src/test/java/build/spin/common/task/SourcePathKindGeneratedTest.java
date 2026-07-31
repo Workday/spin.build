@@ -1,8 +1,8 @@
-package build.spin.module.java;
+package build.spin.common.task;
 
 /*-
  * #%L
- * Spin Java Module
+ * Spin Common Library
  * %%
  * Copyright (C) 2026 Workday, Inc.
  * %%
@@ -30,7 +30,7 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class AbstractDetectGeneratedSourcePathsTest {
+class SourcePathKindGeneratedTest {
 
     @TempDir
     Path projectRoot;
@@ -84,6 +84,6 @@ class AbstractDetectGeneratedSourcePathsTest {
     }
 
     private PathSet detect() {
-        return AbstractDetectGeneratedSourcePaths.detect(projectRoot, ".build");
+        return SourcePathKind.detectGenerated(projectRoot, ".build");
     }
 }

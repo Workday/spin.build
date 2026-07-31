@@ -52,20 +52,4 @@ public interface JUnitPlugin
         extends Task<PathSet> {
 
     }
-
-    /**
-     * A {@link Task} to detect the location of Java source files for testing with JUnit.
-     */
-    interface DetectSourceFiles
-        extends build.spin.common.task.DetectSourceFiles {
-
-    }
-
-    /**
-     * A {@link Task} to detect the location of Java source paths for testing with JUnit.
-     */
-    interface DetectSourcePaths
-        extends build.spin.common.task.DetectSourcePaths {
-
-    }
 }

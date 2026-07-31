@@ -26,6 +26,7 @@ module build.spin.common {
     requires build.base.graph;
     requires build.base.foundation;
     requires build.base.io;
+    requires build.base.option;
     requires build.base.telemetry;
     requires build.codemodel.foundation;
     requires build.codemodel.dependency.injection;

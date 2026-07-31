@@ -39,6 +39,8 @@ import build.spin.annotation.Before;
 import build.spin.annotation.Category;
 import build.spin.annotation.Description;
 import build.spin.annotation.From;
+import build.spin.common.task.DetectSourcePaths;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.gpg.GpgPlugin;
@@ -70,6 +72,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.jar.Attributes;
@@ -322,14 +325,18 @@ public class MavenPlugin
          * @return the {@link ArtifactDescriptor} for the created source archive
          */
         public ArtifactDescriptor archive(final @From(CreateDistributionPath.class) Path distributionPath,
-                                          final @From(JavaCompilerPlugin.DetectSourcePaths.class) Stream<PathSet> sourcePaths,
+                                          final @From(DetectSourcePaths.class) Map<SourcePathKind, PathSet> sourcePaths,
                                           final @From(ResourcePlugin.DetectModuleResourcePaths.class) Stream<PathSet> resourcePaths) {
 
             // establish the Archive
             final JarBuilder archiveBuilder = new JarBuilder();
 
+            // a Maven sources-jar contains only declared main source, matching maven-source-plugin's
+            // own default scope (test sources need a separate, explicitly-requested test-sources jar)
+            final PathSet mainSourcePaths = DetectSourcePaths.pathsOf(sourcePaths, SourcePathKind.MAIN);
+
             // include the paths from the PathSets
-            Stream.concat(sourcePaths, resourcePaths)
+            Stream.concat(Stream.of(mainSourcePaths), resourcePaths)
                 .flatMap(PathSet::stream)
                 .filter(Files::exists)
                 .forEach(path -> {
