@@ -265,14 +265,13 @@ public final class DefaultProgram
                 // we do however include the dependencies of the codependencies
                 // (ie: implied transitive dependencies)
 
-                // we also include all non-codependent Tasks in the Project that happen @After this task
-                // (as they are triggered by the presence of this Task)
+                // NOTE: we deliberately do NOT include Tasks that merely happen to be @After this task - per the
+                // @After contract, such Tasks "will only be executed if required", unlike @PostProcess/@PreProcess
+                // codependencies, which "will always be executed with their codependent Task". Only genuine
+                // dependencies (@From) and codependencies are pulled in here.
                 Stream.concat(
                         instruction.codependencies().flatMap(Invocable::dependencies),
-                        Stream.concat(instruction.dependencies(),
-                            taskProject.invocables()
-                                .filter(defn -> !defn.isCodependency() && defn.isAfter(taskReference))
-                                .map(Invocable::getReference)))
+                        instruction.dependencies())
                     .filter(r -> !this.instructions.containsKey(r))
                     .peek(r -> {
                         //include the dependency for the project (when it's not itself)

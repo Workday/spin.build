@@ -30,6 +30,8 @@ import build.spin.annotation.After;
 import build.spin.annotation.Category;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
+import build.spin.common.task.AbstractDetectSourcePaths;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.option.TargetDirectoryName;
@@ -39,7 +41,10 @@ import jakarta.inject.Named;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumSet;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * A {@link JavaCompilerPlugin} for Java 8 based {@link Project}s.
@@ -73,102 +78,11 @@ public class Java8CompilerPlugin
      */
     @Named("detect.source.paths")
     public static class DetectSourcePaths
-        extends AbstractDetectSourcePaths
-        implements JavaCompilerPlugin.DetectSourcePaths {
-
-    }
-
-    /**
-     * A {@link Task} to detect annotation-processor generated source paths from a prior spin compile run.
-     */
-    @Named("detect.generated.source.paths")
-    public static class DetectGeneratedSourcePaths
-        extends AbstractDetectGeneratedSourcePaths
-        implements JavaCompilerPlugin.DetectGeneratedSourcePaths {
-
-    }
-
-    /**
-     * A {@link Task} to detect annotation-processor generated source files from a prior build.
-     */
-    @Named("detect.generated.source.files")
-    public static class DetectGeneratedSourceFiles
-        extends AbstractDetectSourceFiles
-        implements JavaCompilerPlugin.DetectGeneratedSourceFiles {
+        extends AbstractDetectSourcePaths {
 
         @Override
-        public PathSet detect(@From(DetectGeneratedSourcePaths.class) final PathSet pathSet) {
-            return super.detect(pathSet);
-        }
-    }
-
-    /**
-     * A {@link Task} that merges declared, generated, and externally generated source root
-     * directories for analysis consumers.
-     */
-    @Named("detect.all.source.paths")
-    public static class DetectAllSourcePaths
-        extends AbstractDetectAllSourcePaths
-        implements JavaCompilerPlugin.DetectAllSourcePaths {
-
-        @Override
-        public PathSet detect(@From(DetectSourcePaths.class) final PathSet declared,
-                              @From(DetectGeneratedSourcePaths.class) final PathSet generated,
-                              @From(DetectExternalGeneratedSourcePaths.class) final PathSet external) {
-            return super.detect(declared, generated, external);
-        }
-    }
-
-    /**
-     * A {@link Task} to detect generated source paths from a prior build, for use as compilation
-     * input.
-     */
-    @Named("detect.external.generated.source.paths")
-    public static class DetectExternalGeneratedSourcePaths
-        extends AbstractDetectExternalGeneratedSourcePaths
-        implements JavaCompilerPlugin.DetectExternalGeneratedSourcePaths {
-
-    }
-
-    /**
-     * A {@link Task} to detect generated source files for use as compilation input.
-     */
-    @Named("detect.external.generated.source.files")
-    public static class DetectExternalGeneratedSourceFiles
-        extends AbstractDetectSourceFiles
-        implements JavaCompilerPlugin.DetectExternalGeneratedSourceFiles {
-
-        @Override
-        public PathSet detect(@From(DetectExternalGeneratedSourcePaths.class) final PathSet pathSet) {
-            return super.detect(pathSet);
-        }
-    }
-
-    /**
-     * A {@link Task} to determine the source files for compilation.
-     */
-    @Named("detect.source.files")
-    public static class DetectSourceFiles
-        extends AbstractDetectSourceFiles
-        implements JavaCompilerPlugin.DetectSourceFiles {
-
-        @Override
-        public PathSet detect(@From(DetectSourcePaths.class) final PathSet pathSet) {
-            return super.detect(pathSet);
-        }
-    }
-
-    /**
-     * A {@link Task} to detect all source files (declared + generated) for analysis consumers.
-     */
-    @Named("detect.all.source.files")
-    public static class DetectAllSourceFiles
-        extends AbstractDetectSourceFiles
-        implements JavaCompilerPlugin.DetectAllSourceFiles {
-
-        @Override
-        public PathSet detect(@From(DetectAllSourcePaths.class) final PathSet pathSet) {
-            return super.detect(pathSet);
+        protected Set<SourcePathKind> kinds() {
+            return EnumSet.of(SourcePathKind.MAIN, SourcePathKind.GENERATED, SourcePathKind.EXTERNAL_GENERATED);
         }
     }
 
@@ -195,23 +109,27 @@ public class Java8CompilerPlugin
         private TargetDirectoryName target;
 
         /**
-         * Compiles the source code in the provided {@link PathSet} into the specified build {@link Path}.
+         * Compiles the source code detected under the provided {@link SourcePathKind}s into the
+         * specified build {@link Path}.
          *
-         * @param sourceCode the source code
+         * @param sourcePaths the detected source root directories, by {@link SourcePathKind}
          * @param resolution the {@link CompilationResolution} (module-path and classpath)
          * @param buildPath  the build {@link Path}
          *
          * @return the {@link PathSet} containing the compiled classes
          * @throws Exception should compilation fail
          */
-        public PathSet compile(final @From(DetectSourceFiles.class) PathSet sourceCode,
-                               final @From(DetectExternalGeneratedSourceFiles.class) PathSet externalGeneratedSources,
+        public PathSet compile(final @From(DetectSourcePaths.class) Map<SourcePathKind, PathSet> sourcePaths,
                                final @From(DetectCompilationResolution.class) CompilationResolution resolution,
                                final @From(CleanPlugin.CreateBuildPath.class) Asset<Path> buildPath)
             throws Exception {
 
             // the path in which to place the compiled classes
             final Path targetPath = buildPath.get().resolve("main/" + this.target.get());
+
+            final PathSet sourceCode = build.spin.common.task.DetectSourcePaths.filesOf(sourcePaths, SourcePathKind.MAIN);
+            final PathSet externalGeneratedSources =
+                build.spin.common.task.DetectSourcePaths.filesOf(sourcePaths, SourcePathKind.EXTERNAL_GENERATED);
 
             return super.compile(sourceCode, externalGeneratedSources, resolution, buildPath.get(), targetPath);
         }
@@ -228,19 +146,23 @@ public class Java8CompilerPlugin
         extends AbstractJavaDoc {
 
         /**
-         * Generates Java Documentation from the source code in the {@link Project}.
+         * Generates Java Documentation from the source code detected under the provided
+         * {@link SourcePathKind}s in the {@link Project}.
          *
-         * @param sourceCode the source code
+         * @param sourcePaths the detected source root directories, by {@link SourcePathKind}
          * @param resolution the {@link CompilationResolution} (module-path and classpath)
          * @param buildPath  the build {@link Path}
          *
          * @return the {@link Path} of the generated documentation
          * @throws Exception should documentation fail
          */
-        public Path javadoc(final @From(DetectAllSourceFiles.class) PathSet sourceCode,
+        public Path javadoc(final @From(DetectSourcePaths.class) Map<SourcePathKind, PathSet> sourcePaths,
                             final @From(DetectCompilationResolution.class) CompilationResolution resolution,
                             final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {
+
+            final PathSet sourceCode = build.spin.common.task.DetectSourcePaths.filesOf(
+                sourcePaths, SourcePathKind.MAIN, SourcePathKind.GENERATED, SourcePathKind.EXTERNAL_GENERATED);
 
             return super.javadoc(
                 sourceCode,

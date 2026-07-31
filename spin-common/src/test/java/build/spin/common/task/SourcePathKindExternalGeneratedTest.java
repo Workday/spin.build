@@ -1,8 +1,8 @@
-package build.spin.module.java;
+package build.spin.common.task;
 
 /*-
  * #%L
- * Spin Java Module
+ * Spin Common Library
  * %%
  * Copyright (C) 2026 Workday, Inc.
  * %%
@@ -30,7 +30,7 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class AbstractDetectExternalGeneratedSourcePathsTest {
+class SourcePathKindExternalGeneratedTest {
 
     @TempDir
     Path projectRoot;
@@ -61,7 +61,7 @@ class AbstractDetectExternalGeneratedSourcePathsTest {
 
     @Test
     void detectExternal_spinAndMavenBothExist_stillReturnsMavenSubdirectories() throws IOException {
-        // unlike DetectGeneratedSourcePaths, the presence of spin's own output does not suppress
+        // unlike SourcePathKind.GENERATED, the presence of spin's own output does not suppress
         // the Maven scan -- Maven-generated content (e.g. protobuf, ANTLR) is unrelated to spin's
         // annotation-processor output and must always be surfaced.
         Files.createDirectories(projectRoot.resolve(".build/main/generated-sources"));
@@ -72,6 +72,6 @@ class AbstractDetectExternalGeneratedSourcePathsTest {
     }
 
     private PathSet detectExternal() {
-        return AbstractDetectGeneratedSourcePaths.detectExternal(projectRoot);
+        return SourcePathKind.detectExternalGenerated(projectRoot);
     }
 }

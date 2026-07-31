@@ -37,10 +37,13 @@ import build.spin.Instruction;
 import build.spin.Reference;
 import build.spin.Task;
 import build.spin.annotation.From;
+import build.spin.annotation.Merge;
 import build.spin.common.VoidAsset;
 import build.spin.common.util.AnnotationValues;
 
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -245,9 +248,17 @@ public class FromResolver
                 requiredClass = dependencyClass;
             }
 
+            final boolean abstractFromClass = fromClass.isInterface() || Modifier.isAbstract(fromClass.getModifiers());
+
+            // eg: @Merge @From(SomePlugin.SomeTask) SomeResult result
+            if (abstractFromClass && fromClass.isAnnotationPresent(Merge.class)
+                && !Asset.class.isAssignableFrom(dependencyClass)) {
+                return resolveMerged(dependency, fromClass, requiredClass);
+            }
+
             @SuppressWarnings("unchecked")
             final Optional<Asset<Object>> optional =
-                fromClass.isInterface() || Modifier.isAbstract(fromClass.getModifiers())
+                abstractFromClass
                     ? this.cache.get(project, (Class<? extends Task<Object>>) fromClass)
                     : this.cache.get(Reference.of(project, fromClass));
 
@@ -280,5 +291,67 @@ public class FromResolver
                     }
                 });
         }
+    }
+
+    /**
+     * Resolves the value for a {@link Merge}-annotated abstract {@code @From} {@link Task} type by
+     * invoking its declared {@code public static T merge(Stream<T>)} method over the results of every
+     * matching implementor in the {@link #instruction}'s dependencies, rather than arbitrarily
+     * selecting one (as the single-result branch does for non-{@link Merge} abstract types).
+     *
+     * @param dependency  the {@link Dependency} being resolved
+     * @param fromClass   the {@link Merge}-annotated abstract {@link Task} {@link Class}
+     * @param requiredClass the {@link Class} the merged result must be assignable to
+     * @return the {@link Binding} for the merged result, or {@link Optional#empty()} on failure
+     */
+    private Optional<? extends Binding<Object>> resolveMerged(final Dependency dependency,
+                                                               final Class<? extends Task<?>> fromClass,
+                                                               final Class<?> requiredClass) {
+
+        final Method mergeMethod;
+        try {
+            mergeMethod = fromClass.getMethod("merge", Stream.class);
+        } catch (final NoSuchMethodException e) {
+            this.recorder.fatal(
+                "The @Merge annotated Task [%s] does not declare a public static merge(Stream<T>) method.",
+                Introspection.describe(fromClass));
+            return Optional.empty();
+        }
+
+        if (!Modifier.isStatic(mergeMethod.getModifiers())) {
+            this.recorder.fatal(
+                "The @Merge annotated Task [%s] does not declare a public static merge(Stream<T>) method.",
+                Introspection.describe(fromClass));
+            return Optional.empty();
+        }
+
+        final List<Object> results = this.instruction.dependencies()
+            .filter(reference -> fromClass.isAssignableFrom(reference.getTaskClass()))
+            .map(this.cache::get)
+            .filter(Objects::nonNull)
+            .filter(Optional::isPresent)
+            .map(Optional::get)
+            .filter(asset -> !(asset instanceof VoidAsset))
+            .map(Asset::get)
+            .toList();
+
+        final Object merged;
+        try {
+            merged = mergeMethod.invoke(null, results.stream());
+        } catch (final ReflectiveOperationException e) {
+            this.recorder.fatal(e, "Failed to invoke merge(Stream<T>) declared by [%s].", Introspection.describe(fromClass));
+            return Optional.empty();
+        }
+
+        if (!requiredClass.isInstance(merged)) {
+            this.recorder.fatal(
+                "The type [%s] produced by merging [%s] is not assignable or convertable to [%s].",
+                Introspection.describe(requiredClass),
+                Introspection.describe(fromClass),
+                dependency.typeUsage());
+            return Optional.empty();
+        }
+
+        return Optional.of(binding(dependency, merged));
     }
 }

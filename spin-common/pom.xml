@@ -39,6 +39,11 @@
 
         <dependency>
             <groupId>build.base</groupId>
+            <artifactId>base-option</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>build.base</groupId>
             <artifactId>base-configuration</artifactId>
         </dependency>
 

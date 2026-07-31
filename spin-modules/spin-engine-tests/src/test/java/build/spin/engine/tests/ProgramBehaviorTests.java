@@ -31,6 +31,8 @@ class ProgramBehaviorTests {
         PreProcessTestPlugin.MAIN_TASK_RAN.set(false);
         FailFastTestPlugin.SLOW_ROOT_RAN.set(false);
         FailFastTestPlugin.NEVER_TASK_RAN.set(false);
+        AfterTestPlugin.MAIN_TASK_RAN.set(false);
+        AfterTestPlugin.AFTER_TASK_RAN.set(false);
     }
 
     @Test
@@ -76,6 +78,23 @@ class ProgramBehaviorTests {
             .isTrue();
         assertThat(FailFastTestPlugin.NEVER_TASK_RAN.get())
             .withFailMessage("no new task may be dispatched once a failure has been recorded")
+            .isFalse();
+    }
+
+    // ── Bug 4: @After alone must not pull a task into the Program ─────────────
+
+    @Test
+    @WorkspacePath("after-test")
+    void shouldNotRunTaskThatIsOnlyAfterAnotherTask(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("after-main"));
+        program.execute(cache);
+
+        assertThat(AfterTestPlugin.MAIN_TASK_RAN.get()).withFailMessage("main task must have run").isTrue();
+        assertThat(AfterTestPlugin.AFTER_TASK_RAN.get())
+            .withFailMessage("a task that is only @After another task must not be executed unless required")
             .isFalse();
     }
 }

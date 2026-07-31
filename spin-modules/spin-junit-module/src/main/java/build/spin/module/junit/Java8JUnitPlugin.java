@@ -27,10 +27,10 @@ import build.spin.Project;
 import build.spin.Reference;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
+import build.spin.common.task.AbstractDetectSourcePaths;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractCompile;
-import build.spin.module.java.AbstractDetectSourceFiles;
-import build.spin.module.java.AbstractDetectSourcePaths;
 import build.spin.module.java.Java8CompilerPlugin;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.option.TargetDirectoryName;
@@ -39,6 +39,9 @@ import jakarta.inject.Named;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -62,26 +65,11 @@ public class Java8JUnitPlugin
      */
     @Named("detect.test.source.paths")
     public static class DetectSourcePaths
-        extends AbstractDetectSourcePaths
-        implements JUnitPlugin.DetectSourcePaths {
+        extends AbstractDetectSourcePaths {
 
         @Override
-        protected String getRelativeSourcePath() {
-            return "src/test/java";
-        }
-    }
-
-    /**
-     * A {@link build.spin.Task} to determine the source files for compilation.
-     */
-    @Named("detect.test.source.files")
-    public static class DetectSourceFiles
-        extends AbstractDetectSourceFiles
-        implements JUnitPlugin.DetectSourceFiles {
-
-        @Override
-        public PathSet detect(@From(DetectSourcePaths.class) final PathSet pathSet) {
-            return super.detect(pathSet);
+        protected Set<SourcePathKind> kinds() {
+            return EnumSet.of(SourcePathKind.TEST);
         }
     }
 
@@ -123,22 +111,25 @@ public class Java8JUnitPlugin
         }
 
         /**
-         * Compiles the test source code in the provided {@link PathSet} into the specified build {@link Path}.
+         * Compiles the test source code detected under the provided {@link SourcePathKind}s into the
+         * specified build {@link Path}.
          *
-         * @param sourceCode the source code
+         * @param sourcePaths the detected source root directories, by {@link SourcePathKind}
          * @param resolution the {@link CompilationResolution} (module-path and classpath)
          * @param buildPath  the build {@link Path}
          *
          * @return the {@link PathSet} containing the compiled classes
          * @throws Exception should compilation fail
          */
-        public PathSet compile(final @From(DetectSourceFiles.class) PathSet sourceCode,
+        public PathSet compile(final @From(DetectSourcePaths.class) Map<SourcePathKind, PathSet> sourcePaths,
                                final @From(DetectTestResolution.class) CompilationResolution resolution,
                                final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws Exception {
 
             // the path in which to place the compiled classes
             final Path targetPath = buildPath.resolve("test/" + this.target.get());
+
+            final PathSet sourceCode = build.spin.common.task.DetectSourcePaths.filesOf(sourcePaths, SourcePathKind.TEST);
 
             return super.compile(sourceCode, resolution, buildPath, targetPath);
         }

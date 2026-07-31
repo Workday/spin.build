@@ -28,6 +28,7 @@ import build.spin.annotation.Before;
 import build.spin.annotation.Categories;
 import build.spin.annotation.Category;
 import build.spin.annotation.From;
+import build.spin.annotation.Merge;
 import build.spin.annotation.NoCache;
 import build.spin.annotation.PostProcess;
 import build.spin.annotation.PreProcess;
@@ -230,18 +231,25 @@ public interface Invocable<T> {
                         final Class<? extends Task<?>> fromTaskClass = from.value();
 
                         if (fromTaskClass.isInterface() || Modifier.isAbstract(fromTaskClass.getModifiers())) {
-                            // ensure the parameter type for injection is a Stream
-                            if (Stream.class.isAssignableFrom(parameter.getType())) {
+                            // ensure the parameter type for injection is a Stream — unless the Task
+                            // is annotated @Merge, in which case a plain result type is also allowed:
+                            // every matching implementor still becomes a dependency edge here, but the
+                            // framework combines their results via the Task's own merge(Stream<T>)
+                            // method before injection, rather than requiring the caller to do so
+                            if (Stream.class.isAssignableFrom(parameter.getType())
+                                || fromTaskClass.isAnnotationPresent(Merge.class)) {
 
                                 return getProject().invocables()
                                     .filter(definition -> fromTaskClass.isAssignableFrom(definition.getTaskClass()))
                                     .map(Invocable::getReference);
                             }
 
-                            // as we're using an abstract class, the parameter to be injected must be a Stream
+                            // as we're using an abstract class, the parameter to be injected must be a
+                            // Stream, unless the Task is annotated @Merge
                             throw new IllegalArgumentException("The @From parameter [" + describe(parameter) + "] "
                                 + "defined in [" + describe(taskMethod) + "] "
-                                + "must be a Stream<T> as the declared @From Task is abstract");
+                                + "must be a Stream<T> as the declared @From Task is abstract, "
+                                + "or the Task must be annotated with @Merge");
                         }
 
                         // use a reference to the concrete Task
