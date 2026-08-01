@@ -42,6 +42,7 @@ import java.lang.module.ModuleFinder;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -154,14 +155,7 @@ public abstract class AbstractDetectResolution
             }
 
             // look for a workspace sibling whose main JavaCompilerPlugin descriptor matches
-            final Optional<Project> sibling = this.project.workspace()
-                .stream()
-                .filter(prj -> prj.plugins(JavaCompilerPlugin.class)
-                    .findFirst()
-                    .map(JavaCompilerPlugin::getModuleDescriptor)
-                    .map(d -> name.equals(d.moduleName().toString()))
-                    .orElse(false))
-                .findFirst();
+            final Optional<Project> sibling = siblingProviding(this.project, name);
 
             if (sibling.isPresent()) {
                 final Optional<Path> siblingClasses = resolveCompiledOutput(
@@ -283,13 +277,51 @@ public abstract class AbstractDetectResolution
         return new CompilationResolution(classification.modulePath(), classification.classPath());
     }
 
+    /**
+     * Finds the workspace sibling {@link Project} — one with its own {@link JavaCompilerPlugin} — whose
+     * main module name matches {@code moduleName}, e.g. to resolve a {@code requires} clause to the
+     * sibling {@link Project} that provides it.
+     *
+     * @param project    the {@link Project} whose {@link Project#workspace()} to search
+     * @param moduleName the required module name to match
+     * @return the {@link Optional} sibling {@link Project} providing {@code moduleName}
+     */
+    public static Optional<Project> siblingProviding(final Project project, final String moduleName) {
+        return project.workspace()
+            .stream()
+            .filter(prj -> prj.plugins(JavaCompilerPlugin.class)
+                .findFirst()
+                .map(JavaCompilerPlugin::getModuleDescriptor)
+                .map(d -> moduleName.equals(d.moduleName().toString()))
+                .orElse(false))
+            .findFirst();
+    }
+
     // Visible for testing.
+    //
+    // Picks the freshest existing candidate by mtime rather than a fixed spin > Maven > Gradle
+    // preference order: a project once built by spin directly and since migrated to Maven (or vice
+    // versa) can have a stale output directory from the old build tool still sitting on disk
+    // alongside the current one, and a fixed preference order would silently keep reading the stale
+    // one forever.
     static Optional<Path> resolveCompiledOutput(final Path projectPath,
                                                 final String buildDirectoryName,
                                                 final String targetDirectoryName) {
-        return BuildOutputLocations.spin(projectPath, buildDirectoryName, targetDirectoryName)
-            .or(() -> BuildOutputLocations.maven(projectPath, "classes"))
-            .or(() -> BuildOutputLocations.gradle(projectPath, "classes/java/main"));
+        final List<Path> candidates = Stream.of(
+                BuildOutputLocations.spin(projectPath, buildDirectoryName, targetDirectoryName),
+                BuildOutputLocations.maven(projectPath, "classes"),
+                BuildOutputLocations.gradle(projectPath, "classes/java/main"))
+            .flatMap(Optional::stream)
+            .toList();
+
+        // Only walk candidate trees to compare mtimes when there's an actual ambiguity to resolve —
+        // the overwhelmingly common case is exactly one build tool's output existing at all, where
+        // there's nothing to compare and the walk would be pure overhead.
+        return switch (candidates.size()) {
+            case 0 -> Optional.empty();
+            case 1 -> Optional.of(candidates.get(0));
+            default -> candidates.stream().max(Comparator.comparing(BuildOutputLocations::latestModifiedTime));
+        };
     }
 
     /**
