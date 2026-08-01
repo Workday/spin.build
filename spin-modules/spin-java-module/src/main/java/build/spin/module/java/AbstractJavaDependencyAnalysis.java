@@ -22,7 +22,6 @@ package build.spin.module.java;
 
 import build.base.configuration.Option;
 import build.base.flow.RecordingSubscriber;
-import build.base.foundation.Capture;
 import build.base.foundation.Strings;
 import build.base.foundation.stream.Streams;
 import build.base.io.PathSetBuilder;
@@ -115,38 +114,17 @@ public abstract class AbstractJavaDependencyAnalysis
         return this.moduleDescriptor.requiresClauses()
             .map(r -> r.requiresModuleName().toString())
             .flatMap(name -> this.workspace.stream()
-                .map(project -> {
-                    // capture the JavaCompilerPlugin in the Project with the same or lower JDKVersion used by
-                    // this JavaPlugin (we can't be dependent on a JDKVersion higher than that required by this JavaPlugin)
-                    final Capture<JavaCompilerPlugin> capture = Capture.empty();
-
-                    project.plugins(JavaCompilerPlugin.class)
-                        .forEach(plugin -> {
-                            if ((capture.isPresent()
-                                && plugin.getJavaVersion().compareTo(capture.get().getJavaVersion()) > 0)
-                                || !capture.isPresent()) {
-
-                                capture.set(plugin);
-                            }
-                        });
-
-                    // TODO: if the module requires this module, we have a cycle!
-
-                    // NOTE: using "endsWith" here is super important.
-                    // (it allows project names to match module names for automatic modules)
-                    return capture
-                        .filter(plugin -> name.endsWith(plugin.getModuleDescriptor().moduleName().toString())
-                            || project.name().equals(name))
-                        .map(plugin ->
-                            // locate the PackageModule tasks
-                            project.invocables()
-                                .filter(definition -> PackageModule.class.isAssignableFrom(definition.getTaskClass()))
-                                .findFirst()
-                                .map(Invocable::getTaskClass)
-                                .map(taskClass -> Reference.of(project, taskClass))
-                                .orElse(null))
-                        .orElse(null);
-                })
+                .map(project -> JavaCompilerPlugin
+                    .resolveRequiredCompilerPlugin(project, name, this.moduleDescriptor)
+                    .map(plugin ->
+                        // locate the PackageModule tasks
+                        project.invocables()
+                            .filter(definition -> PackageModule.class.isAssignableFrom(definition.getTaskClass()))
+                            .findFirst()
+                            .map(Invocable::getTaskClass)
+                            .map(taskClass -> Reference.of(project, taskClass))
+                            .orElse(null))
+                    .orElse(null))
                 .filter(Objects::nonNull));
     }
 

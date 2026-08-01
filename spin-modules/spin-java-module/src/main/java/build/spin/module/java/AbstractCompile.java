@@ -150,39 +150,17 @@ public abstract class AbstractCompile
         final Stream<Reference> requiresDeps = this.moduleDescriptor.requiresClauses()
             .map(r -> r.requiresModuleName().toString())
             .flatMap(name -> workspace.stream()
-                .map(prj -> {
-                    // capture the JavaCompilerPlugin in the Project with the same or lower JDKVersion used by
-                    // this JavaPlugin (we can't be dependent on a JDKVersion higher than that required by this JavaPlugin)
-                    final Capture<JavaCompilerPlugin> capture = Capture.empty();
-
-                    prj.plugins(JavaCompilerPlugin.class)
-                        .forEach(plugin -> {
-                            if ((capture.isPresent()
-                                && plugin.getJavaVersion().compareTo(capture.get().getJavaVersion()) > 0)
-                                || !capture.isPresent()) {
-
-                                capture.set(plugin);
-                            }
-                        });
-
-                    // TODO: if the module requires this module, we have a cycle!
-
-                    // NOTE: using "endsWith" here is super important.
-                    // It allows project names to match module names for automatic modules.
-                    return capture
-                        .filter(plugin -> name.endsWith(plugin.getModuleDescriptor().moduleName().toString())
-                            || prj.name().equals(name))
-                        .map(plugin ->
-                            // locate the JavaCompilerPlugin.Compiler task for the CompilerPlugin
-                            prj.invocables()
-                                .filter(definition -> definition.getPlugin() == plugin
-                                    && JavaCompilerPlugin.Compile.class.isAssignableFrom(definition.getTaskClass()))
-                                .findFirst()
-                                .map(Invocable::getTaskClass)
-                                .map(taskClass -> Reference.of(prj, taskClass))
-                                .orElse(null))
-                        .orElse(null);
-                })
+                .map(prj -> JavaCompilerPlugin.resolveRequiredCompilerPlugin(prj, name, this.moduleDescriptor)
+                    .map(plugin ->
+                        // locate the JavaCompilerPlugin.Compiler task for the CompilerPlugin
+                        prj.invocables()
+                            .filter(definition -> definition.getPlugin() == plugin
+                                && JavaCompilerPlugin.Compile.class.isAssignableFrom(definition.getTaskClass()))
+                            .findFirst()
+                            .map(Invocable::getTaskClass)
+                            .map(taskClass -> Reference.of(prj, taskClass))
+                            .orElse(null))
+                    .orElse(null))
                 .filter(Objects::nonNull));
 
         // also depend on any workspace annotation processor modules so they are compiled before us
