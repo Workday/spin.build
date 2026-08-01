@@ -133,10 +133,12 @@ public class CustomizationPlugin
      * Constructs a {@link PathSetBuilder} containing the resolved dependencies required for the compilation and
      * use of the Java-based customized {@link Task}s.
      *
-     * @param stream the {@link Stream} of initial {@link RequiresModuleDescriptor} declarations
+     * @param stream         the {@link Stream} of initial {@link RequiresModuleDescriptor} declarations
+     * @param thisModuleName the name of the module declaring {@code stream}'s requirements, used to detect cycles
      * @return the {@link PathSetBuilder}
      */
-    public PathSetBuilder getDependencies(final Stream<RequiresModuleDescriptor> stream) {
+    public PathSetBuilder getDependencies(final Stream<RequiresModuleDescriptor> stream,
+                                          final ModuleName thisModuleName) {
 
         final PathSetBuilder builder = PathSetBuilder.create();
 
@@ -164,10 +166,10 @@ public class CustomizationPlugin
                                 // obtain the JDKModuleDescriptor for the project
                                 final JDKModuleDescriptor moduleDescriptor = java.getModuleDescriptor();
 
-                                // TODO: if the module descriptor is this descriptor, we've got a cycle
-
                                 // include the project iff is the required module
                                 if (requires.requiresModuleName().toString().equals(moduleDescriptor.moduleName().toString())) {
+
+                                    ModuleCycles.checkNotCyclic(moduleDescriptor, thisModuleName);
 
                                     if (requires.traits(RequiresModifier.class).anyMatch(m -> m == RequiresModifier.TRANSITIVE)) {
 
@@ -244,8 +246,9 @@ public class CustomizationPlugin
                                 this.resolver.getModuleDescriptor(artifact, this.catalog, this.versioning);
 
                             // include the transitive dependencies of the external dependency
-                            // TODO: if the ModuleDescriptor requires this module, we have a cycle!
-                            optionalDescriptor.ifPresent(descriptor ->
+                            optionalDescriptor.ifPresent(descriptor -> {
+                                ModuleCycles.checkNotCyclic(descriptor, thisModuleName);
+
                                 Streams.reverse(descriptor.requiresClauses())
                                     .filter(r -> r.traits(RequiresModifier.class)
                                         .anyMatch(m -> m == RequiresModifier.TRANSITIVE))
@@ -253,7 +256,8 @@ public class CustomizationPlugin
                                     .peek(r -> this.recorder.info("Including transitive dependency [%s] for [%s]",
                                         r.requiresModuleName().toString(), artifact))
                                     .forEach(r -> stack.push(
-                                        RequiresModuleDescriptor.of(this.codeModel, r.requiresModuleName()))));
+                                        RequiresModuleDescriptor.of(this.codeModel, r.requiresModuleName())));
+                            });
                         }).orElseThrow(() -> new IllegalStateException("Failed to resolve artifact [" + artifact + "]"));
                 }
                 else {
@@ -359,7 +363,8 @@ public class CustomizationPlugin
                 // resolve the ClassPath from the JDKModuleDescriptor Requires
                 //  (we don't need the entire JDKModuleDescriptor)
                 final PathSetBuilder pathSetBuilder = getDependencies(moduleDescriptor.requiresClauses()
-                    .filter(requires -> !requires.requiresModuleName().toString().equals("build.spin.engine")));
+                    .filter(requires -> !requires.requiresModuleName().toString().equals("build.spin.engine")),
+                    moduleDescriptor.moduleName());
 
                 // include the current ClassPath (so we can inherit Spin)
                 // (in the future, when this is a pre-packaged application, we'll only be able to use real dependencies)
