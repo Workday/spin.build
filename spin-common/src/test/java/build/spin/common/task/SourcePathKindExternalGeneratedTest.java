@@ -41,10 +41,14 @@ class SourcePathKindExternalGeneratedTest {
     }
 
     @Test
-    void detectExternal_spinOutputExists_ignoresSpinPath() throws IOException {
-        // spin's own generated-sources dir is annotation-processor output (the javac "-s" target
-        // of a prior spin compile) -- never external, so it must never be surfaced here.
+    void detectExternal_spinOutputExists_suppressesMavenScan() throws IOException {
+        // spin's own generated-sources dir doesn't split annotation-processor output from
+        // external-tool output into per-tool subdirectories the way Maven does -- it's one directory
+        // covering both. When it exists, SourcePathKind.GENERATED already claims it in full, so this
+        // must not also pull the Maven equivalent (e.g. target/generated-sources/jt) or the same
+        // external-tool-generated class ends up sourced from two roots -- a "duplicate class" error.
         Files.createDirectories(projectRoot.resolve(".build/main/generated-sources"));
+        Files.createDirectories(projectRoot.resolve("target/generated-sources/jt"));
 
         assertThat(detectExternal()).isEmpty();
     }
@@ -59,19 +63,7 @@ class SourcePathKindExternalGeneratedTest {
         assertThat(detectExternal()).containsExactlyInAnyOrder(annotations, protobuf);
     }
 
-    @Test
-    void detectExternal_spinAndMavenBothExist_stillReturnsMavenSubdirectories() throws IOException {
-        // unlike SourcePathKind.GENERATED, the presence of spin's own output does not suppress
-        // the Maven scan -- Maven-generated content (e.g. protobuf, ANTLR) is unrelated to spin's
-        // annotation-processor output and must always be surfaced.
-        Files.createDirectories(projectRoot.resolve(".build/main/generated-sources"));
-        final Path protobuf = projectRoot.resolve("target/generated-sources/protobuf");
-        Files.createDirectories(protobuf);
-
-        assertThat(detectExternal()).containsExactly(protobuf);
-    }
-
     private PathSet detectExternal() {
-        return SourcePathKind.detectExternalGenerated(projectRoot);
+        return SourcePathKind.detectExternalGenerated(projectRoot, ".build");
     }
 }
