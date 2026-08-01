@@ -91,7 +91,7 @@ public enum SourcePathKind {
             case MAIN, TEST ->
                 detectDeclared(projectPath, defaultJavaVersion, javaVersion, this.relativeSourcePath);
             case GENERATED -> detectGenerated(projectPath, buildDirectoryName);
-            case EXTERNAL_GENERATED -> detectExternalGenerated(projectPath);
+            case EXTERNAL_GENERATED -> detectExternalGenerated(projectPath, buildDirectoryName);
         };
     }
 
@@ -138,9 +138,22 @@ public enum SourcePathKind {
     }
 
     // Visible for testing.
-    static PathSet detectExternalGenerated(final Path projectPath) {
+    static PathSet detectExternalGenerated(final Path projectPath, final String buildDirectoryName) {
         final PathSetBuilder builder = PathSetBuilder.create();
-        addMavenGeneratedSourcePaths(projectPath, builder);
+
+        // Unlike Maven, spin's own generated-sources directory doesn't split annotation-processor
+        // output from external-tool output into separate per-tool subdirectories — it's one directory
+        // covering both kinds. When spin has produced it, GENERATED's spin branch already claims it in
+        // full (see detectGenerated above), so falling back to Maven's generated-sources here too would
+        // source the same external-tool output (e.g. .jt templates) from two different roots and
+        // produce "duplicate class" errors.
+        final boolean usedSpin = BuildOutputLocations.spin(projectPath, buildDirectoryName, "generated-sources")
+            .isPresent();
+
+        if (!usedSpin) {
+            addMavenGeneratedSourcePaths(projectPath, builder);
+        }
+
         return builder.build();
     }
 

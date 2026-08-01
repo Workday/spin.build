@@ -20,8 +20,11 @@ package build.spin.common.task;
  * #L%
  */
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.util.Comparator;
 import java.util.Optional;
 
 /**
@@ -61,5 +64,28 @@ public final class BuildOutputLocations {
 
     private static Optional<Path> existing(final Path path) {
         return Files.exists(path) ? Optional.of(path) : Optional.empty();
+    }
+
+    /**
+     * Returns the most recent last-modified time of any file anywhere under {@code path}, falling
+     * back to {@code path} itself if it's empty. Used to pick the freshest of several candidate
+     * build-output directories that all happen to exist on disk (e.g. a stale spin {@code .build/}
+     * left over from before a project switched to Maven, sitting next to a current {@code target/}).
+     */
+    public static FileTime latestModifiedTime(final Path path) {
+        try (var walk = Files.walk(path)) {
+            return walk
+                .map(p -> {
+                    try {
+                        return Files.getLastModifiedTime(p);
+                    } catch (final IOException e) {
+                        return FileTime.fromMillis(0);
+                    }
+                })
+                .max(Comparator.naturalOrder())
+                .orElse(FileTime.fromMillis(0));
+        } catch (final IOException e) {
+            return FileTime.fromMillis(0);
+        }
     }
 }

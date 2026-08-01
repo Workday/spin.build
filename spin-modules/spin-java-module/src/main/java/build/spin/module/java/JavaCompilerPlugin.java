@@ -20,7 +20,9 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.foundation.Capture;
 import build.base.io.PathSet;
+import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
@@ -47,6 +49,46 @@ public interface JavaCompilerPlugin
     @Override
     default int compareTo(final JavaCompilerPlugin other) {
         return getJavaVersion().compareTo(other.getJavaVersion());
+    }
+
+    /**
+     * Locates the {@link JavaCompilerPlugin} in {@code project} that provides {@code requiredModuleName},
+     * preferring the plugin with the highest {@link build.base.option.JDKVersion} when a project has more
+     * than one (e.g. multi-release module variants).
+     *
+     * @param project            the candidate {@link Project}
+     * @param requiredModuleName the name of the module required by {@code thisModule}
+     * @param thisModule         the {@link JDKModuleDescriptor} of the module declaring the requirement
+     * @return the matching {@link JavaCompilerPlugin}, filtered to {@code requiredModuleName}
+     * @throws IllegalStateException if {@code project}'s module itself requires {@code thisModule}, i.e. a cycle
+     */
+    static Capture<JavaCompilerPlugin> resolveRequiredCompilerPlugin(final Project project,
+                                                                     final String requiredModuleName,
+                                                                     final JDKModuleDescriptor thisModule) {
+
+        // capture the JavaCompilerPlugin in the Project with the same or lower JDKVersion used by
+        // this JavaPlugin (we can't be dependent on a JDKVersion higher than that required by this JavaPlugin)
+        final Capture<JavaCompilerPlugin> capture = Capture.empty();
+
+        project.plugins(JavaCompilerPlugin.class)
+            .forEach(plugin -> {
+                if ((capture.isPresent()
+                    && plugin.getJavaVersion().compareTo(capture.get().getJavaVersion()) > 0)
+                    || !capture.isPresent()) {
+
+                    capture.set(plugin);
+                }
+            });
+
+        // NOTE: using "endsWith" here is super important.
+        // It allows project names to match module names for automatic modules.
+        final Capture<JavaCompilerPlugin> matched = capture
+            .filter(plugin -> requiredModuleName.endsWith(plugin.getModuleDescriptor().moduleName().toString())
+                || project.name().equals(requiredModuleName));
+
+        matched.ifPresent(plugin -> ModuleCycles.checkNotCyclic(plugin.getModuleDescriptor(), thisModule.moduleName()));
+
+        return matched;
     }
 
     /**

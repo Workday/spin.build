@@ -37,6 +37,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -143,14 +144,57 @@ class AbstractDetectResolutionTest {
     }
 
     @Test
-    void resolveCompiledOutput_spinAndMavenExist_prefersSpinOutput() throws IOException {
+    void resolveCompiledOutput_spinAndMavenExist_prefersFresherMaven() throws IOException {
         final Path spinOutput = projectRoot.resolve(".build/main/classes");
         final Path mavenClasses = projectRoot.resolve("target/classes");
         Files.createDirectories(spinOutput);
         Files.createDirectories(mavenClasses);
+        setModifiedTime(spinOutput, FileTime.fromMillis(1_000));
+        setModifiedTime(mavenClasses, FileTime.fromMillis(2_000));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+            .contains(mavenClasses);
+    }
+
+    @Test
+    void resolveCompiledOutput_spinAndMavenExist_prefersFresherSpin() throws IOException {
+        final Path spinOutput = projectRoot.resolve(".build/main/classes");
+        final Path mavenClasses = projectRoot.resolve("target/classes");
+        Files.createDirectories(spinOutput);
+        Files.createDirectories(mavenClasses);
+        setModifiedTime(spinOutput, FileTime.fromMillis(2_000));
+        setModifiedTime(mavenClasses, FileTime.fromMillis(1_000));
 
         assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
             .contains(spinOutput);
+    }
+
+    @Test
+    void resolveCompiledOutput_mavenIsStaleLeftoverFromEarlierSpinBuild_prefersCurrentSpinOutput() throws IOException {
+        // the exact scenario this freshness comparison exists for: a project once built by spin
+        // directly still has a stale target/classes from that era, but is now built by Maven and
+        // recompiled since — the current .build/ output must win, not whichever tool happens to be
+        // checked first.
+        final Path spinOutput = projectRoot.resolve(".build/main/classes");
+        final Path mavenClasses = projectRoot.resolve("target/classes");
+        Files.createDirectories(mavenClasses);
+        final Path staleClass = mavenClasses.resolve("Stale.class");
+        Files.createFile(staleClass);
+        setModifiedTime(staleClass, FileTime.fromMillis(1_000));
+        setModifiedTime(mavenClasses, FileTime.fromMillis(1_000));
+
+        Files.createDirectories(spinOutput);
+        final Path freshClass = spinOutput.resolve("Fresh.class");
+        Files.createFile(freshClass);
+        setModifiedTime(freshClass, FileTime.fromMillis(5_000));
+        setModifiedTime(spinOutput, FileTime.fromMillis(5_000));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+            .contains(spinOutput);
+    }
+
+    private static void setModifiedTime(final Path path, final FileTime time) throws IOException {
+        Files.setLastModifiedTime(path, time);
     }
 
     @Test
