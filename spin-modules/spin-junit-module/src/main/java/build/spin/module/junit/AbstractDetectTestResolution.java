@@ -62,14 +62,21 @@ public abstract class AbstractDetectTestResolution
     @Inject
     private ModuleVersioning versioning;
 
+    // Delegates to AbstractDetectResolution.resolveCompiledOutput -- the same multi-build-tool
+    // (spin/Maven/Gradle) lookup used for sibling-project candidates -- rather than hardcoding
+    // spin's own .build/main/<target> convention. A project built via Maven or Gradle without ever
+    // having been built by spin directly has no .build directory at all, so the hardcoded path
+    // resolved to nothing and this project's own main output was silently absent from its test
+    // resolution's candidates -- surfacing as "cannot find symbol" for any type test sources
+    // reference from main, even in the same package.
     @Override
     protected Stream<Path> additionalSiblingCandidates() {
-        return this.project.plugins(JavaCompilerPlugin.class)
-            .filter(p -> p.getJavaVersion().major() == this.javaVersion.major())
-            .findFirst()
-            .map(p -> Stream.of(this.project.path()
-                .resolve(this.buildDirectoryName.get() + "/main/" + this.target.get())))
-            .orElse(Stream.empty());
+        final boolean hasMatchingCompilerPlugin = this.project.plugins(JavaCompilerPlugin.class)
+            .anyMatch(p -> p.getJavaVersion().major() == this.javaVersion.major());
+        if (!hasMatchingCompilerPlugin) {
+            return Stream.empty();
+        }
+        return resolveCompiledOutput(this.project.path(), this.buildDirectoryName.get(), this.target.get()).stream();
     }
 
     @Override
@@ -106,8 +113,7 @@ public abstract class AbstractDetectTestResolution
         final String majorStr = dot < 0 ? jupiterVersion : jupiterVersion.substring(0, dot);
         try {
             return Integer.parseInt(majorStr);
-        }
-        catch (final NumberFormatException e) {
+        } catch (final NumberFormatException e) {
             return 0;
         }
     }
