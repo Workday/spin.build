@@ -106,7 +106,7 @@ public abstract class AbstractJavaPlugin
      * @return the root {@link Path}
      */
     protected Path getSourceRootPath() {
-        return this.project.path().resolve("src/main/");
+        return this.project.path().resolve(sourceScope().sourceRoot().orElseThrow());
     }
 
     /**

@@ -27,6 +27,7 @@ import build.base.option.JDKVersion;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
@@ -40,12 +41,12 @@ public enum SourcePathKind {
     /**
      * Declared, hand-written main source.
      */
-    MAIN("src/main/java"),
+    MAIN("src/main/", "main/"),
 
     /**
      * Declared, hand-written test source.
      */
-    TEST("src/test/java"),
+    TEST("src/test/", "test/"),
 
     /**
      * Annotation-processor generated source from a prior build. Only ever surfaced for analysis —
@@ -62,18 +63,50 @@ public enum SourcePathKind {
     EXTERNAL_GENERATED;
 
     /**
-     * The location of declared source for this kind, relative to the project path — e.g.
-     * {@code "src/main/java"} for {@link #MAIN} or {@code "src/test/java"} for {@link #TEST}.
-     * {@code null} for kinds that aren't declared, hand-written source.
+     * The root directory of declared source for this kind, relative to the project path — e.g.
+     * {@code "src/main/"} for {@link #MAIN} or {@code "src/test/"} for {@link #TEST}. {@code null}
+     * for kinds that aren't declared, hand-written source.
      */
-    private final String relativeSourcePath;
+    private final String sourceRoot;
+
+    /**
+     * The build-output sub-path prefix, relative to the build directory, under which this kind's
+     * compiled/copied output is placed — e.g. {@code "main/"} for {@link #MAIN} or {@code "test/"}
+     * for {@link #TEST}. {@code null} for kinds that don't have their own dedicated output location
+     * (generated-source detection always resolves under {@link #MAIN}'s output, regardless of which
+     * kind is doing the detecting — see {@link #detectGenerated}).
+     */
+    private final String outputPrefix;
 
     SourcePathKind() {
-        this(null);
+        this(null, null);
     }
 
-    SourcePathKind(final String relativeSourcePath) {
-        this.relativeSourcePath = relativeSourcePath;
+    SourcePathKind(final String sourceRoot, final String outputPrefix) {
+        this.sourceRoot = sourceRoot;
+        this.outputPrefix = outputPrefix;
+    }
+
+    /**
+     * The root directory of declared source for this kind, relative to the project path — e.g.
+     * {@code "src/main/"} for {@link #MAIN} or {@code "src/test/"} for {@link #TEST}. Empty for
+     * kinds that aren't declared, hand-written source.
+     *
+     * @return the {@link Optional} source root
+     */
+    public Optional<String> sourceRoot() {
+        return Optional.ofNullable(this.sourceRoot);
+    }
+
+    /**
+     * The build-output sub-path prefix, relative to the build directory, under which this kind's
+     * compiled/copied output is placed — e.g. {@code "main/"} for {@link #MAIN} or {@code "test/"}
+     * for {@link #TEST}. Empty for kinds with no dedicated output location of their own.
+     *
+     * @return the {@link Optional} output prefix
+     */
+    public Optional<String> outputPrefix() {
+        return Optional.ofNullable(this.outputPrefix);
     }
 
     /**
@@ -89,7 +122,7 @@ public enum SourcePathKind {
                           final JDKVersion javaVersion, final String buildDirectoryName) {
         return switch (this) {
             case MAIN, TEST ->
-                detectDeclared(projectPath, defaultJavaVersion, javaVersion, this.relativeSourcePath);
+                detectDeclared(projectPath, defaultJavaVersion, javaVersion, this.sourceRoot + "java");
             case GENERATED -> detectGenerated(projectPath, buildDirectoryName);
             case EXTERNAL_GENERATED -> detectExternalGenerated(projectPath, buildDirectoryName);
         };

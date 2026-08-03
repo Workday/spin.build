@@ -96,6 +96,8 @@ public class Java25JUnitPlugin
         extends AbstractCompile
         implements JUnitPlugin.Compile {
 
+        private static final String TARGET_PREFIX = SourcePathKind.TEST.outputPrefix().orElseThrow();
+
         @Inject
         private TargetDirectoryName target;
 
@@ -130,7 +132,7 @@ public class Java25JUnitPlugin
             throws Exception {
 
             // the path in which to place the compiled classes
-            final Path targetPath = buildPath.resolve("test/" + this.target.get());
+            final Path targetPath = buildPath.resolve(TARGET_PREFIX + this.target.get());
 
             final PathSet sourceCode = build.spin.common.task.DetectSourcePaths.filesOf(sourcePaths, SourcePathKind.TEST);
 
@@ -175,8 +177,9 @@ public class Java25JUnitPlugin
 
         @Override
         public boolean isDetectedIn(final Path path) {
-            return (Files.exists(path.resolve("src/test/java")) && this.defaultJavaVersion.major() == 25)
-                || Files.exists(path.resolve("src/test/java25"));
+            final String sourceRoot = SourcePathKind.TEST.sourceRoot().orElseThrow();
+            return (Files.exists(path.resolve(sourceRoot + "java")) && this.defaultJavaVersion.major() == 25)
+                || Files.exists(path.resolve(sourceRoot + "java25"));
         }
     }
 }
