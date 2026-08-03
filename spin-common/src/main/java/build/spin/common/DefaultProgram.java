@@ -202,6 +202,10 @@ public final class DefaultProgram
                 final Context taskContext = this.framework.newContext(new TaskContextModule(taskProject, publisher));
                 taskContext.addResolver(ProvidesResolver.of(taskPlugin, this.framework));
 
+                // allow the Plugin to contribute Binder bindings (e.g. multibindings via bindSet)
+                // before the Task is created, so they're visible to its injection points
+                taskPlugin.contributeBindings(taskContext);
+
                 // add a Resolver for Iterable of Plugins implementing the specified interface
                 taskContext.addResolver(injectionPoint -> {
                     if (TypeUsages.getThreadContextClass(injectionPoint.typeUsage())

@@ -23,6 +23,7 @@ package build.spin.module.java;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.dependency.injection.Binder;
 import build.codemodel.dependency.injection.Provides;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.foundation.naming.ModuleName;
@@ -36,6 +37,8 @@ import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Reference;
 import build.spin.Task;
+import build.spin.common.task.SourcePathKind;
+import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
@@ -104,6 +107,31 @@ public abstract class AbstractJavaPlugin
      */
     protected Path getSourceRootPath() {
         return this.project.path().resolve("src/main/");
+    }
+
+    /**
+     * The {@link SourcePathKind} this {@link JavaPlugin} compiles — {@link SourcePathKind#MAIN} here,
+     * overridden to {@link SourcePathKind#TEST} by {@code AbstractJUnitPlugin}. Drives the scope-gated
+     * behavior in {@link AbstractDetectResolution} (e.g. whether a project's own compiled MAIN output
+     * is added as an additional candidate) without requiring a {@link Task} subclass per scope.
+     *
+     * @return the {@link SourcePathKind}
+     */
+    @Provides
+    protected SourcePathKind sourceScope() {
+        return SourcePathKind.MAIN;
+    }
+
+    /**
+     * Contributes no additional infrastructure {@link Artifact}s by default — establishes the
+     * {@code Set<Artifact>} multibinding key so it's always injectable (empty here), overridden by
+     * {@code AbstractJUnitPlugin} to contribute the JUnit Platform ConsoleLauncher and Jupiter engine.
+     *
+     * @param binder the {@link Binder} to contribute bindings to
+     */
+    @Override
+    public void contributeBindings(final Binder binder) {
+        binder.bindSet(Artifact.class);
     }
 
     @Override

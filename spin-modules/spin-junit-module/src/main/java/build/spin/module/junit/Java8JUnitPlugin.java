@@ -31,6 +31,7 @@ import build.spin.common.task.AbstractDetectSourcePaths;
 import build.spin.common.task.SourcePathKind;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractCompile;
+import build.spin.module.java.AbstractDetectResolution;
 import build.spin.module.java.Java8CompilerPlugin;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.option.TargetDirectoryName;
@@ -82,7 +83,7 @@ public class Java8JUnitPlugin
      */
     @Named("detect.test.compilation.resolution")
     public static class DetectTestResolution
-        extends AbstractDetectTestResolution {
+        extends AbstractDetectResolution {
     }
 
     /**

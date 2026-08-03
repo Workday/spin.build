@@ -20,18 +20,62 @@ package build.spin.module.junit;
  * #L%
  */
 
+import build.base.option.JDKVersion;
 import build.base.version.Version;
+import build.codemodel.dependency.injection.Context;
+import build.codemodel.dependency.injection.InjectionFramework;
+import build.spin.common.task.SourcePathKind;
+import build.spin.module.modulesystem.Artifact;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class AbstractDetectTestResolutionTest {
+class AbstractJUnitPluginTest {
+
+    private static AbstractJUnitPlugin plugin() {
+        return new AbstractJUnitPlugin(JDKVersion.of(25)) {
+        };
+    }
+
+    private static AbstractJUnitPlugin pluginWithVersioning(final String jupiterVersion) {
+        return new AbstractJUnitPlugin(JDKVersion.of(25)) {
+            {
+                this.versioning = moduleName -> "org.junit.jupiter.api".equals(moduleName)
+                    ? Optional.of(Version.parse(jupiterVersion))
+                    : Optional.empty();
+            }
+        };
+    }
+
+    static class ArtifactSetHolder {
+        @Inject
+        Set<Artifact> artifacts;
+    }
+
+    @Test
+    void sourceScope_isTest() {
+        assertThat(plugin().sourceScope()).isEqualTo(SourcePathKind.TEST);
+    }
+
+    @Test
+    void contributeBindings_contributesJUnitPlatformAndJupiterEngine() {
+        final Context context = InjectionFramework.create().newContext();
+
+        pluginWithVersioning("6.0.3").contributeBindings(context);
+
+        final ArtifactSetHolder holder = context.inject(new ArtifactSetHolder());
+        assertThat(holder.artifacts).containsExactlyInAnyOrder(
+            Artifact.parse("org.junit.platform:junit-platform-console:6.0.3"),
+            Artifact.parse("org.junit.jupiter:junit-jupiter-engine:6.0.3"));
+    }
 
     @Test
     void jupiterVersion_versioningHasNoEntry_fallsBackToFiveDotSixDotZero() {
-        assertThat(AbstractDetectTestResolution.jupiterVersion(moduleName -> Optional.empty()))
+        assertThat(AbstractJUnitPlugin.jupiterVersion(moduleName -> Optional.empty()))
             .isEqualTo("5.6.0");
     }
 
@@ -41,7 +85,7 @@ class AbstractDetectTestResolutionTest {
     // key here must match the real module name or it silently falls back to 5.6.0 forever.
     @Test
     void jupiterVersion_looksUpByRealModuleNameNotGroupId() {
-        final String jupiterVersion = AbstractDetectTestResolution.jupiterVersion(
+        final String jupiterVersion = AbstractJUnitPlugin.jupiterVersion(
             moduleName -> "org.junit.jupiter.api".equals(moduleName)
                 ? Optional.of(Version.parse("6.0.3"))
                 : Optional.empty());
@@ -53,7 +97,7 @@ class AbstractDetectTestResolutionTest {
     void jupiterVersion_versioningOnlyHasBareGroupIdEntry_isNotFound() {
         // guards against silently "fixing" the lookup key back to the groupId — a versioning
         // implementation that (incorrectly) only registers the groupId must still miss.
-        final String jupiterVersion = AbstractDetectTestResolution.jupiterVersion(
+        final String jupiterVersion = AbstractJUnitPlugin.jupiterVersion(
             moduleName -> "org.junit.jupiter".equals(moduleName)
                 ? Optional.of(Version.parse("6.0.3"))
                 : Optional.empty());
@@ -63,22 +107,22 @@ class AbstractDetectTestResolutionTest {
 
     @Test
     void jupiterMajorVersion_parsesMajorFromDottedVersion() {
-        assertThat(AbstractDetectTestResolution.jupiterMajorVersion("6.0.3")).isEqualTo(6);
-        assertThat(AbstractDetectTestResolution.jupiterMajorVersion("5.6.0")).isEqualTo(5);
+        assertThat(AbstractJUnitPlugin.jupiterMajorVersion("6.0.3")).isEqualTo(6);
+        assertThat(AbstractJUnitPlugin.jupiterMajorVersion("5.6.0")).isEqualTo(5);
     }
 
     @Test
     void jupiterMajorVersion_unparsableVersion_returnsZero() {
-        assertThat(AbstractDetectTestResolution.jupiterMajorVersion("not-a-version")).isEqualTo(0);
+        assertThat(AbstractJUnitPlugin.jupiterMajorVersion("not-a-version")).isEqualTo(0);
     }
 
     @Test
     void derivePlatformVersion_junit5_prefixesMajorWithOne() {
-        assertThat(AbstractDetectTestResolution.derivePlatformVersion("5.6.0")).isEqualTo("1.6.0");
+        assertThat(AbstractJUnitPlugin.derivePlatformVersion("5.6.0")).isEqualTo("1.6.0");
     }
 
     @Test
     void derivePlatformVersion_junit6_matchesJupiterVersionExactly() {
-        assertThat(AbstractDetectTestResolution.derivePlatformVersion("6.0.3")).isEqualTo("6.0.3");
+        assertThat(AbstractJUnitPlugin.derivePlatformVersion("6.0.3")).isEqualTo("6.0.3");
     }
 }

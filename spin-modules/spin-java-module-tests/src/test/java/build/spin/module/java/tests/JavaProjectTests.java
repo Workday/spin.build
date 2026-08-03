@@ -32,10 +32,10 @@ import build.spin.common.DefaultAssetCache;
 import build.spin.common.ProcessFailedException;
 import build.spin.module.checkstyle.CheckstylePlugin;
 import build.spin.module.clean.CleanPlugin;
+import build.spin.module.java.AbstractDetectResolution;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.java.Java8CompilerPlugin;
 import build.spin.module.java.JavaPlatform;
-import build.spin.module.junit.AbstractDetectTestResolution;
 import build.spin.module.junit.Java25JUnitPlugin;
 import build.spin.module.junit.Java8JUnitPlugin;
 import build.spin.module.maven.MavenRepository;
@@ -219,7 +219,7 @@ public class JavaProjectTests {
 
         final AssetCache results = program.execute(cache);
 
-        final CompilationResolution resolution = results.get(workspace, AbstractDetectTestResolution.class)
+        final CompilationResolution resolution = results.get(workspace, AbstractDetectResolution.class)
             .map(Asset::get)
             .orElseThrow(() -> new AssertionError(
                 "Expected a CompilationResolution asset for [" + workspace + "]"));

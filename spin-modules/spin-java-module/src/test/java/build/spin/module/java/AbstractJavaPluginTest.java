@@ -20,14 +20,21 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.option.JDKVersion;
 import build.base.version.Version;
+import build.codemodel.dependency.injection.Context;
+import build.codemodel.dependency.injection.InjectionFramework;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.jdk.JDKCodeModel;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.spin.common.task.SourcePathKind;
+import build.spin.module.modulesystem.Artifact;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -78,5 +85,40 @@ class AbstractJavaPluginTest {
         assertThatCode(() -> AbstractJavaPlugin.stampVersion(descriptor, Optional.of(Version.parse("1.0.0"))))
             .doesNotThrowAnyException();
         assertThat(descriptor.version()).contains(Version.parse("1.0.0"));
+    }
+
+    private static AbstractJavaPlugin plugin() {
+        return new AbstractJavaPlugin() {
+            @Override
+            public JDKVersion getJavaVersion() {
+                return JDKVersion.of(25);
+            }
+        };
+    }
+
+    static class ArtifactSetHolder {
+        @Inject
+        Set<Artifact> artifacts;
+    }
+
+    @Test
+    void sourceScope_isMainByDefault() {
+        assertThat(plugin().sourceScope()).isEqualTo(SourcePathKind.MAIN);
+    }
+
+    /**
+     * {@code AbstractDetectResolution} injects {@code Set<Artifact>} unconditionally (empty for MAIN
+     * scope, populated by {@code AbstractJUnitPlugin} for TEST scope) — a {@code Set<T>} injection
+     * point only resolves if some {@code bindSet(T.class)} call happened in that Task's Context, so
+     * every plugin, not just the JUnit ones, must establish the key.
+     */
+    @Test
+    void contributeBindings_establishesEmptyArtifactMultibindingKey() {
+        final Context context = InjectionFramework.create().newContext();
+
+        plugin().contributeBindings(context);
+
+        final ArtifactSetHolder holder = context.inject(new ArtifactSetHolder());
+        assertThat(holder.artifacts).isEmpty();
     }
 }
