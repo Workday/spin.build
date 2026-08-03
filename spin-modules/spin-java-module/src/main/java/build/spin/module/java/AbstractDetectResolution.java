@@ -180,36 +180,10 @@ public abstract class AbstractDetectResolution
         final List<Path> externalCandidates = new ArrayList<>();
 
         for (final RequiresModuleDescriptor r : externalRequires.values()) {
-            final Optional<Version> moduleVersion = this.versioning.getVersion(r.requiresModuleName().toString());
-            final Optional<Version> requiresVersion = JDKModuleDescriptor.requiresVersion(r);
-
-            final Version requiredVersion;
-            if (moduleVersion.isPresent()) {
-                if (requiresVersion.isPresent() && !requiresVersion.get().equals(moduleVersion.get())) {
-                    this.recorder.warn(
-                        "External require [%s] in [%s] declares version [%s] but the workspace ModuleVersioning "
-                            + "catalog resolved [%s] — using the catalog version",
-                        r.requiresModuleName().toString(), this.project.name(),
-                        requiresVersion.get(), moduleVersion.get());
-                }
-                requiredVersion = moduleVersion.get();
-            }
-            else if (requiresVersion.isPresent()) {
-                requiredVersion = requiresVersion.get();
-            }
-            else {
-                this.recorder.warn(
-                    "Cannot determine version for external require [%s] in [%s] — skipping",
-                    r.requiresModuleName().toString(), this.project.name());
-                continue;
-            }
-
-            final ModuleReference moduleReference = ModuleReference.of(r.requiresModuleName().toString(), requiredVersion);
-            final Optional<Artifact> artifact = this.catalog.getArtifact(moduleReference, Optional.of(this.recorder));
+            final Optional<Artifact> artifact = resolveExternalArtifact(
+                r, this.project.name(), this.versioning, this.catalog, this.recorder);
 
             if (artifact.isEmpty()) {
-                this.recorder.warn(
-                    "Module [%s] not found in ModuleCatalog — skipping", r.requiresModuleName().toString());
                 continue;
             }
 
@@ -275,6 +249,80 @@ public abstract class AbstractDetectResolution
             msg -> this.recorder.diagnostic("[classify] %s", msg));
 
         return new CompilationResolution(classification.modulePath(), classification.classPath());
+    }
+
+    /**
+     * Resolves a single external {@code requires} clause to the {@link Artifact} that should be
+     * fetched for it, or {@link Optional#empty()} if it can't be resolved — logging the reason at
+     * whichever level reflects how actionable it is.
+     *
+     * <p>Most misses here are one of several naming-convention candidates that
+     * {@code PomBasedTestModuleDescriptor}/{@code PomBasedTestModuleCatalog} synthesize per dependency
+     * (see {@code MavenModuleNaming#deriveNames}) — only one of which is ever the module's real name,
+     * so the rest are expected to miss on every dependency, every project. Logging that at {@code warn}
+     * buries the rare real problem (an actually-unresolvable require, or a stale version pin) under
+     * this constant, harmless noise, so those misses log at {@code diagnostic} instead. The one
+     * exception is a module name the {@link ModuleCatalog} does recognize but at a version that
+     * doesn't match what was requested — usually a stale {@code version.properties} entry, and worth a
+     * human's attention — which still logs at {@code warn}.
+     *
+     * @param r the external {@code requires} clause to resolve
+     * @param projectName the name of the {@link Project} declaring the require, for diagnostics
+     * @param versioning the workspace-wide {@link ModuleVersioning}
+     * @param catalog the {@link ModuleCatalog}
+     * @param recorder the {@link TelemetryRecorder} for diagnostics
+     *
+     * @return the {@link Optional} {@link Artifact} to resolve for this require
+     */
+    // Visible for testing.
+    static Optional<Artifact> resolveExternalArtifact(final RequiresModuleDescriptor r,
+                                                       final String projectName,
+                                                       final ModuleVersioning versioning,
+                                                       final ModuleCatalog catalog,
+                                                       final TelemetryRecorder recorder) {
+
+        final String moduleName = r.requiresModuleName().toString();
+        final Optional<Version> moduleVersion = versioning.getVersion(moduleName);
+        final Optional<Version> requiresVersion = JDKModuleDescriptor.requiresVersion(r);
+
+        final Version requiredVersion;
+        if (moduleVersion.isPresent()) {
+            if (requiresVersion.isPresent() && !requiresVersion.get().equals(moduleVersion.get())) {
+                recorder.warn(
+                    "External require [%s] in [%s] declares version [%s] but the workspace ModuleVersioning "
+                        + "catalog resolved [%s] — using the catalog version",
+                    moduleName, projectName, requiresVersion.get(), moduleVersion.get());
+            }
+            requiredVersion = moduleVersion.get();
+        }
+        else if (requiresVersion.isPresent()) {
+            requiredVersion = requiresVersion.get();
+        }
+        else {
+            recorder.diagnostic(
+                "Cannot determine version for external require [%s] in [%s] — skipping",
+                moduleName, projectName);
+            return Optional.empty();
+        }
+
+        final ModuleReference moduleReference = ModuleReference.of(moduleName, requiredVersion);
+        final Optional<Artifact> artifact = catalog.getArtifact(moduleReference, Optional.of(recorder));
+
+        if (artifact.isEmpty()) {
+            final List<String> knownVersions = catalog.constraints(moduleName)
+                .map(constraint -> constraint.range().toString())
+                .toList();
+            if (knownVersions.isEmpty()) {
+                recorder.diagnostic("Module [%s] not found in ModuleCatalog — skipping", moduleName);
+            }
+            else {
+                recorder.warn(
+                    "Module [%s] requested at version [%s] but the ModuleCatalog only has %s — skipping",
+                    moduleName, requiredVersion, knownVersions);
+            }
+        }
+
+        return artifact;
     }
 
     /**

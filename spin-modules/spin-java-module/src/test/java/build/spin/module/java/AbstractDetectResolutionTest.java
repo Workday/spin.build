@@ -22,10 +22,17 @@ package build.spin.module.java;
 
 import build.base.foundation.Exceptional;
 import build.base.foundation.UniformResource;
+import build.base.telemetry.Diagnostic;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.telemetry.Warning;
 import build.base.version.Version;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.ConceptualCodeModel;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
+import build.codemodel.jdk.descriptor.RequiresVersionTrait;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
@@ -432,5 +439,110 @@ class AbstractDetectResolutionTest {
             List.of(jar), versioning, catalog, resolver, recorder());
 
         assertThat(corrected).containsExactly(jar);
+    }
+
+    // builds a bare `requires <moduleName>;` clause, optionally with a bytecode-style declared version —
+    // resolveExternalArtifact only inspects the clause itself, so it needs no owning JDKModuleDescriptor.
+    private static RequiresModuleDescriptor requires(final String moduleName, final Optional<Version> version) {
+        final CodeModel codeModel = new ConceptualCodeModel(new NonCachingNameProvider());
+        final var name = codeModel.getNameProvider().getModuleName(moduleName).orElseThrow();
+        final RequiresModuleDescriptor r = RequiresModuleDescriptor.of(codeModel, name);
+
+        version.ifPresent(v -> r.addTrait(RequiresVersionTrait.of(v)));
+
+        return r;
+    }
+
+    @Test
+    void resolveExternalArtifact_versionKnownAndModuleInCatalog_returnsArtifact() {
+        final RequiresModuleDescriptor r = requires("org.mockito", Optional.empty());
+
+        final ModuleVersioning versioning = moduleName ->
+            "org.mockito".equals(moduleName) ? Optional.of(Version.parse("5.23.0")) : Optional.empty();
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("org.mockito", Artifact.create("org.mockito", "mockito-core", "5.23.0", "jar"));
+
+        final Optional<Artifact> artifact = AbstractDetectResolution.resolveExternalArtifact(
+            r, "example-project", versioning, catalog, recorder());
+
+        assertThat(artifact).contains(Artifact.create("org.mockito", "mockito-core", "5.23.0", "jar"));
+    }
+
+    @Test
+    void resolveExternalArtifact_versionCannotBeDetermined_logsDiagnosticNotWarn() {
+        // no ModuleVersioning entry and no bytecode-declared requires-version — this is the routine,
+        // expected miss from MavenModuleNaming#deriveNames's synthesized candidate names, not a real
+        // problem, so it must not surface as a warning.
+        final RequiresModuleDescriptor r = requires("org.mockito", Optional.empty());
+
+        final ModuleVersioning versioning = _ -> Optional.empty();
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create();
+
+        final List<Telemetry> emitted = new ArrayList<>();
+        final TelemetryRecorder recorder = new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractDetectResolutionTest"),
+            emitted::add);
+
+        final Optional<Artifact> artifact = AbstractDetectResolution.resolveExternalArtifact(
+            r, "example-project", versioning, catalog, recorder);
+
+        assertThat(artifact).isEmpty();
+        assertThat(emitted).noneMatch(t -> t instanceof Warning);
+        assertThat(emitted).anyMatch(t -> t instanceof Diagnostic);
+    }
+
+    @Test
+    void resolveExternalArtifact_moduleNameUnknownToCatalog_logsDiagnosticNotWarn() {
+        // a resolvable version, but the module name itself was never registered — again the routine,
+        // expected case for most of a dependency's synthesized candidate names, not a real problem.
+        final RequiresModuleDescriptor r = requires("org.mockito", Optional.empty());
+
+        final ModuleVersioning versioning = moduleName ->
+            "org.mockito".equals(moduleName) ? Optional.of(Version.parse("5.23.0")) : Optional.empty();
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create();
+
+        final List<Telemetry> emitted = new ArrayList<>();
+        final TelemetryRecorder recorder = new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractDetectResolutionTest"),
+            emitted::add);
+
+        final Optional<Artifact> artifact = AbstractDetectResolution.resolveExternalArtifact(
+            r, "example-project", versioning, catalog, recorder);
+
+        assertThat(artifact).isEmpty();
+        assertThat(emitted).noneMatch(t -> t instanceof Warning);
+        assertThat(emitted).anyMatch(t -> t instanceof Diagnostic);
+    }
+
+    @Test
+    void resolveExternalArtifact_moduleKnownButRequestedVersionUnmatched_logsWarnWithKnownVersions() {
+        // the exact scenario this split exists for: version.properties pins org.mockito to a version
+        // module-catalog.properties has no entry for (a stale pin), which is a real, actionable
+        // problem and must not be silently downgraded to diagnostic noise.
+        final RequiresModuleDescriptor r = requires("org.mockito", Optional.empty());
+
+        final ModuleVersioning versioning = moduleName ->
+            "org.mockito".equals(moduleName) ? Optional.of(Version.parse("2.19.0")) : Optional.empty();
+
+        final ModuleCatalog catalog = ModuleCatalog.HeapBased.create()
+            .add("org.mockito", Artifact.create("org.mockito", "mockito-core", "5.23.0", "jar"));
+
+        final List<Telemetry> emitted = new ArrayList<>();
+        final TelemetryRecorder recorder = new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractDetectResolutionTest"),
+            emitted::add);
+
+        final Optional<Artifact> artifact = AbstractDetectResolution.resolveExternalArtifact(
+            r, "example-project", versioning, catalog, recorder);
+
+        assertThat(artifact).isEmpty();
+        assertThat(emitted)
+            .as("a module name the catalog knows, but not at the requested version, is a real "
+                + "version-pin problem and must warn, naming the requested and known versions")
+            .anyMatch(t -> t instanceof Warning
+                && t.toString().contains("2.19.0")
+                && t.toString().contains("5.23.0"));
     }
 }
