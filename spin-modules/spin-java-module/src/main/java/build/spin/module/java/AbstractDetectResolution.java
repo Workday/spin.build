@@ -297,16 +297,19 @@ public abstract class AbstractDetectResolution
             .findFirst();
     }
 
-    // Visible for testing.
+    // Protected (not package-private) so AbstractDetectTestResolution -- in a different package,
+    // spin.module.junit -- can reuse this same multi-build-tool lookup for its own project's main
+    // output instead of hardcoding spin's own .build/main/<target> convention, which resolves to
+    // nothing for a project built via Maven/Gradle without ever having been built by spin directly.
     //
     // Picks the freshest existing candidate by mtime rather than a fixed spin > Maven > Gradle
     // preference order: a project once built by spin directly and since migrated to Maven (or vice
     // versa) can have a stale output directory from the old build tool still sitting on disk
     // alongside the current one, and a fixed preference order would silently keep reading the stale
     // one forever.
-    static Optional<Path> resolveCompiledOutput(final Path projectPath,
-                                                final String buildDirectoryName,
-                                                final String targetDirectoryName) {
+    protected static Optional<Path> resolveCompiledOutput(final Path projectPath,
+                                                           final String buildDirectoryName,
+                                                           final String targetDirectoryName) {
         final List<Path> candidates = Stream.of(
                 BuildOutputLocations.spin(projectPath, buildDirectoryName, targetDirectoryName),
                 BuildOutputLocations.maven(projectPath, "classes"),
