@@ -98,6 +98,8 @@ import javax.xml.transform.stream.StreamResult;
 public class MavenPlugin
     extends AbstractJavaPlugin {
 
+    private static final String MAIN_OUTPUT_PREFIX = SourcePathKind.MAIN.outputPrefix().orElseThrow();
+
     /**
      * The {@link JDKVersion} to use for the {@link MavenPlugin}, is the highest {@link JDKVersion} of
      * the {@link JavaCompilerPlugin}(s) used by the {@link Project}.
@@ -143,7 +145,7 @@ public class MavenPlugin
         public Path create(final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
             throws IOException {
 
-            final Path distributionPath = buildPath.resolve("main/distribution/");
+            final Path distributionPath = buildPath.resolve(MAIN_OUTPUT_PREFIX + "distribution/");
 
             Files.createDirectories(distributionPath);
 
@@ -222,7 +224,7 @@ public class MavenPlugin
 
             final JarBuilder builder = new JarBuilder(manifest);
 
-            final Path target = buildPath.resolve("main/" + this.target.get());
+            final Path target = buildPath.resolve(MAIN_OUTPUT_PREFIX + this.target.get());
             builder.content().add(target);
 
             return builder;

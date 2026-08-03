@@ -36,7 +36,6 @@ import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.module.modulesystem.TestModuleDescriptor;
 import jakarta.inject.Inject;
 
-import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -71,11 +70,6 @@ public abstract class AbstractJUnitPlugin
     @Override
     public JDKVersion getJavaVersion() {
         return this.javaVersion;
-    }
-
-    @Override
-    protected Path getSourceRootPath() {
-        return this.project.path().resolve("src/test/");
     }
 
     @Override

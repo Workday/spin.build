@@ -38,6 +38,7 @@ import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.System;
 import build.spin.common.ProcessFailedException;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleReference;
 import jakarta.inject.Inject;
@@ -607,7 +608,7 @@ public abstract class AbstractJavaLinker
 
     private static Optional<String> detectMainClass(final Path projectPath,
                                                     final TelemetryRecorder recorder) {
-        final Path srcDir = projectPath.resolve("src/main/java");
+        final Path srcDir = projectPath.resolve(SourcePathKind.MAIN.sourceRoot().orElseThrow() + "java");
         if (!Files.isDirectory(srcDir)) {
             return Optional.empty();
         }

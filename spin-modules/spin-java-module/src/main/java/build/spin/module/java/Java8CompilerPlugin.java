@@ -105,6 +105,8 @@ public class Java8CompilerPlugin
         extends AbstractCompile
         implements JavaCompilerPlugin.Compile {
 
+        private static final String TARGET_PREFIX = SourcePathKind.MAIN.outputPrefix().orElseThrow();
+
         @Inject
         private TargetDirectoryName target;
 
@@ -125,7 +127,7 @@ public class Java8CompilerPlugin
             throws Exception {
 
             // the path in which to place the compiled classes
-            final Path targetPath = buildPath.get().resolve("main/" + this.target.get());
+            final Path targetPath = buildPath.get().resolve(TARGET_PREFIX + this.target.get());
 
             final PathSet sourceCode = build.spin.common.task.DetectSourcePaths.filesOf(sourcePaths, SourcePathKind.MAIN);
             final PathSet externalGeneratedSources =
@@ -184,8 +186,9 @@ public class Java8CompilerPlugin
 
         @Override
         public boolean isDetectedIn(final Path path) {
-            return (Files.exists(path.resolve("src/main/java")) && this.defaultJavaVersion.major() == 8)
-                || Files.exists(path.resolve("src/main/java8"));
+            final String sourceRoot = SourcePathKind.MAIN.sourceRoot().orElseThrow();
+            return (Files.exists(path.resolve(sourceRoot + "java")) && this.defaultJavaVersion.major() == 8)
+                || Files.exists(path.resolve(sourceRoot + "java8"));
         }
     }
 }

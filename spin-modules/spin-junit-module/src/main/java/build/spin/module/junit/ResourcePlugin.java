@@ -24,6 +24,7 @@ import build.base.io.PathSet;
 import build.spin.Plugin;
 import build.spin.annotation.Before;
 import build.spin.annotation.From;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractResourcePlugin;
 import jakarta.inject.Named;
@@ -62,7 +63,7 @@ public class ResourcePlugin
 
         @Override
         protected String destinationPrefix() {
-            return "test/";
+            return SourcePathKind.TEST.outputPrefix().orElseThrow();
         }
 
         public PathSet copy(final @From(DetectModuleResourcePaths.class) PathSet paths,

@@ -39,6 +39,7 @@ import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.common.ProcessFailedException;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.configuration.Source;
 import build.spin.module.modulesystem.CompilationResolution;
@@ -69,6 +70,8 @@ import java.util.stream.Stream;
 @Source("build.spin.module.javadoc")
 public abstract class AbstractJavaDoc
     implements JavaCompilerPlugin.JavaDoc {
+
+    private static final String JAVADOC_PATH = SourcePathKind.MAIN.outputPrefix().orElseThrow() + "javadoc";
 
     @Inject
     private TelemetryRecorder recorder;
@@ -141,12 +144,12 @@ public abstract class AbstractJavaDoc
 
         if (sourceCode.isEmpty()) {
             this.recorder.diagnostic("Skipping javadoc for [%s]: no source files", this.project.path());
-            return buildPath.resolve("main/javadoc");
+            return buildPath.resolve(JAVADOC_PATH);
         }
 
         if (sourceCode.stream().noneMatch(this::hasPackageDeclaration)) {
             this.recorder.diagnostic("Skipping javadoc for [%s]: no source files contain a package declaration", this.project.path());
-            return buildPath.resolve("main/javadoc");
+            return buildPath.resolve(JAVADOC_PATH);
         }
 
         // the path in which to place the javadoc
