@@ -101,8 +101,8 @@ public abstract class AbstractTest
         final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
         // JUnit 6+ uses subcommands; JUnit 5 uses flat options
-        final String jupiterVersion = AbstractDetectTestResolution.jupiterVersion(this.versioning);
-        final boolean useSubcommand = AbstractDetectTestResolution.jupiterMajorVersion(jupiterVersion) >= 6;
+        final String jupiterVersion = AbstractJUnitPlugin.jupiterVersion(this.versioning);
+        final boolean useSubcommand = AbstractJUnitPlugin.jupiterMajorVersion(jupiterVersion) >= 6;
 
         final Path testClassesDir = buildPath.resolve("test/" + this.target.get());
         final Path reportPath = buildPath.resolve("reports/tests");

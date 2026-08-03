@@ -21,12 +21,18 @@ package build.spin.module.junit;
  */
 
 import build.base.option.JDKVersion;
+import build.base.version.Version;
+import build.codemodel.dependency.injection.Binder;
 import build.codemodel.dependency.injection.Provides;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spin.Project;
+import build.spin.common.task.SourcePathKind;
+import build.spin.module.java.AbstractDetectResolution;
 import build.spin.module.java.AbstractJavaPlugin;
 import build.spin.module.java.JavaCompilerPlugin;
+import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.module.modulesystem.TestModuleDescriptor;
 import jakarta.inject.Inject;
 
@@ -70,6 +76,76 @@ public abstract class AbstractJUnitPlugin
     @Override
     protected Path getSourceRootPath() {
         return this.project.path().resolve("src/test/");
+    }
+
+    @Override
+    @Provides
+    protected SourcePathKind sourceScope() {
+        return SourcePathKind.TEST;
+    }
+
+    /**
+     * Contributes the JUnit Platform ConsoleLauncher and Jupiter engine — spin's own test-runner
+     * infrastructure that projects are not expected to declare themselves — to the {@code Set<Artifact>}
+     * multibinding {@link AbstractDetectResolution} resolves alongside every other candidate, so there's
+     * one authoritative module-path/classpath split with no duplication.
+     *
+     * @param binder the {@link Binder} to contribute bindings to
+     */
+    @Override
+    public void contributeBindings(final Binder binder) {
+        final String jupiterVersion = jupiterVersion(this.versioning);
+        final String platformVersion = derivePlatformVersion(jupiterVersion);
+
+        binder.bindSet(Artifact.class)
+            .add(Artifact.parse("org.junit.platform:junit-platform-console:" + platformVersion))
+            .add(Artifact.parse("org.junit.jupiter:junit-jupiter-engine:" + jupiterVersion));
+    }
+
+    /**
+     * Resolves the JUnit Jupiter version to use, falling back to {@code "5.6.0"} when the
+     * workspace declares none.
+     * <p>
+     * The lookup key must be the real JPMS module name of {@code junit-jupiter-api}
+     * ({@code org.junit.jupiter.api}), not its groupId ({@code org.junit.jupiter}) — a
+     * {@link ModuleVersioning} that prefers ground-truth module names read from jars (as
+     * {@code PomDependencyGraphWalker} does) never registers a version under the bare groupId.
+     */
+    static String jupiterVersion(final ModuleVersioning versioning) {
+        return versioning.getVersion("org.junit.jupiter.api")
+            .map(Version::get)
+            .orElse("5.6.0");
+    }
+
+    /**
+     * Extracts the major version number from a Jupiter version string (e.g. {@code "6.0.3"} → {@code 6}).
+     * Returns {@code 0} if the version cannot be parsed.
+     */
+    static int jupiterMajorVersion(final String jupiterVersion) {
+        final int dot = jupiterVersion.indexOf('.');
+        final String majorStr = dot < 0 ? jupiterVersion : jupiterVersion.substring(0, dot);
+        try {
+            return Integer.parseInt(majorStr);
+        } catch (final NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Derives the JUnit Platform version from the JUnit Jupiter version.
+     * <p>
+     * JUnit 6+: platform version matches Jupiter (e.g. {@code 6.0.3} → {@code 6.0.3}).
+     * JUnit 5: platform major is {@code 1} (e.g. {@code 5.6.0} → {@code 1.6.0}).
+     */
+    static String derivePlatformVersion(final String jupiterVersion) {
+        final int dot = jupiterVersion.indexOf('.');
+        if (dot < 0) {
+            return jupiterVersion;
+        }
+        if (jupiterMajorVersion(jupiterVersion) >= 6) {
+            return jupiterVersion;
+        }
+        return "1" + jupiterVersion.substring(dot);
     }
 
     @Override

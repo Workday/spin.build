@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
 import build.base.version.VersionOrder;
@@ -29,6 +30,7 @@ import build.percolate.core.ModuleGraphClassifier;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.common.task.BuildOutputLocations;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.ModuleCatalog;
@@ -71,7 +73,10 @@ import java.util.stream.Stream;
  *
  * <p>Concrete subclasses are empty inner classes of the enclosing plugin, which is what
  * causes the DI framework to bind {@link JDKModuleDescriptor} to the correct plugin-scoped
- * descriptor (main vs test).
+ * descriptor (main vs test). The main-vs-test behavioral differences below are driven entirely
+ * by what the enclosing plugin provides via DI — {@link #scope} (via {@code @Provides}) and
+ * {@link #additionalInfrastructureArtifacts} (via a {@code Set<Artifact>} multibinding) — rather
+ * than by further subclassing.
  */
 public abstract class AbstractDetectResolution
     implements Task<CompilationResolution> {
@@ -101,29 +106,32 @@ public abstract class AbstractDetectResolution
     private TelemetryRecorder recorder;
 
     /**
-     * Subclasses may override this to inject additional candidate paths (e.g. the main
-     * compiled classes directory for a JUnit test plugin running in the same project).
-     * These paths are prepended to the sibling candidates before classification.
-     *
-     * @return a {@link Stream} of additional candidate {@link Path}s
+     * Which {@link SourcePathKind} this resolution is for — {@link SourcePathKind#MAIN} or
+     * {@link SourcePathKind#TEST} — provided by the enclosing plugin ({@code AbstractJavaPlugin}
+     * vs {@code AbstractJUnitPlugin}). Gates the TEST-only sibling-main-output inclusion in
+     * {@link #create()}.
      */
-    protected Stream<Path> additionalSiblingCandidates() {
-        return Stream.empty();
-    }
+    @Inject
+    private SourcePathKind scope;
 
     /**
-     * Subclasses may override this to supply additional infrastructure {@link Artifact}s that
-     * are always resolved transitively and included as classification candidates, regardless of
-     * whether the project explicitly declares them as dependencies.
-     *
-     * <p>This is the right place for build-tool runner JARs (e.g. the JUnit Platform
-     * ConsoleLauncher) that spin provides itself rather than expecting the project to declare.
-     *
-     * @return a {@link Stream} of additional {@link Artifact}s to resolve
+     * The {@link JDKVersion} of the enclosing plugin — used, for TEST-scope resolutions only, to
+     * find the sibling {@link JavaCompilerPlugin} of the same major version whose compiled MAIN
+     * output should be added as a candidate.
      */
-    protected Stream<Artifact> additionalArtifacts() {
-        return Stream.empty();
-    }
+    @Inject
+    private JDKVersion javaVersion;
+
+    /**
+     * Additional infrastructure {@link Artifact}s contributed by the enclosing plugin via a
+     * {@code Set<Artifact>} multibinding (see {@code Plugin#contributeBindings}) — always resolved
+     * transitively and included as classification candidates, regardless of whether the project
+     * explicitly declares them as dependencies. Empty for MAIN scope; for TEST scope this is where
+     * build-tool runner JARs (e.g. the JUnit Platform ConsoleLauncher) that spin provides itself,
+     * rather than expecting the project to declare them, land.
+     */
+    @Inject
+    private Set<Artifact> additionalInfrastructureArtifacts;
 
     /**
      * Resolves the compilation dependency closure and classifies all candidates.
@@ -137,8 +145,17 @@ public abstract class AbstractDetectResolution
         final LinkedHashMap<String, RequiresModuleDescriptor> externalRequires = new LinkedHashMap<>();
         final Set<String> visited = new HashSet<>();
 
-        // seed the frontier from additional paths first (e.g. main classes for test scope)
-        additionalSiblingCandidates().forEach(siblingCandidates::add);
+        // seed the frontier from additional paths first — TEST scope also sees this project's own
+        // compiled MAIN output (e.g. so JUnit test sources can see the project's own main sources),
+        // when a same-major-version compiler plugin has run for this project.
+        if (this.scope == SourcePathKind.TEST) {
+            final boolean hasMatchingCompilerPlugin = this.project.plugins(JavaCompilerPlugin.class)
+                .anyMatch(p -> p.getJavaVersion().major() == this.javaVersion.major());
+            if (hasMatchingCompilerPlugin) {
+                resolveCompiledOutput(this.project.path(), this.buildDirectoryName.get(), this.target.get())
+                    .ifPresent(siblingCandidates::add);
+            }
+        }
 
         // seed the frontier from the direct requires of the injected module descriptor
         final List<RequiresModuleDescriptor> frontier = new ArrayList<>();
@@ -198,8 +215,8 @@ public abstract class AbstractDetectResolution
             }
         }
 
-        // Step 2b — Resolve additional infrastructure artifacts provided by subclasses.
-        additionalArtifacts().forEach(artifact -> {
+        // Step 2b — Resolve additional infrastructure artifacts contributed by the enclosing plugin.
+        this.additionalInfrastructureArtifacts.forEach(artifact -> {
             final var resolved = this.resolver.resolveTransitive(artifact);
             if (resolved.isException()) {
                 resolved.exception().ifPresent(e -> this.recorder.error(
@@ -345,10 +362,10 @@ public abstract class AbstractDetectResolution
             .findFirst();
     }
 
-    // Protected (not package-private) so AbstractDetectTestResolution -- in a different package,
-    // spin.module.junit -- can reuse this same multi-build-tool lookup for its own project's main
-    // output instead of hardcoding spin's own .build/main/<target> convention, which resolves to
-    // nothing for a project built via Maven/Gradle without ever having been built by spin directly.
+    // Protected (not private) since this is also used for the TEST-scope sibling-main-output lookup
+    // above, in create() -- reusing this same multi-build-tool lookup for a project's own main output
+    // instead of hardcoding spin's own .build/main/<target> convention, which resolves to nothing for
+    // a project built via Maven/Gradle without ever having been built by spin directly.
     //
     // Picks the freshest existing candidate by mtime rather than a fixed spin > Maven > Gradle
     // preference order: a project once built by spin directly and since migrated to Maven (or vice
