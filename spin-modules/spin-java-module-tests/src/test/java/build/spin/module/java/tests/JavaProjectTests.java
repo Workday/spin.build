@@ -449,6 +449,56 @@ public class JavaProjectTests {
     }
 
     @Test
+    @WorkspacePath("copy-module-resources")
+    void shouldCopyModuleResourcesWhenCompiling(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        assertThat(workspace.name()).isEqualTo("copy-module-resources");
+
+        // create a Program to compile the Workspace - ResourcePlugin.CopyModuleResources is
+        // @PreProcess(JavaCompilerPlugin.Compile.class), a codependency that's always executed
+        // alongside compile, so this verifies src/main/resources/marker.txt is copied into the
+        // build output when only "compile" is requested
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("compile"));
+
+        final AssetCache cache = DefaultAssetCache.create();
+
+        program.execute(cache);
+
+        final Path targetPath = workspace.path().resolve(".build/main/target");
+        assertThat(targetPath.resolve("Main.class")).exists();
+        assertThat(targetPath.resolve("marker.txt"))
+            .as("expected src/main/resources/marker.txt to be copied by CopyModuleResources before compile")
+            .exists();
+    }
+
+    @Test
+    @WorkspacePath("copy-junit-resources")
+    void shouldCopyJUnitResourcesWhenTestCompiling(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        assertThat(workspace.name()).isEqualTo("copy-junit-resources");
+        assertThat(workspace.getPlugin(Java25JUnitPlugin.class).isPresent()).isTrue();
+
+        // create a Program to test-compile the Workspace - ResourcePlugin.CopyJUnitResources is
+        // @PreProcess(JUnitPlugin.Compile.class) and has no other path (no @From, not @Automatic)
+        // into the Program, so this only copies src/test/resources/marker.txt into the build output
+        // if the @PreProcess relationship still causes it to be included when only "test-compile" is
+        // requested
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("test-compile"));
+
+        final AssetCache cache = DefaultAssetCache.create();
+
+        program.execute(cache);
+
+        final Path targetPath = workspace.path().resolve(".build/test/target");
+        assertThat(targetPath.resolve("MainTest.class")).exists();
+        assertThat(targetPath.resolve("marker.txt"))
+            .as("expected src/test/resources/marker.txt to be copied by CopyJUnitResources before test-compile")
+            .exists();
+    }
+
+    @Test
     @WorkspacePath("jlink-tainted")
     void shouldDumpCdsBaseArchiveAlongsideTaintedRootModule(final Engine engine, final Workspace workspace)
         throws Exception {

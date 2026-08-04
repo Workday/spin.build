@@ -70,8 +70,20 @@ public class DefaultInstruction<T>
 
     /**
      * The {@link Task} dependencies, those {@link Task}s on which this {@link Task} depends.
+     * <p>
+     * Includes both genuine (forcing) dependencies and ordering-only {@link build.spin.annotation.Before}/
+     * {@link build.spin.annotation.After} relationships, used to determine execution order once all
+     * {@link Task}s are known.
      */
     private final LinkedHashSet<Reference> dependencies;
+
+    /**
+     * The subset of {@link #dependencies} that are genuine (forcing) dependencies - those defined by
+     * {@link Invocable#dependencies()} (eg: {@link build.spin.annotation.From}) or {@link Task#dependencies()} -
+     * as opposed to ordering-only {@link build.spin.annotation.Before}/{@link build.spin.annotation.After}
+     * relationships, which must not by themselves cause a {@link Task} to be included in a {@link build.spin.Program}.
+     */
+    private final LinkedHashSet<Reference> requiredDependencies;
 
     /**
      * The {@link Task} dependents, those {@link Task}s that are immediately dependent upon this {@link Task}.
@@ -102,30 +114,34 @@ public class DefaultInstruction<T>
         this.recorder = recorder;
         this.context = context;
         this.dependencies = new LinkedHashSet<>();
+        this.requiredDependencies = new LinkedHashSet<>();
         this.dependents = new LinkedHashSet<>();
         this.codependencies = new LinkedHashMap<>();
 
         // create the Task
         this.task = invocable.createTask(context);
 
-        // include the dependencies as defined by the Task.Definition in the Instruction
+        // include the dependencies as defined by the Task.Definition in the Instruction - these are genuine
+        // (forcing) dependencies, eg: @From
         this.invocable.dependencies()
-            .forEach(this::addDependency);
+            .forEach(this::addRequiredDependency);
 
-        // include the dependencies as defined by the Task in the Instruction
+        // include the dependencies as defined by the Task in the Instruction - also genuine (forcing)
         this.task.dependencies()
-            .forEach(this::addDependency);
+            .forEach(this::addRequiredDependency);
 
-        // include the tasks in the Project that must happen @Before this Task (that are not codependencies)
-        // (these are dependencies of the Task)
+        // include the tasks in the Project that must happen @Before this Task (that are not codependencies).
+        // per the @Before contract, these are ordering-only: they must NOT by themselves force the referenced
+        // Task into the Program, only constrain its order should it be included for another reason - so they're
+        // added to dependencies() (for graph edges) but NOT to requiredDependencies() (for inclusion)
         this.invocable.getProject()
             .invocables()
             .filter(defn -> !defn.isCodependency() && defn.isBefore(this.invocable.getReference()))
             .map(Invocable::getReference)
             .forEach(this::addDependency);
 
-        // include the tasks in the Project that this task happens @After (that are not codependencies)
-        // (this task has a dependency on those Tasks)
+        // include the tasks in the Project that this task happens @After (that are not codependencies).
+        // per the @After contract, these are ordering-only - see the @Before case above
         this.invocable.getProject()
             .invocables()
             .filter(defn -> !defn.isCodependency() && this.invocable.isAfter(defn.getReference()))
@@ -173,6 +189,17 @@ public class DefaultInstruction<T>
         return !this.dependencies.isEmpty();
     }
 
+    /**
+     * Obtains the {@link Reference}s of the genuine (forcing) dependencies of the {@link Task} - those that
+     * must be included in a {@link build.spin.Program} for this {@link Task} to execute, as opposed to
+     * ordering-only {@link build.spin.annotation.Before}/{@link build.spin.annotation.After} relationships.
+     *
+     * @return a {@link Stream} of {@link Reference}s
+     */
+    public Stream<Reference> requiredDependencies() {
+        return this.requiredDependencies.stream();
+    }
+
     @Override
     public Stream<Reference> dependents() {
         return this.dependents.stream();
@@ -214,6 +241,20 @@ public class DefaultInstruction<T>
         } else {
             this.recorder.warn("Task dependency [%s] is not available in project [%s] - skipping",
                 reference, reference.project().name());
+        }
+    }
+
+    /**
+     * Adds the specified {@link Reference} as a genuine (forcing) dependency of the {@link Task}, in addition
+     * to recording it as an ordering dependency (see {@link #addDependency(Reference)}).
+     *
+     * @param reference the {@link Reference}
+     */
+    public void addRequiredDependency(final Reference reference) {
+        addDependency(reference);
+
+        if (this.dependencies.contains(reference)) {
+            this.requiredDependencies.add(reference);
         }
     }
 
