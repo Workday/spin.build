@@ -43,7 +43,7 @@ public final class BuildOutputLocations {
      * if that path exists on disk.
      */
     public static Optional<Path> spin(final Path project, final String buildDir, final String relPath) {
-        return existing(project.resolve(buildDir + "/main/" + relPath));
+        return existing(project.resolve(buildDir + "/" + SourcePathKind.MAIN.outputPrefix().orElseThrow() + relPath));
     }
 
     /**

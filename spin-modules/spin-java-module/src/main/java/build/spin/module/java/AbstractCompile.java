@@ -47,6 +47,7 @@ import build.spin.Workspace;
 import build.spin.annotation.System;
 import build.spin.common.ProcessFailedException;
 import build.spin.common.reactive.ConditionalConsumingObserver;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.CompilerArguments;
@@ -77,6 +78,9 @@ import static build.spin.module.clean.CleanPlugin.delete;
  */
 public abstract class AbstractCompile
     implements Task<PathSet> {
+
+    private static final String GENERATED_SOURCES_PATH =
+        SourcePathKind.MAIN.outputPrefix().orElseThrow() + "generated-sources";
 
     @Inject
     private TelemetryRecorder recorder;
@@ -351,7 +355,7 @@ public abstract class AbstractCompile
                     + Strings.doubleQuoteIfContainsWhiteSpace(processorModulePath));
 
                 // direct generated source files to a predictable directory so javadoc can find them
-                final Path generatedSources = buildPath.resolve("main/generated-sources");
+                final Path generatedSources = buildPath.resolve(GENERATED_SOURCES_PATH);
                 try {
                     Files.createDirectories(generatedSources);
                 } catch (final IOException e) {

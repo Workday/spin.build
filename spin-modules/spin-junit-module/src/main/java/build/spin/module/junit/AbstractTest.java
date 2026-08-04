@@ -29,6 +29,7 @@ import build.spin.Task;
 import build.spin.annotation.Category;
 import build.spin.annotation.System;
 import build.spin.common.ProcessFailedException;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.java.ErrorCapture;
 import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.java.JavaPlugin;
@@ -101,10 +102,11 @@ public abstract class AbstractTest
         final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
         // JUnit 6+ uses subcommands; JUnit 5 uses flat options
-        final String jupiterVersion = AbstractDetectTestResolution.jupiterVersion(this.versioning);
-        final boolean useSubcommand = AbstractDetectTestResolution.jupiterMajorVersion(jupiterVersion) >= 6;
+        final String jupiterVersion = AbstractJUnitPlugin.jupiterVersion(this.versioning);
+        final boolean useSubcommand = AbstractJUnitPlugin.jupiterMajorVersion(jupiterVersion) >= 6;
 
-        final Path testClassesDir = buildPath.resolve("test/" + this.target.get());
+        final Path testClassesDir =
+            buildPath.resolve(SourcePathKind.TEST.outputPrefix().orElseThrow() + this.target.get());
         final Path reportPath = buildPath.resolve("reports/tests");
 
         // include the multi-version compiled classes for non-default JDK test plugins
@@ -122,10 +124,10 @@ public abstract class AbstractTest
             effectiveClassPath = classPath;
         }
 
-        final boolean hasMainModuleInfo = Files.exists(
-            this.project.path().resolve("src/main/java/module-info.java"));
-        final boolean hasTestModuleInfo = Files.exists(
-            this.project.path().resolve("src/test/java/module-info.java"));
+        final boolean hasMainModuleInfo = Files.exists(this.project.path().resolve(
+            SourcePathKind.MAIN.sourceRoot().orElseThrow() + "java/" + JDKModuleDescriptor.SOURCE_FILENAME));
+        final boolean hasTestModuleInfo = Files.exists(this.project.path().resolve(
+            SourcePathKind.TEST.sourceRoot().orElseThrow() + "java/" + JDKModuleDescriptor.SOURCE_FILENAME));
 
         // Derive the root module name.  The JUnit plugin's injected ModuleDescriptor uses a
         // project-derived name when no src/test/java/module-info.java exists (e.g. "base.foundation"

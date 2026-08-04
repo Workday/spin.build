@@ -20,6 +20,7 @@ import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
 import build.spawn.application.option.StandardOutputSubscriber;
 import build.spawn.platform.local.LocalMachine;
+import build.spin.Asset;
 import build.spin.AssetCache;
 import build.spin.Engine;
 import build.spin.Program;
@@ -31,6 +32,7 @@ import build.spin.common.DefaultAssetCache;
 import build.spin.common.ProcessFailedException;
 import build.spin.module.checkstyle.CheckstylePlugin;
 import build.spin.module.clean.CleanPlugin;
+import build.spin.module.java.AbstractDetectResolution;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.java.Java8CompilerPlugin;
 import build.spin.module.java.JavaPlatform;
@@ -38,6 +40,7 @@ import build.spin.module.junit.Java25JUnitPlugin;
 import build.spin.module.junit.Java8JUnitPlugin;
 import build.spin.module.maven.MavenRepository;
 import build.spin.module.modulesystem.Artifact;
+import build.spin.module.modulesystem.CompilationResolution;
 import build.spin.module.modulesystem.DefaultModuleCatalog;
 import build.spin.module.modulesystem.DefaultModuleVersioning;
 import build.spin.module.modulesystem.ModuleCatalog;
@@ -189,6 +192,41 @@ public class JavaProjectTests {
         final JDKModuleDescriptor descriptor = testDescriptor.get(workspace);
         assertThat(descriptor.requiresClauses().map(r -> r.requiresModuleName().toString()))
             .contains("org.junit.jupiter", "junit.jupiter.api");
+    }
+
+    @Test
+    @WorkspacePath("maven-built-main")
+    void shouldIncludeMavenBuiltMainOutputInTestResolution(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // Simulates a project already compiled by `mvn compile` directly -- never by spin: a
+        // target/classes directory exists on disk before spin has run at all, while spin's own
+        // .build directory does not exist yet. additionalSiblingCandidates() must find this via
+        // the same spin/Maven/Gradle-aware lookup used for sibling-project candidates
+        // (resolveCompiledOutput), not the previously-hardcoded .build/main/<target> convention,
+        // which never exists for a project like this one.
+        final Path mavenClasses = workspace.path().resolve("target/classes");
+        Files.createDirectories(mavenClasses);
+
+        assertThat(workspace.getPlugin(Java25JUnitPlugin.class)).isPresent();
+
+        // run only the test-resolution task -- not the whole test-compile chain -- so this
+        // project's own main Java compiler task never runs and .build/main/<target> is
+        // guaranteed to not exist, deterministically modelling "already built by Maven, never
+        // built by spin" rather than relying on scheduler ordering within a single invocation
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("detect.test.compilation.resolution"));
+        final AssetCache cache = DefaultAssetCache.create();
+
+        final AssetCache results = program.execute(cache);
+
+        final CompilationResolution resolution = results.get(workspace, AbstractDetectResolution.class)
+            .map(Asset::get)
+            .orElseThrow(() -> new AssertionError(
+                "Expected a CompilationResolution asset for [" + workspace + "]"));
+
+        assertThat(Stream.concat(resolution.modulePath().stream(), resolution.classPath().stream()))
+            .as("expected the Maven-built target/classes output to be a resolution candidate")
+            .contains(mavenClasses);
     }
 
     @Test
@@ -407,6 +445,56 @@ public class JavaProjectTests {
         assertThat(targetPath.resolve("Main.class")).exists();
         assertThat(targetPath.resolve("Generated.class"))
             .as("expected Generated.class compiled from target/generated-sources/protobuf")
+            .exists();
+    }
+
+    @Test
+    @WorkspacePath("copy-module-resources")
+    void shouldCopyModuleResourcesWhenCompiling(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        assertThat(workspace.name()).isEqualTo("copy-module-resources");
+
+        // create a Program to compile the Workspace - ResourcePlugin.CopyModuleResources is
+        // @PreProcess(JavaCompilerPlugin.Compile.class), a codependency that's always executed
+        // alongside compile, so this verifies src/main/resources/marker.txt is copied into the
+        // build output when only "compile" is requested
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("compile"));
+
+        final AssetCache cache = DefaultAssetCache.create();
+
+        program.execute(cache);
+
+        final Path targetPath = workspace.path().resolve(".build/main/target");
+        assertThat(targetPath.resolve("Main.class")).exists();
+        assertThat(targetPath.resolve("marker.txt"))
+            .as("expected src/main/resources/marker.txt to be copied by CopyModuleResources before compile")
+            .exists();
+    }
+
+    @Test
+    @WorkspacePath("copy-junit-resources")
+    void shouldCopyJUnitResourcesWhenTestCompiling(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        assertThat(workspace.name()).isEqualTo("copy-junit-resources");
+        assertThat(workspace.getPlugin(Java25JUnitPlugin.class).isPresent()).isTrue();
+
+        // create a Program to test-compile the Workspace - ResourcePlugin.CopyJUnitResources is
+        // @PreProcess(JUnitPlugin.Compile.class) and has no other path (no @From, not @Automatic)
+        // into the Program, so this only copies src/test/resources/marker.txt into the build output
+        // if the @PreProcess relationship still causes it to be included when only "test-compile" is
+        // requested
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("test-compile"));
+
+        final AssetCache cache = DefaultAssetCache.create();
+
+        program.execute(cache);
+
+        final Path targetPath = workspace.path().resolve(".build/test/target");
+        assertThat(targetPath.resolve("MainTest.class")).exists();
+        assertThat(targetPath.resolve("marker.txt"))
+            .as("expected src/test/resources/marker.txt to be copied by CopyJUnitResources before test-compile")
             .exists();
     }
 

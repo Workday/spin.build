@@ -22,8 +22,9 @@ package build.spin.module.junit;
 
 import build.base.io.PathSet;
 import build.spin.Plugin;
-import build.spin.annotation.Before;
 import build.spin.annotation.From;
+import build.spin.annotation.PreProcess;
+import build.spin.common.task.SourcePathKind;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractResourcePlugin;
 import jakarta.inject.Named;
@@ -56,13 +57,13 @@ public class ResourcePlugin
      * A {@link build.spin.Task} to copy the JUnit resources into the build.
      */
     @Named("copy.junit.resources")
-    @Before(JUnitPlugin.Compile.class)
+    @PreProcess(JUnitPlugin.Compile.class)
     public static class CopyJUnitResources
         extends AbstractResourcePlugin.CopyResources {
 
         @Override
         protected String destinationPrefix() {
-            return "test/";
+            return SourcePathKind.TEST.outputPrefix().orElseThrow();
         }
 
         public PathSet copy(final @From(DetectModuleResourcePaths.class) PathSet paths,

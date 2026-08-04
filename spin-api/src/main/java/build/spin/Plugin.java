@@ -20,6 +20,8 @@ package build.spin;
  * #L%
  */
 
+import build.codemodel.dependency.injection.Binder;
+
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
@@ -47,6 +49,20 @@ public interface Plugin
      */
     default Stream<Invocable<?>> invocables() {
         return Stream.empty();
+    }
+
+    /**
+     * Contributes {@link Binder} bindings (typically multibindings via {@link Binder#bindSet}) to the
+     * {@link build.codemodel.dependency.injection.Context} used to instantiate this {@link Plugin}'s
+     * {@link Task}s.
+     * <p>
+     * Invoked once per {@link Task} {@link Invocable}, before that {@link Task} is instantiated, so
+     * contributed bindings are visible to its injection points.
+     *
+     * @param binder the {@link Binder} to contribute bindings to
+     */
+    default void contributeBindings(final Binder binder) {
+        // no bindings contributed by default
     }
 
     /**

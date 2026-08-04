@@ -202,6 +202,10 @@ public final class DefaultProgram
                 final Context taskContext = this.framework.newContext(new TaskContextModule(taskProject, publisher));
                 taskContext.addResolver(ProvidesResolver.of(taskPlugin, this.framework));
 
+                // allow the Plugin to contribute Binder bindings (e.g. multibindings via bindSet)
+                // before the Task is created, so they're visible to its injection points
+                taskPlugin.contributeBindings(taskContext);
+
                 // add a Resolver for Iterable of Plugins implementing the specified interface
                 taskContext.addResolver(injectionPoint -> {
                     if (TypeUsages.getThreadContextClass(injectionPoint.typeUsage())
@@ -265,13 +269,15 @@ public final class DefaultProgram
                 // we do however include the dependencies of the codependencies
                 // (ie: implied transitive dependencies)
 
-                // NOTE: we deliberately do NOT include Tasks that merely happen to be @After this task - per the
-                // @After contract, such Tasks "will only be executed if required", unlike @PostProcess/@PreProcess
+                // NOTE: we deliberately do NOT include Tasks that are only related via @Before/@After - per their
+                // contract, such Tasks "will only be executed if required", unlike @PostProcess/@PreProcess
                 // codependencies, which "will always be executed with their codependent Task". Only genuine
-                // dependencies (@From) and codependencies are pulled in here.
+                // dependencies (@From, Task#dependencies()) and codependencies are pulled in here;
+                // instruction.requiredDependencies() deliberately excludes the ordering-only @Before/@After
+                // relationships that instruction.dependencies() (used later, for graph edges) still includes.
                 Stream.concat(
                         instruction.codependencies().flatMap(Invocable::dependencies),
-                        instruction.dependencies())
+                        instruction.requiredDependencies())
                     .filter(r -> !this.instructions.containsKey(r))
                     .peek(r -> {
                         //include the dependency for the project (when it's not itself)
@@ -306,10 +312,19 @@ public final class DefaultProgram
         creatingInstructions.complete();
 
         // build the dependency graph: edge A → B means "A depends on B"
+        //
+        // a codependency (@PreProcess/@PostProcess) never gets its own Instruction / graph node - it's
+        // executed inline as part of its owning Task (see runTask) - but its own @From dependencies are
+        // real data dependencies of that inline execution, so they must be wired in as edges from the
+        // owning Instruction too. Without this, a codependency's dependency is merely included somewhere
+        // in the Program with no ordering tie to the owner, letting the owner (and its inline codependency)
+        // be dispatched concurrently with, rather than after, that dependency.
         final Graph.Builder<Reference> graphBuilder = Graph.directed();
         this.instructions.keySet().forEach(graphBuilder::addVertex);
         this.instructions.values().forEach(instruction ->
-            instruction.dependencies()
+            Stream.concat(
+                    instruction.dependencies(),
+                    instruction.codependencies().flatMap(Invocable::dependencies))
                 .filter(this.instructions::containsKey)
                 .forEach(dep -> graphBuilder.addEdge(instruction.getReference(), dep)));
         final Graph<Reference> dependencyGraph = graphBuilder.build();
