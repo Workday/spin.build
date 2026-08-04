@@ -34,5 +34,8 @@ module build.spin.engine.tests.test {
         build.spin.engine.tests.FailFastTestPlugin.MetaClass,
         build.spin.engine.tests.AfterTestPlugin.MetaClass,
         build.spin.engine.tests.AfterDependencyTestPlugin.MetaClass,
-        build.spin.engine.tests.BeforeDependencyTestPlugin.MetaClass;
+        build.spin.engine.tests.BeforeDependencyTestPlugin.MetaClass,
+        build.spin.engine.tests.CodependencyRaceTestPlugin.MetaClass,
+        build.spin.engine.tests.CodependencyOrderTestPlugin.MetaClass,
+        build.spin.engine.tests.NestedCodependencyTestPlugin.MetaClass;
 }

@@ -30,8 +30,11 @@ import build.spin.Task;
 import build.spin.annotation.PostProcess;
 import build.spin.annotation.PreProcess;
 
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -148,10 +151,93 @@ public class DefaultInstruction<T>
             .map(Invocable::getReference)
             .forEach(this::addDependency);
 
-        // include the codependencies in the project for the Task represented by the Instruction
+        // include the codependencies in the project for the Task represented by the Instruction,
+        // resolved transitively - a codependency that itself declares @PreProcess/@PostProcess has
+        // its own nested codependencies discovered too, rather than only one level of nesting
+        final LinkedHashSet<Reference> visitedCodependencies = new LinkedHashSet<>();
+        visitedCodependencies.add(this.invocable.getReference());
+        addCodependenciesRecursively(this.invocable.getReference(), visitedCodependencies);
+
+        // fold @Before/@After declared on any codependency anywhere in the Project (at any nesting
+        // depth) into this Instruction's own ordering-only dependencies. A codependency never gets
+        // its own Instruction - it's executed inline as part of its ultimate top-level owner - so any
+        // ordering constraint it declares must be translated into a constraint on that owner instead
         this.invocable.getProject()
-            .codependencies(this.invocable.getReference())
-            .forEach(this::addCodependency);
+            .invocables()
+            .filter(Invocable::isCodependency)
+            .filter(defn -> defn.isBefore(this.invocable.getReference()))
+            .map(DefaultInstruction::ultimateOwner)
+            .filter(owner -> !owner.equals(this.invocable.getReference()))
+            .forEach(this::addDependency);
+
+        this.invocable.getProject()
+            .invocables()
+            .filter(Invocable::isCodependency)
+            .filter(defn -> this.invocable.isAfter(defn.getReference()))
+            .map(DefaultInstruction::ultimateOwner)
+            .filter(owner -> !owner.equals(this.invocable.getReference()))
+            .forEach(this::addDependency);
+    }
+
+    /**
+     * Recursively discovers the codependencies of the {@link Task} identified by {@code reference},
+     * adding each to {@link #codependencies} and then descending into its own codependencies in turn,
+     * guarding against revisiting a {@link Reference} already seen (eg: a cyclic pre/post-process chain).
+     * <p>
+     * A {@link PreProcess} codependency's own codependencies are discovered before it is added (so
+     * they execute before it, as they in turn pre-process it); a {@link PostProcess} codependency's
+     * own codependencies are discovered after it is added (so they execute after it, as they in turn
+     * post-process it). This keeps {@link #codependencies}' iteration order consistent with the order
+     * {@link DefaultProgram#runTask} must execute them in for same-kind nesting - a {@link PreProcess}
+     * nested under a {@link PostProcess}, or vice versa, is a known limitation not handled here.
+     *
+     * @param reference the {@link Reference} whose codependencies are to be discovered
+     * @param visited   the {@link Reference}s already discovered, to guard against cycles/duplicates
+     */
+    private void addCodependenciesRecursively(final Reference reference, final Set<Reference> visited) {
+        this.invocable.getProject()
+            .codependencies(reference)
+            .filter(codependency -> visited.add(codependency.getReference()))
+            .forEach(codependency -> {
+                if (codependency.getTaskClass().isAnnotationPresent(PreProcess.class)) {
+                    addCodependenciesRecursively(codependency.getReference(), visited);
+                    addCodependency(codependency);
+                } else {
+                    addCodependency(codependency);
+                    addCodependenciesRecursively(codependency.getReference(), visited);
+                }
+            });
+    }
+
+    /**
+     * Walks up a codependency's own {@link PreProcess}/{@link PostProcess} chain to find the
+     * {@link Reference} of the top-level {@link Task} that actually owns an {@link Instruction} -
+     * a codependency is executed inline as part of another {@link Task} rather than getting its own
+     * {@link Instruction}, so any ordering constraint (eg: {@link build.spin.annotation.Before}/
+     * {@link build.spin.annotation.After}) it declares must be translated into a constraint on that
+     * top-level owner instead.
+     *
+     * @param invocable the {@link Invocable} to resolve the ultimate owner of
+     * @return the {@link Reference} of the top-level owning {@link Task}
+     */
+    private static Reference ultimateOwner(final Invocable<?> invocable) {
+        final Class<? extends Task<?>> taskClass = invocable.getTaskClass();
+
+        final Optional<Class<? extends Task<?>>> target = Stream.concat(
+                Arrays.stream(taskClass.getDeclaredAnnotationsByType(PreProcess.class)).map(PreProcess::value),
+                Arrays.stream(taskClass.getDeclaredAnnotationsByType(PostProcess.class)).map(PostProcess::value))
+            .findFirst();
+
+        if (target.isEmpty()) {
+            return invocable.getReference();
+        }
+
+        return invocable.getProject()
+            .invocables()
+            .filter(defn -> defn.getTaskClass().equals(target.get()))
+            .findFirst()
+            .map(DefaultInstruction::ultimateOwner)
+            .orElseGet(() -> Reference.of(invocable.getProject(), target.get()));
     }
 
     @Override

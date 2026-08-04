@@ -312,10 +312,19 @@ public final class DefaultProgram
         creatingInstructions.complete();
 
         // build the dependency graph: edge A → B means "A depends on B"
+        //
+        // a codependency (@PreProcess/@PostProcess) never gets its own Instruction / graph node - it's
+        // executed inline as part of its owning Task (see runTask) - but its own @From dependencies are
+        // real data dependencies of that inline execution, so they must be wired in as edges from the
+        // owning Instruction too. Without this, a codependency's dependency is merely included somewhere
+        // in the Program with no ordering tie to the owner, letting the owner (and its inline codependency)
+        // be dispatched concurrently with, rather than after, that dependency.
         final Graph.Builder<Reference> graphBuilder = Graph.directed();
         this.instructions.keySet().forEach(graphBuilder::addVertex);
         this.instructions.values().forEach(instruction ->
-            instruction.dependencies()
+            Stream.concat(
+                    instruction.dependencies(),
+                    instruction.codependencies().flatMap(Invocable::dependencies))
                 .filter(this.instructions::containsKey)
                 .forEach(dep -> graphBuilder.addEdge(instruction.getReference(), dep)));
         final Graph<Reference> dependencyGraph = graphBuilder.build();
