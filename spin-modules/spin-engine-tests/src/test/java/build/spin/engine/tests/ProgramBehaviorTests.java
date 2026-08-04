@@ -33,6 +33,11 @@ class ProgramBehaviorTests {
         FailFastTestPlugin.NEVER_TASK_RAN.set(false);
         AfterTestPlugin.MAIN_TASK_RAN.set(false);
         AfterTestPlugin.AFTER_TASK_RAN.set(false);
+        AfterDependencyTestPlugin.ROOT_TASK_RAN.set(false);
+        AfterDependencyTestPlugin.MIDDLE_TASK_RAN.set(false);
+        AfterDependencyTestPlugin.SIDE_TASK_RAN.set(false);
+        BeforeDependencyTestPlugin.TARGET_TASK_RAN.set(false);
+        BeforeDependencyTestPlugin.BEFORE_TASK_RAN.set(false);
     }
 
     @Test
@@ -95,6 +100,49 @@ class ProgramBehaviorTests {
         assertThat(AfterTestPlugin.MAIN_TASK_RAN.get()).withFailMessage("main task must have run").isTrue();
         assertThat(AfterTestPlugin.AFTER_TASK_RAN.get())
             .withFailMessage("a task that is only @After another task must not be executed unless required")
+            .isFalse();
+    }
+
+    // ── Question: does declaring @After on a Task that IS independently required pull the
+    //    referenced Task into the Program too? (MiddleTask is required via RootTask's @From;
+    //    MiddleTask is @After(SideTask.class); nothing else references SideTask at all) ──────
+
+    @Test
+    @WorkspacePath("afterdep-test")
+    void shouldNotRunSideTaskThatIsOnlyReachableThroughAnotherTasksAfterAnnotation(
+        final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("afterdep-root"));
+        program.execute(cache);
+
+        assertThat(AfterDependencyTestPlugin.ROOT_TASK_RAN.get()).withFailMessage("root task must have run").isTrue();
+        assertThat(AfterDependencyTestPlugin.MIDDLE_TASK_RAN.get())
+            .withFailMessage("middle task must have run (it's a @From dependency of root)")
+            .isTrue();
+        assertThat(AfterDependencyTestPlugin.SIDE_TASK_RAN.get())
+            .withFailMessage("side task is only reachable via middle's @After annotation - "
+                + "per the @After contract it must not be pulled into the Program merely because "
+                + "the annotated (middle) task happens to run")
+            .isFalse();
+    }
+
+    // ── Mirror of the above for @Before: does a Task's own @Before(X) declaration pull it into
+    //    the Program merely because X is independently required, with nothing else referencing it? ──
+
+    @Test
+    @WorkspacePath("beforedep-test")
+    void shouldNotRunTaskThatIsOnlyBeforeAnotherTask(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("beforedep-target"));
+        program.execute(cache);
+
+        assertThat(BeforeDependencyTestPlugin.TARGET_TASK_RAN.get()).withFailMessage("target task must have run").isTrue();
+        assertThat(BeforeDependencyTestPlugin.BEFORE_TASK_RAN.get())
+            .withFailMessage("a task that is only @Before another task must not be executed unless required")
             .isFalse();
     }
 }
