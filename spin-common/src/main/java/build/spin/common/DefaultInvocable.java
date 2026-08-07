@@ -23,13 +23,11 @@ package build.spin.common;
 import build.spin.Invocable;
 import build.spin.Plugin;
 import build.spin.Project;
-import build.spin.Reference;
 import build.spin.Task;
 import build.spin.common.util.Invocables;
 import jakarta.inject.Inject;
 
 import java.net.URI;
-import java.util.stream.Stream;
 
 import static build.base.foundation.Introspection.describe;
 
@@ -99,11 +97,6 @@ public class DefaultInvocable<T>
     @Override
     public URI getURI() {
         return this.uri;
-    }
-
-    @Override
-    public Stream<Reference> dependencies() {
-        return Stream.concat(Invocable.super.dependencies(), this.plugin.projectDependencies(this.taskClass));
     }
 
     @Override

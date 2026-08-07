@@ -39,11 +39,9 @@ import build.spawn.jdk.option.ClassPath;
 import build.spawn.jdk.option.JDKHome;
 import build.spawn.jdk.option.ModulePath;
 import build.spawn.platform.local.LocalMachine;
-import build.spin.Invocable;
 import build.spin.Project;
 import build.spin.Reference;
 import build.spin.Task;
-import build.spin.Workspace;
 import build.spin.annotation.System;
 import build.spin.common.ProcessFailedException;
 import build.spin.common.reactive.ConditionalConsumingObserver;
@@ -63,7 +61,6 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -146,40 +143,19 @@ public abstract class AbstractCompile
 
     @Override
     public Stream<Reference> dependencies() {
-        final Workspace workspace = this.project.workspace();
-
-        // locate projects with in the Workspace that this project requires
-        // (and add if they are Java project, add a prerequisite on the appropriate
-        //  JavaCompilerPlugin.Compiler task for the project)
-        final Stream<Reference> requiresDeps = this.moduleDescriptor.requiresClauses()
-            .map(r -> r.requiresModuleName().toString())
-            .flatMap(name -> workspace.stream()
-                .map(prj -> JavaCompilerPlugin.resolveRequiredCompilerPlugin(prj, name, this.moduleDescriptor)
-                    .map(plugin ->
-                        // locate the JavaCompilerPlugin.Compiler task for the CompilerPlugin
-                        prj.invocables()
-                            .filter(definition -> definition.getPlugin() == plugin
-                                && JavaCompilerPlugin.Compile.class.isAssignableFrom(definition.getTaskClass()))
-                            .findFirst()
-                            .map(Invocable::getTaskClass)
-                            .map(taskClass -> Reference.of(prj, taskClass))
-                            .orElse(null))
-                    .orElse(null))
-                .filter(Objects::nonNull));
+        // locate projects in the Workspace that this project requires, forcing the sibling's own
+        // JavaCompilerPlugin.Compile task when it isn't already built (shared with AbstractDetectResolution,
+        // which forces the same siblings for the same reason)
+        final Stream<Reference> requiresDeps = AbstractDetectResolution.siblingCompileDependencies(
+            this.project, this.moduleDescriptor, this.buildDirectoryName.get(), this.targetDirectoryName.get());
 
         // also depend on any workspace annotation processor modules so they are compiled before us
         final Stream<Reference> processorDeps = AnnotationProcessorPaths
             .annotationProcessorProjects(this.moduleDescriptor, this.project)
             .flatMap(prj -> prj.plugins(JavaCompilerPlugin.class)
                 .findFirst()
-                .map(plugin -> prj.invocables()
-                    .filter(definition -> definition.getPlugin() == plugin
-                        && JavaCompilerPlugin.Compile.class.isAssignableFrom(definition.getTaskClass()))
-                    .findFirst()
-                    .map(Invocable::getTaskClass)
-                    .map(taskClass -> Reference.of(prj, taskClass))
-                    .stream())
-                .orElse(Stream.empty()));
+                .flatMap(plugin -> AbstractDetectResolution.crossProjectDeps(prj, plugin))
+                .stream());
 
         return Stream.concat(requiresDeps, processorDeps);
     }
@@ -267,7 +243,7 @@ public abstract class AbstractCompile
             target = targetPath;
         } else {
             // otherwise place the compiled classes in a target folder for the major version of java
-            target = targetPath.resolve("../" + targetPath.getFileName() + "-" + this.javaVersion.major() + "/");
+            target = targetPath.resolveSibling(targetPath.getFileName() + "-" + this.javaVersion.major() + "/");
         }
 
         // create the target path for the compiled classes
