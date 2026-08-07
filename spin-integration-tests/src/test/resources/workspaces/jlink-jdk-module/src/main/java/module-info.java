@@ -18,5 +18,5 @@
  * #L%
  */
 module app {
-    requires jdk.compiler;
+    requires jdk.jdwp.agent;
 }

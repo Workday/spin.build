@@ -45,7 +45,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * full, untrimmed JDK, so a supplemental {@link java.lang.module.ModuleFinder} that reads {@code
  * ModuleFinder.ofSystem()} (the currently-running JVM's own modules) rather than a target JDK's
  * real {@code jmods/} directory will resolve fine there — and only fail once spin links its own
- * image without a dev-tool module like {@code jdk.compiler}. Only launching the real {@code
+ * image without a dev-tool module like {@code jdk.jdwp.agent}. Only launching the real {@code
  * spin.sh} reproduces that.
  */
 class SpinRuntimeIntegrationTests {
@@ -56,11 +56,11 @@ class SpinRuntimeIntegrationTests {
     @Test
     void jlinkShouldResolveRootModuleThatRequiresAJdkPlatformModule() throws Exception {
         // Regression coverage for a real, reported failure: "[classify] classifyAndResolve
-        // failed (unable to resolve JPMS module graph from root [app]: Module jdk.compiler not
+        // failed (unable to resolve JPMS module graph from root [app]: Module jdk.jdwp.agent not
         // found, required by app) - falling back to classify-only". AbstractJavaLinker's
         // classification of the root module's graph must succeed via a supplemental
         // ModuleFinder over the *target* JDK's real jmods/ directory, not ModuleFinder.ofSystem()
-        // — this spin process's own module set, which genuinely lacks jdk.compiler once spin
+        // — this spin process's own module set, which genuinely lacks jdk.jdwp.agent once spin
         // links its own dev-tool-free runtime image (asserted below).
 
         final Path spinSh = spinHome().resolve("bin/spin.sh");
@@ -71,9 +71,9 @@ class SpinRuntimeIntegrationTests {
 
         assertThat(runListModules(spinHome()))
             .as("this test only proves anything if spin's own runtime genuinely lacks "
-                + "jdk.compiler — otherwise ModuleFinder.ofSystem() would trivially succeed "
+                + "jdk.jdwp.agent — otherwise ModuleFinder.ofSystem() would trivially succeed "
                 + "regardless of the fix under test")
-            .doesNotContain("jdk.compiler");
+            .doesNotContain("jdk.jdwp.agent");
 
         final Path fixture = copyFixture("jlink-jdk-module");
 
@@ -92,13 +92,13 @@ class SpinRuntimeIntegrationTests {
         final Path packagePath = fixture.resolve(".build/jlink-jdk-module-" + hostOs() + "-" + hostArch());
         assertThat(packagePath).as("expected a host-target runtime image at [%s]", packagePath).isDirectory();
 
-        // jdk.compiler must be baked directly into the produced image's own lib/modules — not
+        // jdk.jdwp.agent must be baked directly into the produced image's own lib/modules — not
         // merely reachable via some external module-path — which only happens if the
         // classifier's Configuration#resolve call actually succeeded against the root module's
         // requires.
         final String modules = runListModules(packagePath);
-        assertThat(modules).as("expected jdk.compiler linked into the produced image:%n%s", modules)
-            .contains("jdk.compiler");
+        assertThat(modules).as("expected jdk.jdwp.agent linked into the produced image:%n%s", modules)
+            .contains("jdk.jdwp.agent");
     }
 
     private static String runListModules(final Path imagePath) throws IOException, InterruptedException {
