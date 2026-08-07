@@ -24,6 +24,7 @@ import build.base.configuration.ConfigurationBuilder;
 import build.base.telemetry.Activity;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.dependency.injection.InjectionFramework;
+import build.codemodel.dependency.injection.TypeLiteral;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
 import build.spawn.platform.local.LocalMachine;
@@ -118,8 +119,10 @@ class GpgPluginTests {
         context.bind(LocalMachine.class).to(machine);
         context.bind(SignableResource.class).to(signable);
         context.bind(SigningService.class).to(signingService);
-        context.bind(Optional.class).as("passphrase").with(Configuration.class).to(Optional.empty());
-        context.bind(Optional.class).as("armor").with(Configuration.class).to(Optional.empty());
+        context.bind(new TypeLiteral<Optional<String>>() {
+        }).as("passphrase").with(Configuration.class).to(Optional.empty());
+        context.bind(new TypeLiteral<Optional<Boolean>>() {
+        }).as("armor").with(Configuration.class).to(Optional.empty());
 
         final var sign = context.create(GpgPlugin.Sign.class);
 
@@ -249,8 +252,10 @@ class GpgPluginTests {
         context.bind(LocalMachine.class).to(machine);
         context.bind(SignableResource.class).to(signable);
         context.bind(SigningService.class).to(signingService);
-        context.bind(Optional.class).as("passphrase").with(Configuration.class).to(passphrase);
-        context.bind(Optional.class).as("armor").with(Configuration.class).to(armor);
+        context.bind(new TypeLiteral<Optional<String>>() {
+        }).as("passphrase").with(Configuration.class).to(passphrase);
+        context.bind(new TypeLiteral<Optional<Boolean>>() {
+        }).as("armor").with(Configuration.class).to(armor);
 
         return context.create(GpgPlugin.Sign.class);
     }
