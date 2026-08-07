@@ -50,6 +50,7 @@ import build.spin.module.modulesystem.PomBasedModuleCatalog;
 import build.spin.module.modulesystem.PomBasedModuleVersioning;
 import build.spin.module.modulesystem.PomBasedTestModuleDescriptor;
 import build.spin.module.modulesystem.TestModuleDescriptor;
+import build.spin.option.JlinkTargets;
 import build.spin.testing.RequireJavaVersion;
 import build.spin.testing.WorkspaceDiscovery;
 import build.spin.testing.WorkspacePath;
@@ -504,7 +505,7 @@ public class JavaProjectTests {
         throws Exception {
 
         // create a Program to build a jlink runtime image for the Workspace
-        final Program program = engine.createProgram(workspace, Task.Pattern.of("jlink"));
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("jlink"), JlinkTargets.HOST_ONLY);
 
         // create a Task ExecutionCache for the Program
         final AssetCache cache = DefaultAssetCache.create();

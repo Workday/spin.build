@@ -47,6 +47,7 @@ import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.junit.Java25JUnitPlugin;
 import build.spin.module.maven.MavenPlugin;
 import build.spin.option.EngineVersion;
+import build.spin.option.JlinkTargets;
 import build.spin.option.NetworkAccess;
 import build.spin.option.OperatingSystem;
 import build.spin.option.ServerMode;
@@ -145,6 +146,7 @@ public class Spin {
             .option(Verbose.class)
             .option(ServerMode.class)
             .option(ServerPort.class)
+            .option(JlinkTargets.class)
             .build();
 
         aliases.forEach(parser::registerCategory);
