@@ -32,6 +32,7 @@ import build.base.foundation.UniformResource;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
+import build.base.telemetry.TelemetryRecorderFactory;
 import build.codemodel.dependency.injection.Binder;
 import build.codemodel.dependency.injection.ConfigurationResolver;
 import build.codemodel.dependency.injection.Context;
@@ -63,6 +64,7 @@ import build.spin.common.injection.ProjectResourceResolver;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.common.util.Folders;
 import build.spin.common.util.Invocables;
+import build.spin.option.Verbose;
 
 import java.io.IOException;
 import java.net.URI;
@@ -194,7 +196,12 @@ public final class DefaultEngine implements Engine {
         }
 
         // establish the Dependency Injection context for the Engine
-        this.context = this.framework.newContext(new EngineModule(this.framework, this.fileSystem, this.optionsByType));
+        final boolean verbose = this.optionsByType.getOptional(Verbose.class)
+            .map(value -> value == Verbose.ENABLED)
+            .orElse(false);
+
+        this.context = this.framework.newContext(new EngineModule(this.framework, this.fileSystem, this.optionsByType,
+            engineUri -> TelemetryPublisher.of(engineUri, this::publish, verbose)));
 
         // allow the @Default JDKVersion to be resolved for injection
         this.optionsByType.getOptional(JDKVersion.class)
@@ -544,7 +551,8 @@ public final class DefaultEngine implements Engine {
      * Core value bindings for the engine {@link Context}. Extracted as a {@link Module} so tests
      * can override individual bindings via {@link build.codemodel.dependency.injection.Modules#override}.
      */
-    record EngineModule(InjectionFramework framework, FileSystem fileSystem, Configuration optionsByType)
+    record EngineModule(InjectionFramework framework, FileSystem fileSystem, Configuration optionsByType,
+                        TelemetryRecorderFactory telemetryRecorderFactory)
         implements Module {
 
         @Override
@@ -553,7 +561,7 @@ public final class DefaultEngine implements Engine {
             binder.bind(FileSystem.class).to(this.fileSystem);
             binder.bind(CodeModel.class).to(new JDKCodeModel(new NonCachingNameProvider()));
             binder.bind(Configuration.class).to(this.optionsByType);
-            binder.bind(LocalMachine.class).to(LocalMachine.get());
+            binder.bind(LocalMachine.class).to(new LocalMachine(this.telemetryRecorderFactory));
             binder.bind(DocumentBuilderFactory.class).to(DocumentBuilderFactory.newInstance());
             binder.bind(Cache.class).to(HeapBasedCache::new);
         }

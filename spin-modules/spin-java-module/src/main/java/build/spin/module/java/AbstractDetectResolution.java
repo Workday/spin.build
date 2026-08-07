@@ -27,7 +27,9 @@ import build.base.version.VersionOrder;
 import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.percolate.core.ModuleGraphClassifier;
+import build.spin.Invocable;
 import build.spin.Project;
+import build.spin.Reference;
 import build.spin.Task;
 import build.spin.common.task.BuildOutputLocations;
 import build.spin.common.task.SourcePathKind;
@@ -40,7 +42,9 @@ import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
+import java.io.IOException;
 import java.lang.module.ModuleFinder;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -380,6 +384,15 @@ public abstract class AbstractDetectResolution
                 BuildOutputLocations.maven(projectPath, "classes"),
                 BuildOutputLocations.gradle(projectPath, "classes/java/main"))
             .flatMap(Optional::stream)
+            // a candidate directory can exist but still be empty -- e.g. CleanPlugin$CreateBuildPath
+            // creates <buildDir>/main/target up front as a prerequisite for several tasks, independent
+            // of whether Compile has actually run yet. Treating that as "already built" would let it
+            // win the freshest-mtime tie-break below against an older but fully-populated candidate
+            // (e.g. Maven's target/classes from an earlier reactor build) whenever that sibling's own
+            // Compile task happens to be running concurrently and unordered relative to this check
+            // (as it legitimately can be -- see siblingCompileDependencies), handing back a module-path
+            // entry with nothing compiled into it yet.
+            .filter(AbstractDetectResolution::isNonEmptyDirectory)
             .toList();
 
         // Only walk candidate trees to compare mtimes when there's an actual ambiguity to resolve —
@@ -390,6 +403,15 @@ public abstract class AbstractDetectResolution
             case 1 -> Optional.of(candidates.get(0));
             default -> candidates.stream().max(Comparator.comparing(BuildOutputLocations::latestModifiedTime));
         };
+    }
+
+    private static boolean isNonEmptyDirectory(final Path path) {
+        try (Stream<Path> entries = Files.list(path)) {
+            return entries.findAny().isPresent();
+        }
+        catch (final IOException e) {
+            return false;
+        }
     }
 
     /**
@@ -579,5 +601,49 @@ public abstract class AbstractDetectResolution
             recorder.warn(e, "Failed to derive a module name for candidate [%s] — treating as unnamed", path);
             return Optional.empty();
         }
+    }
+
+    @Override
+    public Stream<Reference> dependencies() {
+        return siblingCompileDependencies(
+            this.project, this.moduleDescriptor, this.buildDirectoryName.get(), this.target.get());
+    }
+
+    /**
+     * Locates, for every workspace sibling {@code requires}d by {@code moduleDescriptor} that isn't
+     * already built, the {@link Reference} to that sibling's {@link JavaCompilerPlugin.Compile} task —
+     * shared between {@link AbstractDetectResolution} and {@link AbstractCompile}, since both must
+     * force the same siblings to (re)compile before they can proceed, for the same reason: an unbuilt
+     * sibling has nothing on disk yet for {@link #resolveCompiledOutput} to hand back.
+     *
+     * @param project             the {@link Project} whose {@code requires} clauses to walk
+     * @param moduleDescriptor    the {@link JDKModuleDescriptor} to read {@code requires} clauses from
+     * @param buildDirectoryName  spin's own build directory name, to check for prior spin output
+     * @param targetDirectoryName the target directory name, to check for prior spin/Maven/Gradle output
+     * @return the {@link Reference}s to force
+     */
+    static Stream<Reference> siblingCompileDependencies(final Project project,
+                                                        final JDKModuleDescriptor moduleDescriptor,
+                                                        final String buildDirectoryName,
+                                                        final String targetDirectoryName) {
+        final var workspace = project.workspace();
+        return moduleDescriptor.requiresClauses()
+            .map(r -> r.requiresModuleName().toString())
+            .flatMap(name -> workspace.stream()
+                .filter(prj -> resolveCompiledOutput(prj.path(), buildDirectoryName, targetDirectoryName).isEmpty())
+                .flatMap(prj -> JavaCompilerPlugin.resolveRequiredCompilerPlugin(prj, name, moduleDescriptor)
+                    .optional()
+                    .flatMap(plugin -> crossProjectDeps(prj, plugin))
+                    .stream()));
+    }
+
+    static Optional<Reference> crossProjectDeps(final Project prj,
+                                                final JavaCompilerPlugin plugin) {
+        return prj.invocables()
+            .filter(definition -> definition.getPlugin() == plugin)
+            .filter(definition -> JavaCompilerPlugin.Compile.class.isAssignableFrom(definition.getTaskClass()))
+            .findFirst()
+            .map(Invocable::getTaskClass)
+            .map(taskClass -> Reference.of(prj, taskClass));
     }
 }

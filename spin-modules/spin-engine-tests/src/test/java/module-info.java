@@ -38,5 +38,6 @@ module build.spin.engine.tests.test {
         build.spin.engine.tests.CodependencyRaceTestPlugin.MetaClass,
         build.spin.engine.tests.CodependencyOrderTestPlugin.MetaClass,
         build.spin.engine.tests.NestedCodependencyTestPlugin.MetaClass,
+        build.spin.engine.tests.WorkspaceDetectionTestPlugin.MetaClass,
         build.spin.engine.tests.FederatedTestPlugin.MetaClass;
 }

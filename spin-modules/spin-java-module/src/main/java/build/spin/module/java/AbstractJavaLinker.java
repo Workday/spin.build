@@ -41,6 +41,7 @@ import build.spin.common.ProcessFailedException;
 import build.spin.common.task.SourcePathKind;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleReference;
+import build.spin.option.JlinkTargets;
 import jakarta.inject.Inject;
 
 import java.io.BufferedOutputStream;
@@ -99,6 +100,12 @@ public abstract class AbstractJavaLinker
     @System
     private JDKVersion systemJavaVersion;
 
+    // controls whether jlink() below links every staged JDK target or just the host's own —
+    // see JlinkTargets.HOST_ONLY, used by spin's own self-hosting bootstrap to skip cross-target
+    // linking it doesn't need
+    @Inject
+    private JlinkTargets jlinkTargets;
+
     /**
      * Execute {@code jlink} on this {@link Project}, once per {@link TargetPlatform} a {@link JavaPlatform#targets()}
      * {@link JDK} is available for, i.e. staging a foreign-platform {@link JDK} is sufficient to have a runtime
@@ -120,14 +127,18 @@ public abstract class AbstractJavaLinker
             return Set.of();
         }
 
-        final var targets = this.platform.targets().toList();
-        if (targets.isEmpty()) {
-            throw new RuntimeException("No JDKs available for jlink");
-        }
-
         // every target gets its own <packageName>/<os>-<arch>/ sibling path, including the host's own
         // - no special-cased flat path, so targets never collide or nest inside one another
         final var hostTarget = JavaPlatform.hostTarget();
+
+        // HOST_ONLY (spin's own self-hosting bootstrap) skips iterating every staged JDK target and
+        // links just the host's own, so a build only needs its own JDK staged, not every cross-target one
+        final var targets = this.jlinkTargets == JlinkTargets.HOST_ONLY
+            ? List.of(hostTarget)
+            : this.platform.targets().toList();
+        if (targets.isEmpty()) {
+            throw new RuntimeException("No JDKs available for jlink");
+        }
 
         // Classification (which app jars can link straight into the image vs. must stay external)
         // only depends on the target's module set, not on the target itself, so targets sharing an

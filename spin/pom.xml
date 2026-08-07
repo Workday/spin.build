@@ -188,6 +188,7 @@
                             <arguments>
                                 <argument>clean</argument>
                                 <argument>jlink</argument>
+                                <argument>--jlink-host-only</argument>
                             </arguments>
                         </configuration>
                     </execution>
@@ -206,33 +207,8 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
-                            <executable>/bin/sh</executable>
+                            <executable>${project.basedir}/src/main/scripts/spin2-build-spin3.sh</executable>
                             <workingDirectory>${project.basedir}</workingDirectory>
-                            <arguments>
-                                <argument>-c</argument>
-                                <argument>
-                                    case "$(uname -s)" in Darwin) HOST_OS=mac ;; Linux) HOST_OS=linux ;; *) HOST_OS=other ;; esac
-                                    case "$(uname -m)" in arm64|aarch64) HOST_ARCH=aarch64 ;; x86_64|amd64) HOST_ARCH=x86_64 ;; *) HOST_ARCH=other ;; esac
-                                    HOST_DIR=".build/spin-${HOST_OS}-${HOST_ARCH}"
-                                    rm -rf /tmp/spin2 /tmp/spin2-modules.txt /tmp/spin3-modules.txt /tmp/spin2-extmodules.txt /tmp/spin3-extmodules.txt /tmp/spin2-classpath.txt /tmp/spin3-classpath.txt &amp;&amp;
-                                    # move spin₂ aside: both spin₂ and spin₃ write to the host's own target directory, so spin₂ must vacate before spin₃ can be built
-                                    cp -r "$HOST_DIR" /tmp/spin2 &amp;&amp;
-                                    /tmp/spin2/bin/spin.sh clean jlink &amp;&amp;
-                                    # structural equivalence check (launcher + linked/external module sets); jar contents are not diffed as jars embed build timestamps
-                                    diff /tmp/spin2/bin/spin.sh "$HOST_DIR"/bin/spin.sh &amp;&amp;
-                                    /tmp/spin2/bin/java --list-modules | sort &gt; /tmp/spin2-modules.txt &amp;&amp;
-                                    "$HOST_DIR"/bin/java --list-modules | sort &gt; /tmp/spin3-modules.txt &amp;&amp;
-                                    diff /tmp/spin2-modules.txt /tmp/spin3-modules.txt &amp;&amp;
-                                    # modules/ and classpath/ are only written when non-empty (see AbstractJavaLinker) — tolerate either being absent
-                                    { [ -d /tmp/spin2/modules ] &amp;&amp; ls /tmp/spin2/modules | sort || true; } &gt; /tmp/spin2-extmodules.txt &amp;&amp;
-                                    { [ -d "$HOST_DIR"/modules ] &amp;&amp; ls "$HOST_DIR"/modules | sort || true; } &gt; /tmp/spin3-extmodules.txt &amp;&amp;
-                                    diff /tmp/spin2-extmodules.txt /tmp/spin3-extmodules.txt &amp;&amp;
-                                    { [ -d /tmp/spin2/classpath ] &amp;&amp; ls /tmp/spin2/classpath | sort || true; } &gt; /tmp/spin2-classpath.txt &amp;&amp;
-                                    { [ -d "$HOST_DIR"/classpath ] &amp;&amp; ls "$HOST_DIR"/classpath | sort || true; } &gt; /tmp/spin3-classpath.txt &amp;&amp;
-                                    diff /tmp/spin2-classpath.txt /tmp/spin3-classpath.txt &amp;&amp;
-                                    rm -rf /tmp/spin2 /tmp/spin2-modules.txt /tmp/spin3-modules.txt /tmp/spin2-extmodules.txt /tmp/spin3-extmodules.txt /tmp/spin2-classpath.txt /tmp/spin3-classpath.txt
-                                </argument>
-                            </arguments>
                         </configuration>
                     </execution>
                 </executions>

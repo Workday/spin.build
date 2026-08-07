@@ -50,6 +50,7 @@ import build.spin.module.modulesystem.PomBasedModuleCatalog;
 import build.spin.module.modulesystem.PomBasedModuleVersioning;
 import build.spin.module.modulesystem.PomBasedTestModuleDescriptor;
 import build.spin.module.modulesystem.TestModuleDescriptor;
+import build.spin.option.JlinkTargets;
 import build.spin.testing.RequireJavaVersion;
 import build.spin.testing.WorkspaceDiscovery;
 import build.spin.testing.WorkspacePath;
@@ -205,8 +206,13 @@ public class JavaProjectTests {
         // the same spin/Maven/Gradle-aware lookup used for sibling-project candidates
         // (resolveCompiledOutput), not the previously-hardcoded .build/main/<target> convention,
         // which never exists for a project like this one.
+        // marker is deliberately not named *.class: this workspace lives under target/test-classes
+        // (see @WorkspacePath), and maven-dependency-plugin's analyze-only goal bytecode-scans every
+        // .class file it finds there, including ones tests write at runtime -- a genuinely empty
+        // placeholder .class file isn't valid bytecode and fails that scan.
         final Path mavenClasses = workspace.path().resolve("target/classes");
         Files.createDirectories(mavenClasses);
+        Files.createFile(mavenClasses.resolve("Foo.marker"));
 
         assertThat(workspace.getPlugin(Java25JUnitPlugin.class)).isPresent();
 
@@ -227,6 +233,162 @@ public class JavaProjectTests {
         assertThat(Stream.concat(resolution.modulePath().stream(), resolution.classPath().stream()))
             .as("expected the Maven-built target/classes output to be a resolution candidate")
             .contains(mavenClasses);
+    }
+
+    @Test
+    @WorkspacePath("sibling-rebuild")
+    @RequireJavaVersion("25")
+    void shouldNotRecompileAnAlreadyBuiltWorkspaceSibling(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // "library" is a workspace sibling that "consumer"'s module-info.java requires.
+        // AbstractDetectResolution#siblingCompileDependencies is the single mechanism that wires
+        // cross-project compile ordering from that requires clause, shared by both
+        // AbstractDetectResolution#dependencies() and AbstractCompile#dependencies() -- it forces the
+        // sibling's own Compile task only when the sibling doesn't already have usable compiled output
+        // on disk. If either call site is still forcing an already-built sibling to be recompiled,
+        // that's the bug this test is meant to catch.
+        final Project libraryProject = workspace.getProject(workspace.path().resolve("library"))
+            .orElseThrow(() -> new AssertionError("Expected a [library] Project in the workspace"));
+        final Project consumerProject = workspace.getProject(workspace.path().resolve("consumer"))
+            .orElseThrow(() -> new AssertionError("Expected a [consumer] Project in the workspace"));
+
+        // leftover state from a prior run of this test (target/test-classes is only refreshed by a
+        // clean build) would otherwise make this test order-dependent
+        deleteRecursively(libraryProject.path().resolve("target"));
+        deleteRecursively(libraryProject.path().resolve(".build"));
+        deleteRecursively(consumerProject.path().resolve(".build"));
+
+        // pre-build "library" for real, once, via spin, so we have genuine compiled module output
+        engine.createProgram(libraryProject, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        final Path spinLibraryOutput = libraryProject.path().resolve(".build/main/target");
+        assertThat(spinLibraryOutput.resolve("module-info.class"))
+            .as("sanity check: expected the pre-build step to have actually compiled [library]")
+            .exists();
+
+        // relocate that output to the Maven convention (target/classes) and remove spin's own
+        // .build directory for [library], simulating "built by Maven, never (yet) built by spin"
+        final Path mavenLibraryOutput = libraryProject.path().resolve("target/classes");
+        Files.createDirectories(mavenLibraryOutput);
+        copyDirectoryContents(spinLibraryOutput, mavenLibraryOutput);
+        deleteRecursively(libraryProject.path().resolve(".build"));
+
+        assertThat(libraryProject.path().resolve(".build")).doesNotExist();
+
+        // now compile "consumer" only, with a fresh (empty) cache -- library's already-built output
+        // at target/classes should be enough to satisfy the requires clause without spin recompiling it
+        engine.createProgram(consumerProject, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        assertThat(consumerProject.path().resolve(".build/main/target/com/example/consumer/Consumer.class"))
+            .as("expected [consumer] to have actually compiled")
+            .exists();
+
+        assertThat(libraryProject.path().resolve(".build"))
+            .as("compiling [consumer] must not force spin to recompile [library] -- it already has "
+                + "usable output at target/classes, which AbstractDetectResolution#siblingCompileDependencies "
+                + "already correctly treats as sufficient; if [library]'s own .build directory reappears "
+                + "here, either AbstractDetectResolution#dependencies() or AbstractCompile#dependencies() "
+                + "is forcing a sibling rebuild that the shared guard should have skipped")
+            .doesNotExist();
+    }
+
+    @Test
+    @WorkspacePath("sibling-rebuild")
+    @RequireJavaVersion("25")
+    void shouldOrderSiblingCompileBeforeDependentWhenBothNeedBuilding(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // Unlike shouldNotRecompileAnAlreadyBuiltWorkspaceSibling above (where [library] is pre-built
+        // and never itself a target of the requested Program), this compiles the whole workspace from
+        // a completely clean state, so both [library] and [consumer] are independently scheduled,
+        // top-level targets that genuinely need building. DefaultProgram walks the whole workspace and
+        // pushes every matching Task onto the stack as its own target (see DefaultProgram#L167-169) —
+        // that inclusion happens regardless of Task#dependencies() — so what's actually under test here
+        // is ordering, not inclusion: the scheduler dispatches a Task the moment its pending dependency
+        // count reaches zero (DefaultProgram#execute, driven purely by dependencyGraph edges built from
+        // Task#dependencies()), with no other cross-project ordering mechanism. If AbstractCompile or
+        // AbstractDetectResolution's "skip an already-built sibling" guard ever mis-fires here (treating
+        // a genuinely-unbuilt [library] as already built), the missing edge lets [consumer]'s compile be
+        // dispatched before [library]'s finishes, which deterministically fails ("module not found")
+        // since [library] has never been built by any tool at this point.
+        final Project libraryProject = workspace.getProject(workspace.path().resolve("library"))
+            .orElseThrow(() -> new AssertionError("Expected a [library] Project in the workspace"));
+        final Project consumerProject = workspace.getProject(workspace.path().resolve("consumer"))
+            .orElseThrow(() -> new AssertionError("Expected a [consumer] Project in the workspace"));
+
+        deleteRecursively(libraryProject.path().resolve("target"));
+        deleteRecursively(libraryProject.path().resolve(".build"));
+        deleteRecursively(consumerProject.path().resolve("target"));
+        deleteRecursively(consumerProject.path().resolve(".build"));
+
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        assertThat(libraryProject.path().resolve(".build/main/target/module-info.class"))
+            .as("expected [library] to have been compiled as part of the whole-workspace Program")
+            .exists();
+        assertThat(consumerProject.path().resolve(".build/main/target/com/example/consumer/Consumer.class"))
+            .as("expected [consumer] to have compiled -- only possible if [library]'s Compile task ran "
+                + "to completion first, since [consumer]'s module-info requires [library]'s module")
+            .exists();
+    }
+
+    @Test
+    @WorkspacePath("multi-release-sibling")
+    @RequireJavaVersion("25")
+    void shouldForceUnbuiltMultiVersionSiblingRegardlessOfVariant(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // [library] is multi-release (both Java8CompilerPlugin.Compile and Java25CompilerPlugin.Compile
+        // apply to it, like the "multi-release" fixture); [consumer] requires it. resolveCompiledOutput,
+        // which the "already built" guard on AbstractCompile/AbstractDetectResolution checks, reports
+        // existence per-PROJECT (a single .build/main/target, per SourcePathKind.MAIN.outputPrefix()) --
+        // it has no notion of "which JDK variant" populated that output. This guards against that
+        // granularity mismatch silently swallowing the forcing dependency for a multi-version sibling
+        // that has genuinely never been built by any variant.
+        final Project libraryProject = workspace.getProject(workspace.path().resolve("library"))
+            .orElseThrow(() -> new AssertionError("Expected a [library] Project in the workspace"));
+        final Project consumerProject = workspace.getProject(workspace.path().resolve("consumer"))
+            .orElseThrow(() -> new AssertionError("Expected a [consumer] Project in the workspace"));
+
+        deleteRecursively(libraryProject.path().resolve("target"));
+        deleteRecursively(libraryProject.path().resolve(".build"));
+        deleteRecursively(consumerProject.path().resolve("target"));
+        deleteRecursively(consumerProject.path().resolve(".build"));
+
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        assertThat(libraryProject.path().resolve(".build/main/target/module-info.class"))
+            .as("expected multi-version [library] to have been compiled as part of the whole-workspace Program")
+            .exists();
+        assertThat(consumerProject.path().resolve(".build/main/target/com/example/mrconsumer/Consumer.class"))
+            .as("expected [consumer] to have compiled -- only possible if [library]'s Compile task ran "
+                + "to completion first")
+            .exists();
+    }
+
+    private static void copyDirectoryContents(final Path source, final Path destination) throws IOException {
+        try (Stream<Path> paths = Files.walk(source)) {
+            for (final Path path : (Iterable<Path>) paths::iterator) {
+                final Path target = destination.resolve(source.relativize(path));
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(target);
+                } else {
+                    Files.copy(path, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    private static void deleteRecursively(final Path path) throws IOException {
+        if (!Files.exists(path)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(path)) {
+            for (final Path p : (Iterable<Path>) paths.sorted(java.util.Comparator.reverseOrder())::iterator) {
+                Files.delete(p);
+            }
+        }
     }
 
     @Test
@@ -504,7 +666,7 @@ public class JavaProjectTests {
         throws Exception {
 
         // create a Program to build a jlink runtime image for the Workspace
-        final Program program = engine.createProgram(workspace, Task.Pattern.of("jlink"));
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("jlink"), JlinkTargets.HOST_ONLY);
 
         // create a Task ExecutionCache for the Program
         final AssetCache cache = DefaultAssetCache.create();

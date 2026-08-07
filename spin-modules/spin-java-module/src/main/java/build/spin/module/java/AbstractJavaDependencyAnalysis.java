@@ -220,11 +220,6 @@ public abstract class AbstractJavaDependencyAnalysis
                         throw new RuntimeException("Failed to determine ArtifactDescriptor for " + artifact);
                     }
 
-                    // attempt to determine the ModuleDescriptor for the ArtifactDescriptor
-                    // (first within the Workspace and if that fails, try to resolve it)
-                    final var resolvedDescriptor = this.artifactResolver
-                        .getModuleDescriptor(artifact, this.catalog, this.versioning);
-
                     this.workspace.stream()
                         .filter(project -> project
                             .getPlugin(JavaCompilerPlugin.class)
@@ -234,7 +229,7 @@ public abstract class AbstractJavaDependencyAnalysis
                             .map(JavaPlugin::getModuleDescriptor)
                             .orElseThrow(() -> new IllegalStateException("Expected JavaCompilerPlugin to have a ModuleDescriptor for module [" + reference + "] in project [" + project.name() + "]")))
                         .findFirst()
-                        .or(() -> resolvedDescriptor.optional())
+                        .or(() -> this.artifactResolver.getModuleDescriptor(artifact, this.catalog, this.versioning).optional())
                         .map(moduleDescriptor -> {
                             moduleDescriptors.put(reference, moduleDescriptor);
                             processed.put(reference.name(), reference.version());
@@ -282,6 +277,7 @@ public abstract class AbstractJavaDependencyAnalysis
                             return reference;
                         })
                         .orElseGet(() -> {
+                            final var resolvedDescriptor = this.artifactResolver.getModuleDescriptor(artifact, this.catalog, this.versioning);
                             if (resolvedDescriptor.isException()) {
                                 final String reason = resolvedDescriptor.exception()
                                     .map(e -> ": " + e.getClass().getSimpleName() + ": " + e.getMessage())

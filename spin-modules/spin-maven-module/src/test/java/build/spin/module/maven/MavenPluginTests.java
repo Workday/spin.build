@@ -23,15 +23,19 @@ package build.spin.module.maven;
 import build.base.io.PathSet;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.dependency.injection.InjectionFramework;
+import build.codemodel.dependency.injection.TypeLiteral;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.common.injection.ProjectResourceResolver;
+import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.gpg.SignableResource;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.w3c.dom.Document;
@@ -57,6 +61,30 @@ import static org.mockito.Mockito.when;
 class MavenPluginTests {
 
     private static final ModuleReference REFERENCE = ModuleReference.of("test.module");
+
+    private static final LocalMachine LOCAL_MACHINE = new LocalMachine(uri ->
+        TelemetryPublisher.of(uri, event -> System.err.printf("%s%n", event), false));
+
+    private static ReposiliteApplication reposilite;
+
+    /**
+     * Launches a single {@link ReposiliteApplication}, shared across all {@code @Test} methods in this class that
+     * need one, since launching a fresh process/port/working-directory per test is expensive and unnecessary —
+     * every publishing test here reuses the same {@code group/app/1.0} coordinate and content, and only asserts
+     * idempotent/positive facts about it.
+     */
+    @BeforeAll
+    static void startReposilite()
+        throws Exception {
+
+        reposilite = LOCAL_MACHINE.launch(ReposiliteSpecification.create());
+        reposilite.onStart().get();
+    }
+
+    @AfterAll
+    static void stopReposilite() {
+        reposilite.close();
+    }
 
     /**
      * Ensure {@link MavenPlugin.CreatePOMFile} registers the created pom.xml with the {@link SignableResource}
@@ -149,110 +177,106 @@ class MavenPluginTests {
     void shouldPublishArtifactsAndPomToRepository(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
-            reposilite.onStart().get();
+        final var task = createPublishTask(
+            reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
 
-            final var task = createPublishTask(
-                reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
+        final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
+        final var sourcesFile = Files.writeString(tempDir.resolve("app-1.0-sources.jar"), "sources");
+        final var javadocFile = Files.writeString(tempDir.resolve("app-1.0-javadoc.jar"), "javadoc");
+        final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
 
-            final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
-            final var sourcesFile = Files.writeString(tempDir.resolve("app-1.0-sources.jar"), "sources");
-            final var javadocFile = Files.writeString(tempDir.resolve("app-1.0-javadoc.jar"), "javadoc");
-            final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
+        final var published = task.publish(
+            ArtifactDescriptor.create(REFERENCE, artifact(null), jarFile),
+            ArtifactDescriptor.create(REFERENCE, artifact("sources"), sourcesFile),
+            ArtifactDescriptor.create(REFERENCE, artifact("javadoc"), javadocFile),
+            pomFile,
+            Optional.empty());
 
-            final var published = task.publish(
-                ArtifactDescriptor.create(REFERENCE, artifact(null), jarFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("sources"), sourcesFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("javadoc"), javadocFile),
-                pomFile,
-                Optional.empty());
+        assertThat(published.stream().toList())
+            .containsExactlyInAnyOrder(jarFile, sourcesFile, javadocFile, pomFile);
 
-            assertThat(published.stream().toList())
-                .containsExactlyInAnyOrder(jarFile, sourcesFile, javadocFile, pomFile);
-
-            assertThat(reposilite.get("group/app/1.0/app-1.0.jar").body())
-                .isEqualTo("jar");
-            assertThat(reposilite.get("group/app/1.0/app-1.0-sources.jar").body())
-                .isEqualTo("sources");
-            assertThat(reposilite.get("group/app/1.0/app-1.0-javadoc.jar").body())
-                .isEqualTo("javadoc");
-            assertThat(reposilite.get("group/app/1.0/app-1.0.pom").body())
-                .isEqualTo("pom");
-            assertThat(reposilite.get("group/app/1.0/app-1.0.jar.sha1").statusCode())
-                .isEqualTo(200);
-            assertThat(reposilite.get("group/app/1.0/app-1.0.pom.sha1").statusCode())
-                .isEqualTo(200);
-        }
+        assertThat(reposilite.get("group/app/1.0/app-1.0.jar").body())
+            .isEqualTo("jar");
+        assertThat(reposilite.get("group/app/1.0/app-1.0-sources.jar").body())
+            .isEqualTo("sources");
+        assertThat(reposilite.get("group/app/1.0/app-1.0-javadoc.jar").body())
+            .isEqualTo("javadoc");
+        assertThat(reposilite.get("group/app/1.0/app-1.0.pom").body())
+            .isEqualTo("pom");
+        assertThat(reposilite.get("group/app/1.0/app-1.0.jar.sha1").statusCode())
+            .isEqualTo(200);
+        assertThat(reposilite.get("group/app/1.0/app-1.0.pom.sha1").statusCode())
+            .isEqualTo(200);
     }
 
     /**
      * Ensure {@link MavenPlugin.Publish} also uploads any detached signatures present in the {@link Optional}
      * {@code signatures} {@link PathSet}, matched to their corresponding artifact by filename.
+     * <p>
+     * Uses its own version ({@code 1.1}), distinct from the other publishing tests in this class, since they
+     * share a {@link #reposilite} instance and Reposilite rejects re-publishing an already-deployed path
+     * (HTTP 409).
      */
     @Test
     void shouldPublishSignaturesWhenPresent(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
-            reposilite.onStart().get();
+        final var task = createPublishTask(
+            reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
 
-            final var task = createPublishTask(
-                reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
+        final var jarFile = Files.writeString(tempDir.resolve("app-1.1.jar"), "jar");
+        final var sourcesFile = Files.writeString(tempDir.resolve("app-1.1-sources.jar"), "sources");
+        final var javadocFile = Files.writeString(tempDir.resolve("app-1.1-javadoc.jar"), "javadoc");
+        final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
 
-            final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
-            final var sourcesFile = Files.writeString(tempDir.resolve("app-1.0-sources.jar"), "sources");
-            final var javadocFile = Files.writeString(tempDir.resolve("app-1.0-javadoc.jar"), "javadoc");
-            final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
+        final var jarSignature = Files.writeString(tempDir.resolve("app-1.1.jar.asc"), "sig");
 
-            final var jarSignature = Files.writeString(tempDir.resolve("app-1.0.jar.asc"), "sig");
+        final var signatures = Stream.of(jarSignature)
+            .collect(PathSet.collector());
 
-            final var signatures = Stream.of(jarSignature)
-                .collect(PathSet.collector());
+        task.publish(
+            ArtifactDescriptor.create(REFERENCE, artifact(null, "1.1"), jarFile),
+            ArtifactDescriptor.create(REFERENCE, artifact("sources", "1.1"), sourcesFile),
+            ArtifactDescriptor.create(REFERENCE, artifact("javadoc", "1.1"), javadocFile),
+            pomFile,
+            Optional.of(signatures));
 
-            task.publish(
-                ArtifactDescriptor.create(REFERENCE, artifact(null), jarFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("sources"), sourcesFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("javadoc"), javadocFile),
-                pomFile,
-                Optional.of(signatures));
-
-            assertThat(reposilite.get("group/app/1.0/app-1.0.jar.asc").body())
-                .isEqualTo("sig");
-            assertThat(reposilite.get("group/app/1.0/app-1.0.jar.asc.sha1").statusCode())
-                .isEqualTo(200);
-        }
+        assertThat(reposilite.get("group/app/1.1/app-1.1.jar.asc").body())
+            .isEqualTo("sig");
+        assertThat(reposilite.get("group/app/1.1/app-1.1.jar.asc.sha1").statusCode())
+            .isEqualTo(200);
     }
 
     /**
      * Ensure {@link MavenPlugin.Publish} succeeds when the configured {@code repository.username}/
      * {@code repository.password} are valid, proving the {@code Authorization} header was correctly sent
      * and accepted (Reposilite rejects unauthenticated/incorrectly-authenticated writes).
+     * <p>
+     * Uses its own version ({@code 1.2}), distinct from the other publishing tests in this class, since they
+     * share a {@link #reposilite} instance and Reposilite rejects re-publishing an already-deployed path
+     * (HTTP 409).
      */
     @Test
     void shouldSucceedWhenCredentialsAreValid(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
-            reposilite.onStart().get();
+        final var task = createPublishTask(
+            reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
 
-            final var task = createPublishTask(
-                reposilite, Optional.of(reposilite.username().get()), Optional.of(reposilite.password().get()));
+        final var jarFile = Files.writeString(tempDir.resolve("app-1.2.jar"), "jar");
+        final var sourcesFile = Files.writeString(tempDir.resolve("app-1.2-sources.jar"), "sources");
+        final var javadocFile = Files.writeString(tempDir.resolve("app-1.2-javadoc.jar"), "javadoc");
+        final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
 
-            final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
-            final var sourcesFile = Files.writeString(tempDir.resolve("app-1.0-sources.jar"), "sources");
-            final var javadocFile = Files.writeString(tempDir.resolve("app-1.0-javadoc.jar"), "javadoc");
-            final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
+        final var published = task.publish(
+            ArtifactDescriptor.create(REFERENCE, artifact(null, "1.2"), jarFile),
+            ArtifactDescriptor.create(REFERENCE, artifact("sources", "1.2"), sourcesFile),
+            ArtifactDescriptor.create(REFERENCE, artifact("javadoc", "1.2"), javadocFile),
+            pomFile,
+            Optional.empty());
 
-            final var published = task.publish(
-                ArtifactDescriptor.create(REFERENCE, artifact(null), jarFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("sources"), sourcesFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("javadoc"), javadocFile),
-                pomFile,
-                Optional.empty());
-
-            assertThat(published.isEmpty())
-                .isFalse();
-        }
+        assertThat(published.isEmpty())
+            .isFalse();
     }
 
     /**
@@ -263,22 +287,18 @@ class MavenPluginTests {
     void shouldThrowWhenUploadFails(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
-            reposilite.onStart().get();
+        final var task = createPublishTask(
+            reposilite, Optional.of(reposilite.username().get()), Optional.of("wrong-password"));
 
-            final var task = createPublishTask(
-                reposilite, Optional.of(reposilite.username().get()), Optional.of("wrong-password"));
+        final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
+        final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
 
-            final var jarFile = Files.writeString(tempDir.resolve("app-1.0.jar"), "jar");
-            final var pomFile = Files.writeString(tempDir.resolve("pom.xml"), "pom");
-
-            assertThrows(IOException.class, () -> task.publish(
-                ArtifactDescriptor.create(REFERENCE, artifact(null), jarFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("sources"), jarFile),
-                ArtifactDescriptor.create(REFERENCE, artifact("javadoc"), jarFile),
-                pomFile,
-                Optional.empty()));
-        }
+        assertThrows(IOException.class, () -> task.publish(
+            ArtifactDescriptor.create(REFERENCE, artifact(null), jarFile),
+            ArtifactDescriptor.create(REFERENCE, artifact("sources"), jarFile),
+            ArtifactDescriptor.create(REFERENCE, artifact("javadoc"), jarFile),
+            pomFile,
+            Optional.empty()));
     }
 
     private static MavenPlugin.Publish createPublishTask(final ReposiliteApplication reposilite,
@@ -296,14 +316,24 @@ class MavenPluginTests {
 
         final var context = InjectionFramework.create().newContext();
         context.bind(TelemetryRecorder.class).to(recorder);
-        context.bind(Optional.class).as("repository.url").with(Configuration.class).to(url);
-        context.bind(Optional.class).as("repository.username").with(Configuration.class).to(username);
-        context.bind(Optional.class).as("repository.password").with(Configuration.class).to(password);
+        context.bind(new TypeLiteral<Optional<String>>() {
+            }).as("repository.url").with(Configuration.class)
+            .to(url);
+        context.bind(new TypeLiteral<Optional<String>>() {
+            }).as("repository.username").with(Configuration.class)
+            .to(username);
+        context.bind(new TypeLiteral<Optional<String>>() {
+            }).as("repository.password").with(Configuration.class)
+            .to(password);
 
         return context.create(MavenPlugin.Publish.class);
     }
 
     private static Artifact artifact(final String classifier) {
-        return Artifact.create("group", "app", "1.0", "jar", classifier);
+        return artifact(classifier, "1.0");
+    }
+
+    private static Artifact artifact(final String classifier, final String version) {
+        return Artifact.create("group", "app", version, "jar", classifier);
     }
 }
