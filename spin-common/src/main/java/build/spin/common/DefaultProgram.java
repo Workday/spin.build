@@ -412,13 +412,18 @@ public final class DefaultProgram
         final var dispatched = ConcurrentHashMap.<Reference>newKeySet();
 
         try (var scope = StructuredTaskScope.open()) {
-            // seed with tasks that have no dependencies
+            // seed with tasks that have no dependencies. These are all logically concurrent
+            // starting points, so they're forked unconditionally rather than gated on
+            // failures.isEmpty() — gating here raced against the tasks' own forked threads:
+            // a root task with no work to do (an immediate failure) could complete and record
+            // its failure before this sequential loop reached a later root, silently skipping
+            // that root's fork entirely instead of leaving it in flight. The fail-fast gate
+            // (stop starting new tasks once a failure is known) still applies to dependents
+            // that become ready later, in runTask below.
             this.instructions.keySet().stream()
                 .filter(ref -> pending.get(ref).get() == 0)
                 .forEach(ref -> {
-                    // fail-fast: once any task has failed, stop starting new ones — tasks
-                    // already in flight are left to finish, but nothing new gets dispatched
-                    if (failures.isEmpty() && dispatched.add(ref)) {
+                    if (dispatched.add(ref)) {
                         scope.fork(() -> runTask(ref, pending, dispatched, executionCache, execution, failures));
                     }
                 });
