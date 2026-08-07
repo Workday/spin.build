@@ -20,11 +20,9 @@ package app;
  * #L%
  */
 
-import javax.tools.ToolProvider;
-
 public class Main {
 
     public static void main(final String[] args) {
-        System.out.println("compiler available: " + (ToolProvider.getSystemJavaCompiler() != null));
+        System.out.println("hello world");
     }
 }
