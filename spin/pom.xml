@@ -188,6 +188,7 @@
                             <arguments>
                                 <argument>clean</argument>
                                 <argument>jlink</argument>
+                                <argument>--jlink-host-only</argument>
                             </arguments>
                         </configuration>
                     </execution>

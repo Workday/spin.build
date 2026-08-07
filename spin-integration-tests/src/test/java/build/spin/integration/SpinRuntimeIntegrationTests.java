@@ -77,7 +77,7 @@ class SpinRuntimeIntegrationTests {
 
         final Path fixture = copyFixture("jlink-jdk-module");
 
-        final Process jlink = new ProcessBuilder(spinSh.toString(), "clean", "jlink")
+        final Process jlink = new ProcessBuilder(spinSh.toString(), "clean", "jlink", "--jlink-host-only")
             .directory(fixture.toFile())
             .redirectErrorStream(true)
             .start();
