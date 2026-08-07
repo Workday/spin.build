@@ -42,7 +42,9 @@ import build.spin.option.BuildDirectoryName;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
+import java.io.IOException;
 import java.lang.module.ModuleFinder;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -382,6 +384,15 @@ public abstract class AbstractDetectResolution
                 BuildOutputLocations.maven(projectPath, "classes"),
                 BuildOutputLocations.gradle(projectPath, "classes/java/main"))
             .flatMap(Optional::stream)
+            // a candidate directory can exist but still be empty -- e.g. CleanPlugin$CreateBuildPath
+            // creates <buildDir>/main/target up front as a prerequisite for several tasks, independent
+            // of whether Compile has actually run yet. Treating that as "already built" would let it
+            // win the freshest-mtime tie-break below against an older but fully-populated candidate
+            // (e.g. Maven's target/classes from an earlier reactor build) whenever that sibling's own
+            // Compile task happens to be running concurrently and unordered relative to this check
+            // (as it legitimately can be -- see siblingCompileDependencies), handing back a module-path
+            // entry with nothing compiled into it yet.
+            .filter(AbstractDetectResolution::isNonEmptyDirectory)
             .toList();
 
         // Only walk candidate trees to compare mtimes when there's an actual ambiguity to resolve —
@@ -392,6 +403,15 @@ public abstract class AbstractDetectResolution
             case 1 -> Optional.of(candidates.get(0));
             default -> candidates.stream().max(Comparator.comparing(BuildOutputLocations::latestModifiedTime));
         };
+    }
+
+    private static boolean isNonEmptyDirectory(final Path path) {
+        try (Stream<Path> entries = Files.list(path)) {
+            return entries.findAny().isPresent();
+        }
+        catch (final IOException e) {
+            return false;
+        }
     }
 
     /**

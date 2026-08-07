@@ -206,8 +206,13 @@ public class JavaProjectTests {
         // the same spin/Maven/Gradle-aware lookup used for sibling-project candidates
         // (resolveCompiledOutput), not the previously-hardcoded .build/main/<target> convention,
         // which never exists for a project like this one.
+        // marker is deliberately not named *.class: this workspace lives under target/test-classes
+        // (see @WorkspacePath), and maven-dependency-plugin's analyze-only goal bytecode-scans every
+        // .class file it finds there, including ones tests write at runtime -- a genuinely empty
+        // placeholder .class file isn't valid bytecode and fails that scan.
         final Path mavenClasses = workspace.path().resolve("target/classes");
         Files.createDirectories(mavenClasses);
+        Files.createFile(mavenClasses.resolve("Foo.marker"));
 
         assertThat(workspace.getPlugin(Java25JUnitPlugin.class)).isPresent();
 

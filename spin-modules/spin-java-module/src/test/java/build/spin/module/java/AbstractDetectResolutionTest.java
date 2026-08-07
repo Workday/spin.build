@@ -127,15 +127,28 @@ class AbstractDetectResolutionTest {
     void resolveCompiledOutput_spinOutputExists_returnsSpinPath() throws IOException {
         final Path spinOutput = projectRoot.resolve(".build/main/classes");
         Files.createDirectories(spinOutput);
+        Files.createFile(spinOutput.resolve("Foo.class"));
 
         assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
             .contains(spinOutput);
     }
 
     @Test
+    void resolveCompiledOutput_spinOutputExistsButEmpty_returnsEmpty() throws IOException {
+        // an empty directory isn't "already built" -- e.g. CleanPlugin$CreateBuildPath creates
+        // <buildDir>/main/<target> up front as a prerequisite for several tasks, independent of
+        // whether Compile has actually run yet.
+        final Path spinOutput = projectRoot.resolve(".build/main/classes");
+        Files.createDirectories(spinOutput);
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes")).isEmpty();
+    }
+
+    @Test
     void resolveCompiledOutput_mavenClassesExist_returnsMavenPath() throws IOException {
         final Path mavenClasses = projectRoot.resolve("target/classes");
         Files.createDirectories(mavenClasses);
+        Files.createFile(mavenClasses.resolve("Foo.class"));
 
         assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
             .contains(mavenClasses);
@@ -145,6 +158,7 @@ class AbstractDetectResolutionTest {
     void resolveCompiledOutput_gradleClassesExist_returnsGradlePath() throws IOException {
         final Path gradleClasses = projectRoot.resolve("build/classes/java/main");
         Files.createDirectories(gradleClasses);
+        Files.createFile(gradleClasses.resolve("Foo.class"));
 
         assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
             .contains(gradleClasses);
@@ -156,7 +170,13 @@ class AbstractDetectResolutionTest {
         final Path mavenClasses = projectRoot.resolve("target/classes");
         Files.createDirectories(spinOutput);
         Files.createDirectories(mavenClasses);
+        final Path spinClass = spinOutput.resolve("Foo.class");
+        final Path mavenClass = mavenClasses.resolve("Foo.class");
+        Files.createFile(spinClass);
+        Files.createFile(mavenClass);
+        setModifiedTime(spinClass, FileTime.fromMillis(1_000));
         setModifiedTime(spinOutput, FileTime.fromMillis(1_000));
+        setModifiedTime(mavenClass, FileTime.fromMillis(2_000));
         setModifiedTime(mavenClasses, FileTime.fromMillis(2_000));
 
         assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
@@ -169,7 +189,13 @@ class AbstractDetectResolutionTest {
         final Path mavenClasses = projectRoot.resolve("target/classes");
         Files.createDirectories(spinOutput);
         Files.createDirectories(mavenClasses);
+        final Path spinClass = spinOutput.resolve("Foo.class");
+        final Path mavenClass = mavenClasses.resolve("Foo.class");
+        Files.createFile(spinClass);
+        Files.createFile(mavenClass);
+        setModifiedTime(spinClass, FileTime.fromMillis(2_000));
         setModifiedTime(spinOutput, FileTime.fromMillis(2_000));
+        setModifiedTime(mavenClass, FileTime.fromMillis(1_000));
         setModifiedTime(mavenClasses, FileTime.fromMillis(1_000));
 
         assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
