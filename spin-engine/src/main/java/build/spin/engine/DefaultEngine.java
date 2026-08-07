@@ -404,7 +404,7 @@ public final class DefaultEngine implements Engine {
             // really know until we
             // later create a project
             // from the Workspace)
-            if (metaClasses(Plugin.MetaClass.class).anyMatch(detector -> detector.isDetectedIn(path))) {
+            if (metaClasses(Plugin.MetaClass.class).anyMatch(detector -> detector.isDetectedIn(detectionPath))) {
                 workspacePath = detectionPath;
             }
 
