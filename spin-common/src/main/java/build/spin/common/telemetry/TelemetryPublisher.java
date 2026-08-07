@@ -78,6 +78,26 @@ public class TelemetryPublisher
         this.publisher = Objects.requireNonNull(publisher, "The publisher must not be null");
     }
 
+    /**
+     * Constructs a {@link TelemetryPublisher} that forwards to the specified {@link Consumer}, suppressing
+     * {@link TelemetryFiltering#isSpawnLaunchDiagnostic(Telemetry) spawn launch diagnostics} unless
+     * {@code verbose} is {@code true}.
+     *
+     * @param uri       the source {@link URI}
+     * @param publisher the {@link Consumer} to use for publishing
+     * @param verbose   {@code true} if spawn launch diagnostics should also be published
+     * @return a new {@link TelemetryPublisher}
+     */
+    public static TelemetryPublisher of(final URI uri, final Consumer<Telemetry> publisher, final boolean verbose) {
+        return new TelemetryPublisher(uri, verbose
+            ? publisher
+            : event -> {
+                if (!TelemetryFiltering.isSpawnLaunchDiagnostic(event)) {
+                    publisher.accept(event);
+                }
+            });
+    }
+
     @Override
     public URI uri() {
         return this.uri;

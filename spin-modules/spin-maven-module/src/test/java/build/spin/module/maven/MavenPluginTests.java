@@ -23,10 +23,12 @@ package build.spin.module.maven;
 import build.base.io.PathSet;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.dependency.injection.InjectionFramework;
+import build.codemodel.dependency.injection.TypeLiteral;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.common.injection.ProjectResourceResolver;
+import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.gpg.SignableResource;
 import build.spin.module.modulesystem.Artifact;
@@ -57,6 +59,9 @@ import static org.mockito.Mockito.when;
 class MavenPluginTests {
 
     private static final ModuleReference REFERENCE = ModuleReference.of("test.module");
+
+    private static final LocalMachine LOCAL_MACHINE = new LocalMachine(uri ->
+        TelemetryPublisher.of(uri, event -> System.err.printf("%s%n", event), false));
 
     /**
      * Ensure {@link MavenPlugin.CreatePOMFile} registers the created pom.xml with the {@link SignableResource}
@@ -149,7 +154,7 @@ class MavenPluginTests {
     void shouldPublishArtifactsAndPomToRepository(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+        try (var reposilite = LOCAL_MACHINE.launch(ReposiliteSpecification.create())) {
             reposilite.onStart().get();
 
             final var task = createPublishTask(
@@ -193,7 +198,7 @@ class MavenPluginTests {
     void shouldPublishSignaturesWhenPresent(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+        try (var reposilite = LOCAL_MACHINE.launch(ReposiliteSpecification.create())) {
             reposilite.onStart().get();
 
             final var task = createPublishTask(
@@ -232,7 +237,7 @@ class MavenPluginTests {
     void shouldSucceedWhenCredentialsAreValid(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+        try (var reposilite = LOCAL_MACHINE.launch(ReposiliteSpecification.create())) {
             reposilite.onStart().get();
 
             final var task = createPublishTask(
@@ -263,7 +268,7 @@ class MavenPluginTests {
     void shouldThrowWhenUploadFails(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+        try (var reposilite = LOCAL_MACHINE.launch(ReposiliteSpecification.create())) {
             reposilite.onStart().get();
 
             final var task = createPublishTask(
@@ -296,9 +301,15 @@ class MavenPluginTests {
 
         final var context = InjectionFramework.create().newContext();
         context.bind(TelemetryRecorder.class).to(recorder);
-        context.bind(Optional.class).as("repository.url").with(Configuration.class).to(url);
-        context.bind(Optional.class).as("repository.username").with(Configuration.class).to(username);
-        context.bind(Optional.class).as("repository.password").with(Configuration.class).to(password);
+        context.bind(new TypeLiteral<Optional<String>>() {
+            }).as("repository.url").with(Configuration.class)
+            .to(url);
+        context.bind(new TypeLiteral<Optional<String>>() {
+            }).as("repository.username").with(Configuration.class)
+            .to(username);
+        context.bind(new TypeLiteral<Optional<String>>() {
+            }).as("repository.password").with(Configuration.class)
+            .to(password);
 
         return context.create(MavenPlugin.Publish.class);
     }

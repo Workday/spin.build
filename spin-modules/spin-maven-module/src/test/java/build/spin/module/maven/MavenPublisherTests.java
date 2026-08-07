@@ -42,6 +42,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class MavenPublisherTests {
 
+    private static final LocalMachine LOCAL_MACHINE = new LocalMachine(uri ->
+        TelemetryPublisher.of(uri, event -> System.err.printf("%s%n", event), false));
+
     /**
      * Ensure {@link MavenPublisher#upload(String, Path)} uploads the file, then its computed {@code .sha1}
      * sidecar, both retrievable afterward from the repository.
@@ -50,7 +53,7 @@ class MavenPublisherTests {
     void shouldUploadFileAndSha1Sidecar(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+        try (var reposilite = LOCAL_MACHINE.launch(ReposiliteSpecification.create())) {
             reposilite.onStart().get();
 
             final var file = tempDir.resolve("artifact-1.0.jar");
@@ -86,7 +89,7 @@ class MavenPublisherTests {
     void shouldSucceedWhenCredentialsAreValid(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+        try (var reposilite = LOCAL_MACHINE.launch(ReposiliteSpecification.create())) {
             reposilite.onStart().get();
 
             final var file = tempDir.resolve("artifact-1.0.jar");
@@ -113,7 +116,7 @@ class MavenPublisherTests {
     void shouldReturnFalseAndSkipSha1WhenUploadFails(@TempDir final Path tempDir)
         throws Exception {
 
-        try (var reposilite = LocalMachine.get().launch(ReposiliteSpecification.create())) {
+        try (var reposilite = LOCAL_MACHINE.launch(ReposiliteSpecification.create())) {
             reposilite.onStart().get();
 
             final var file = tempDir.resolve("artifact-1.0.jar");
