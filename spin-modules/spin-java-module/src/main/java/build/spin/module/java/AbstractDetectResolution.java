@@ -23,7 +23,6 @@ package build.spin.module.java;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
-import build.base.version.VersionOrder;
 import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.percolate.core.ModuleGraphClassifier;
@@ -526,14 +525,8 @@ public abstract class AbstractDetectResolution
      *
      * <p>Every path resolved via {@link Artifact.Resolver#resolveTransitive} sits in a local Maven
      * repository under the standard {@code <groupId-path>/<artifactId>/<version>/<artifactId>-
-     * <version>[-classifier].<ext>} layout. Rather than assuming where the repository root is, this
-     * uses the artifact directory's full parent path (i.e. everything except the version and filename
-     * segments) as the coordinate key — two paths share a coordinate iff they share that parent path,
-     * which is true for the same (groupId, artifactId) and never true otherwise.
-     *
-     * <p>Versions are compared with {@link VersionOrder#MAVEN}, not {@link Version#compareTo}, so that
-     * Maven qualifiers (e.g. {@code rc}, {@code beta}, {@code snapshot}) rank the way Maven itself
-     * ranks them rather than lexicographically.
+     * <version>[-classifier].<ext>} layout, so the shared {@link MavenCoordinateDedupe} logic — which
+     * {@link AbstractJavaDependencyAnalysis#dedupeByMavenCoordinates} also uses — applies directly.
      *
      * @param paths the resolved artifact {@link Path}s to dedupe
      * @param recorder the {@link TelemetryRecorder} for diagnostics
@@ -542,53 +535,22 @@ public abstract class AbstractDetectResolution
      */
     // Visible for testing.
     static List<Path> dedupeByMavenCoordinate(final List<Path> paths, final TelemetryRecorder recorder) {
+        return MavenCoordinateDedupe.dedupeByMavenCoordinate(
+            paths,
+            Optional::of,
+            (kept, dropped) -> recorder.warn(
+                "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — keeping [%s]",
+                artifactDirectory(kept), versionSegment(dropped), versionSegment(kept), versionSegment(kept)));
+    }
 
-        final LinkedHashMap<Path, Path> byCoordinate = new LinkedHashMap<>();
-        final LinkedHashMap<Path, Version> versionByCoordinate = new LinkedHashMap<>();
+    private static Path artifactDirectory(final Path path) {
+        final Path versionDir = path.getParent();
+        return versionDir == null ? path : versionDir.getParent();
+    }
 
-        for (final Path path : paths) {
-            final Path versionDir = path.getParent();
-            final Path artifactDir = versionDir == null ? null : versionDir.getParent();
-
-            if (artifactDir == null) {
-                // can't determine a coordinate — treat as its own unique entry
-                byCoordinate.put(path, path);
-                continue;
-            }
-
-            final Optional<Version> version = Version.tryParse(versionDir.getFileName().toString());
-
-            if (version.isEmpty()) {
-                // can't parse a version — treat as its own unique entry
-                byCoordinate.put(path, path);
-                continue;
-            }
-
-            final Version existingVersion = versionByCoordinate.get(artifactDir);
-            if (existingVersion == null) {
-                byCoordinate.put(artifactDir, path);
-                versionByCoordinate.put(artifactDir, version.get());
-            }
-            else {
-                final int comparison = VersionOrder.MAVEN.compare(version.get(), existingVersion);
-                if (comparison > 0) {
-                    recorder.warn(
-                        "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — "
-                            + "keeping [%s]",
-                        artifactDir, existingVersion, version.get(), version.get());
-                    byCoordinate.put(artifactDir, path);
-                    versionByCoordinate.put(artifactDir, version.get());
-                } else if (comparison < 0) {
-                    recorder.warn(
-                        "Coordinate [%s] has multiple resolved versions [%s, %s] on the candidate graph — "
-                            + "keeping [%s]",
-                        artifactDir, existingVersion, version.get(), existingVersion);
-                }
-                // else: same version resolved via a different transitive path - not a real ambiguity
-            }
-        }
-
-        return new ArrayList<>(byCoordinate.values());
+    private static String versionSegment(final Path path) {
+        final Path versionDir = path.getParent();
+        return versionDir == null ? path.toString() : versionDir.getFileName().toString();
     }
 
     private static Optional<String> moduleNameOf(final Path path, final TelemetryRecorder recorder) {
