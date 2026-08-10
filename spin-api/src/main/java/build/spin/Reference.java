@@ -61,7 +61,7 @@ public interface Reference {
 
             @Override
             public int hashCode() {
-                return project.hashCode() + taskClass.hashCode();
+                return project.name().hashCode() + Objects.hashCode(getPluginClass()) + taskClass.hashCode();
             }
 
             @Override
