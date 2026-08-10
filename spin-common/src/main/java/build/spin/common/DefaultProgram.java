@@ -285,10 +285,7 @@ public final class DefaultProgram
                             projects.get(taskProject).add(r.project());
                         }
                     })
-                    .forEach(r -> r.project().invocables()
-                        .filter(d -> d.getReference().equals(r))
-                        .findFirst()
-                        .ifPresent(stack::push));
+                    .forEach(r -> r.project().getInvocable(r).ifPresent(stack::push));
 
                 return instruction;
             });

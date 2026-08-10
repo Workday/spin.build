@@ -111,20 +111,23 @@ public abstract class AbstractJavaDependencyAnalysis
 
     @Override
     public Stream<Reference> dependencies() {
+        // locating each project's PackageModule task doesn't depend on which `requires` clause is
+        // being resolved -- compute it once per project, not once per (requires clause, project)
+        // pair, to avoid re-scanning every project's invocables() once per requires clause.
+        final Map<Project, Reference> packageModuleReferences = new LinkedHashMap<>();
+        this.workspace.stream().forEach(project -> project.getInvocables(PackageModule.class)
+            .findFirst()
+            .map(Invocable::getTaskClass)
+            .ifPresent(taskClass -> packageModuleReferences.put(project, Reference.of(project, taskClass))));
+
         return this.moduleDescriptor.requiresClauses()
             .map(r -> r.requiresModuleName().toString())
             .flatMap(name -> this.workspace.stream()
-                .map(project -> JavaCompilerPlugin
+                .filter(project -> JavaCompilerPlugin
                     .resolveRequiredCompilerPlugin(project, name, this.moduleDescriptor)
-                    .map(plugin ->
-                        // locate the PackageModule tasks
-                        project.invocables()
-                            .filter(definition -> PackageModule.class.isAssignableFrom(definition.getTaskClass()))
-                            .findFirst()
-                            .map(Invocable::getTaskClass)
-                            .map(taskClass -> Reference.of(project, taskClass))
-                            .orElse(null))
-                    .orElse(null))
+                    .optional()
+                    .isPresent())
+                .map(packageModuleReferences::get)
                 .filter(Objects::nonNull));
     }
 
