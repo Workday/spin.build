@@ -239,8 +239,7 @@ public interface Invocable<T> {
                             if (Stream.class.isAssignableFrom(parameter.getType())
                                 || fromTaskClass.isAnnotationPresent(Merge.class)) {
 
-                                return getProject().invocables()
-                                    .filter(definition -> fromTaskClass.isAssignableFrom(definition.getTaskClass()))
+                                return getProject().getInvocables(fromTaskClass)
                                     .map(Invocable::getReference);
                             }
 

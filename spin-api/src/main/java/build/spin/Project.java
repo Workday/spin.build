@@ -203,6 +203,38 @@ public interface Project
     Stream<Invocable<?>> invocables();
 
     /**
+     * Obtains the {@link Invocable} defined by the {@link Project} for the specified {@link Reference}, if any.
+     * <p>
+     * The default implementation is a linear scan of {@link #invocables()}; implementations that maintain an
+     * indexed lookup should override this for O(1) resolution.
+     *
+     * @param reference the {@link Reference} to resolve
+     *
+     * @return the {@link Optional} {@link Invocable} matching {@code reference}
+     */
+    default Optional<Invocable<?>> getInvocable(final Reference reference) {
+        return invocables()
+            .filter(definition -> definition.getReference().equals(reference))
+            .findFirst();
+    }
+
+    /**
+     * Obtains the {@link Stream} of {@link Invocable}s defined by the {@link Project} whose {@link Task} class
+     * is assignable to {@code assignableTo}.
+     * <p>
+     * The default implementation is a linear scan of {@link #invocables()}; implementations that maintain an
+     * indexed lookup should override this for callers that repeatedly query the same {@code assignableTo}.
+     *
+     * @param assignableTo the {@link Task} {@link Class} to match against
+     *
+     * @return the {@link Stream} of matching {@link Invocable}s
+     */
+    default Stream<Invocable<?>> getInvocables(final Class<? extends Task<?>> assignableTo) {
+        return invocables()
+            .filter(definition -> assignableTo.isAssignableFrom(definition.getTaskClass()));
+    }
+
+    /**
      * Obtains the {@link Plugin} present in the {@link Project} that is assignable to the specified {@link Class}.
      *
      * @param <T> the type of {@link Plugin}

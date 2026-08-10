@@ -627,10 +627,17 @@ public abstract class AbstractDetectResolution
                                                         final String buildDirectoryName,
                                                         final String targetDirectoryName) {
         final var workspace = project.workspace();
+
+        // resolveCompiledOutput performs up to three Files.list I/O calls per sibling and doesn't
+        // depend on which `requires` clause is being resolved -- compute the set of not-yet-built
+        // siblings once, rather than once per (requires clause, sibling) pair.
+        final Set<Project> unbuiltSiblings = workspace.stream()
+            .filter(prj -> resolveCompiledOutput(prj.path(), buildDirectoryName, targetDirectoryName).isEmpty())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
         return moduleDescriptor.requiresClauses()
             .map(r -> r.requiresModuleName().toString())
-            .flatMap(name -> workspace.stream()
-                .filter(prj -> resolveCompiledOutput(prj.path(), buildDirectoryName, targetDirectoryName).isEmpty())
+            .flatMap(name -> unbuiltSiblings.stream()
                 .flatMap(prj -> JavaCompilerPlugin.resolveRequiredCompilerPlugin(prj, name, moduleDescriptor)
                     .optional()
                     .flatMap(plugin -> crossProjectDeps(prj, plugin))
