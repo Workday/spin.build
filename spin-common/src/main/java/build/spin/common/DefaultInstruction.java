@@ -233,9 +233,7 @@ public class DefaultInstruction<T>
         }
 
         return invocable.getProject()
-            .invocables()
-            .filter(defn -> defn.getTaskClass().equals(target.get()))
-            .findFirst()
+            .getInvocable(Reference.of(invocable.getProject(), target.get()))
             .map(DefaultInstruction::ultimateOwner)
             .orElseGet(() -> Reference.of(invocable.getProject(), target.get()));
     }

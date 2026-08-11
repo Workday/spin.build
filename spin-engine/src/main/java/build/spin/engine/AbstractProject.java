@@ -23,6 +23,8 @@ package build.spin.engine;
 import build.base.configuration.Configuration;
 import build.base.foundation.Capture;
 import build.base.foundation.UniformResource;
+import build.base.foundation.memoizer.Memoizer;
+import build.base.foundation.stream.Streamable;
 import build.base.foundation.stream.Streams;
 import build.base.telemetry.TelemetryRecorder;
 import build.spin.Engine;
@@ -105,6 +107,42 @@ public abstract class AbstractProject implements Project {
      * The {@link Invocable}s for {@link Task}s that are defined for the {@link Project}.
      */
     protected LinkedHashMap<Reference, Invocable<?>> invocables;
+
+    /**
+     * Memoized index of {@link #invocables} by assignable {@link Task} {@link Class} — see
+     * {@link #getInvocables(Class)}. Safe to memoize for the lifetime of the {@link Project} since
+     * {@link #invocables} is fully populated during discovery, before any {@link Program} queries it.
+     */
+    private final Memoizer<Class<?>, Streamable<Invocable<?>>> invocablesByAssignableType =
+        Memoizer.<Class<?>, Streamable<Invocable<?>>>of(type -> Streamable.of(
+                this.invocables.values().stream()
+                    .filter(definition -> type.isAssignableFrom(definition.getTaskClass()))
+                    .toList()))
+            .concurrent()
+            .build();
+
+    /**
+     * Memoized index of {@link #codependencies(Reference)} results by the target {@link Task}
+     * {@link Class} (the only part of the {@link Reference} the computation depends on) — callers
+     * that recursively discover nested codependencies would otherwise re-scan {@link #invocables}
+     * once per nesting level, per {@link Task} in this {@link Project}.
+     */
+    private final Memoizer<Class<?>, Streamable<Invocable<?>>> codependenciesByTaskClass =
+        Memoizer.<Class<?>, Streamable<Invocable<?>>>of(taskClass -> Streamable.of(
+                this.invocables.values().stream()
+                    .flatMap(definition -> {
+                        final Class<? extends Task<?>> definitionTaskClass = definition.getTaskClass();
+                        return Stream.concat(
+                            Arrays.stream(definitionTaskClass.getDeclaredAnnotationsByType(PreProcess.class))
+                                .filter(preprocessor -> preprocessor.value().isAssignableFrom(taskClass))
+                                .map(initialize -> definition),
+                            Arrays.stream(definitionTaskClass.getDeclaredAnnotationsByType(PostProcess.class))
+                                .filter(postprocessor -> postprocessor.value().isAssignableFrom(taskClass))
+                                .map(after -> definition));
+                    })
+                    .toList()))
+            .concurrent()
+            .build();
 
     /**
      * Constructs a {@link Project}.
@@ -239,6 +277,16 @@ public abstract class AbstractProject implements Project {
     }
 
     @Override
+    public Optional<Invocable<?>> getInvocable(final Reference reference) {
+        return Optional.ofNullable(this.invocables.get(reference));
+    }
+
+    @Override
+    public Stream<Invocable<?>> getInvocables(final Class<? extends Task<?>> assignableTo) {
+        return this.invocablesByAssignableType.compute(assignableTo).stream();
+    }
+
+    @Override
     public <T extends Plugin> Optional<T> getPlugin(final Class<T> pluginClass) {
         return plugins()
             .filter(pluginClass::isInstance)
@@ -314,19 +362,7 @@ public abstract class AbstractProject implements Project {
     @Override
     public Stream<Invocable<?>> codependencies(final Reference reference) {
         // create a stream of Task.References to Tasks in this Plugin that specify @PreProcess or @PostProcess
-        return invocables()
-            .flatMap(definition -> {
-                final Class<? extends Task<?>> taskClass = definition.getTaskClass();
-                return Stream.concat(
-                    Arrays.stream(taskClass.getDeclaredAnnotationsByType(PreProcess.class))
-                        .filter(preprocessor -> preprocessor.value()
-                            .isAssignableFrom(reference.getTaskClass()))
-                        .map(initialize -> definition),
-                    Arrays.stream(taskClass.getDeclaredAnnotationsByType(PostProcess.class))
-                        .filter(postprocessor -> postprocessor.value()
-                            .isAssignableFrom(reference.getTaskClass()))
-                        .map(after -> definition));
-            });
+        return this.codependenciesByTaskClass.compute(reference.getTaskClass()).stream();
     }
 
     @Override

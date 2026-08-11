@@ -109,7 +109,7 @@ public class DefaultInvocable<T>
 
     @Override
     public int hashCode() {
-        return this.project.hashCode() + this.plugin.hashCode() + this.taskClass.hashCode();
+        return this.project.name().hashCode() + this.plugin.name().hashCode() + this.taskClass.hashCode();
     }
 
     @Override

@@ -58,6 +58,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -65,6 +66,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Stack;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -111,20 +113,23 @@ public abstract class AbstractJavaDependencyAnalysis
 
     @Override
     public Stream<Reference> dependencies() {
+        // locating each project's PackageModule task doesn't depend on which `requires` clause is
+        // being resolved -- compute it once per project, not once per (requires clause, project)
+        // pair, to avoid re-scanning every project's invocables() once per requires clause.
+        final Map<Project, Reference> packageModuleReferences = new LinkedHashMap<>();
+        this.workspace.stream().forEach(project -> project.getInvocables(PackageModule.class)
+            .findFirst()
+            .map(Invocable::getTaskClass)
+            .ifPresent(taskClass -> packageModuleReferences.put(project, Reference.of(project, taskClass))));
+
         return this.moduleDescriptor.requiresClauses()
             .map(r -> r.requiresModuleName().toString())
             .flatMap(name -> this.workspace.stream()
-                .map(project -> JavaCompilerPlugin
+                .filter(project -> JavaCompilerPlugin
                     .resolveRequiredCompilerPlugin(project, name, this.moduleDescriptor)
-                    .map(plugin ->
-                        // locate the PackageModule tasks
-                        project.invocables()
-                            .filter(definition -> PackageModule.class.isAssignableFrom(definition.getTaskClass()))
-                            .findFirst()
-                            .map(Invocable::getTaskClass)
-                            .map(taskClass -> Reference.of(project, taskClass))
-                            .orElse(null))
-                    .orElse(null))
+                    .optional()
+                    .isPresent())
+                .map(packageModuleReferences::get)
                 .filter(Objects::nonNull));
     }
 
@@ -322,7 +327,7 @@ public abstract class AbstractJavaDependencyAnalysis
 
         final var artifactDescriptorsByModuleName = new LinkedHashMap<String, ArtifactDescriptor>();
 
-        artifactDescriptorsByCoordinates.values().forEach(descriptor -> {
+        artifactDescriptorsByCoordinates.forEach(descriptor -> {
             final var moduleName = descriptor.reference().name();
             final var existingDescriptor = artifactDescriptorsByModuleName.get(moduleName);
 
@@ -659,8 +664,11 @@ public abstract class AbstractJavaDependencyAnalysis
     }
 
     /**
-     * Dedupe a collection of {@link ArtifactDescriptor}s by Maven coordinates
-     * ({@code groupId:artifactId}), keeping the highest version when duplicates are present.
+     * Dedupe a collection of {@link ArtifactDescriptor}s by Maven coordinate, keeping the highest
+     * version when duplicates are present. Delegates to the same {@link MavenCoordinateDedupe}
+     * logic {@link AbstractDetectResolution#dedupeByMavenCoordinate} uses, keyed off each
+     * descriptor's resolved artifact {@link ArtifactDescriptor#path()} rather than a
+     * {@code groupId:artifactId} string.
      *
      * <p>This is a strictly-stronger signal than module-name dedupe: two versions of the same
      * Maven artifact may publish under <em>different</em> JPMS module names (the slf4j-api 1.x
@@ -669,29 +677,13 @@ public abstract class AbstractJavaDependencyAnalysis
      *
      * @param descriptors the descriptors to dedupe; iteration order is preserved
      * @param onDuplicate invoked as {@code (kept, dropped)} for each duplicate pair
-     * @return a {@link LinkedHashMap} keyed by {@code groupId:artifactId} with the winning
-     *         descriptor as the value
+     * @return the winning descriptors, in first-seen order
      */
-    static LinkedHashMap<String, ArtifactDescriptor> dedupeByMavenCoordinates(
-        final java.util.Collection<ArtifactDescriptor> descriptors,
-        final java.util.function.BiConsumer<ArtifactDescriptor, ArtifactDescriptor> onDuplicate) {
+    static List<ArtifactDescriptor> dedupeByMavenCoordinates(
+        final Collection<ArtifactDescriptor> descriptors,
+        final BiConsumer<ArtifactDescriptor, ArtifactDescriptor> onDuplicate) {
 
-        final var byCoordinates = new LinkedHashMap<String, ArtifactDescriptor>();
-        for (final var descriptor : descriptors) {
-            final var artifact = descriptor.artifact();
-            final var coordinates = artifact.groupId() + ":" + artifact.artifactId();
-            final var existing = byCoordinates.get(coordinates);
-            if (existing == null) {
-                byCoordinates.put(coordinates, descriptor);
-            }
-            else if (artifact.version().compareTo(existing.artifact().version()) > 0) {
-                byCoordinates.put(coordinates, descriptor);
-                onDuplicate.accept(descriptor, existing);
-            }
-            else {
-                onDuplicate.accept(existing, descriptor);
-            }
-        }
-        return byCoordinates;
+        return MavenCoordinateDedupe.dedupeByMavenCoordinate(
+            new ArrayList<>(descriptors), ArtifactDescriptor::path, onDuplicate);
     }
 }

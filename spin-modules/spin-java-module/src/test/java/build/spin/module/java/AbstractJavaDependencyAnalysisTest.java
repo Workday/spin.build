@@ -27,6 +27,7 @@ import build.spin.module.modulesystem.ModuleReference;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,7 +56,7 @@ class AbstractJavaDependencyAnalysisTest {
         final var b = descriptor("com.example", "lib-b", "1.0.0", "lib.b");
         final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
             List.of(a, b), (kept, dropped) -> { });
-        assertThat(result.values()).containsExactly(a, b);
+        assertThat(result).containsExactly(a, b);
     }
 
     @Test
@@ -65,7 +66,7 @@ class AbstractJavaDependencyAnalysisTest {
         final var b = descriptor("org.other", "lib", "1.0.0", "mod.b");
         final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
             List.of(a, b), (kept, dropped) -> { });
-        assertThat(result.values()).containsExactlyInAnyOrder(a, b);
+        assertThat(result).containsExactlyInAnyOrder(a, b);
     }
 
     @Test
@@ -74,7 +75,7 @@ class AbstractJavaDependencyAnalysisTest {
         final var newer = descriptor("com.example", "lib", "2.0.0", "com.example.lib");
         final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
             List.of(older, newer), (kept, dropped) -> { });
-        assertThat(result.values()).containsExactly(newer);
+        assertThat(result).containsExactly(newer);
     }
 
     @Test
@@ -84,7 +85,7 @@ class AbstractJavaDependencyAnalysisTest {
         final var older = descriptor("com.example", "lib", "1.0.0", "com.example.lib");
         final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
             List.of(newer, older), (kept, dropped) -> { });
-        assertThat(result.values()).containsExactly(newer);
+        assertThat(result).containsExactly(newer);
     }
 
     @Test
@@ -95,7 +96,7 @@ class AbstractJavaDependencyAnalysisTest {
         final var v11 = descriptor("com.example", "lib", "11.0.0", "com.example.lib");
         final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
             List.of(v1, v2, v11), (kept, dropped) -> { });
-        assertThat(result.values()).containsExactly(v11);
+        assertThat(result).containsExactly(v11);
     }
 
     @Test
@@ -109,7 +110,7 @@ class AbstractJavaDependencyAnalysisTest {
         final var slf4jNew = descriptor("org.slf4j", "slf4j-api", "2.0.17", "org.slf4j");
         final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
             List.of(slf4jOld, slf4jNew), (kept, dropped) -> { });
-        assertThat(result.values()).containsExactly(slf4jNew);
+        assertThat(result).containsExactly(slf4jNew);
     }
 
     @Test
@@ -139,6 +140,21 @@ class AbstractJavaDependencyAnalysisTest {
     }
 
     @Test
+    void dedupeByMavenCoordinates_callbackNotInvokedWhenSameVersionResolvedTwice() {
+        // Same coordinate, same version, reached via two different transitive requires paths —
+        // not a real ambiguity, so onDuplicate must not fire even though a "duplicate" coordinate
+        // was seen twice.
+        final var first = descriptor("com.example", "lib", "1.0.0", "com.example.lib");
+        final var second = descriptor("com.example", "lib", "1.0.0", "com.example.lib");
+        final var calls = new ArrayList<String>();
+        final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
+            List.of(first, second),
+            (kept, dropped) -> calls.add(kept + "/" + dropped));
+        assertThat(calls).isEmpty();
+        assertThat(result).containsExactly(first);
+    }
+
+    @Test
     void dedupeByMavenCoordinates_callbackNotInvokedWhenNoDuplicates() {
         final var a = descriptor("com.example", "lib-a", "1.0.0", "lib.a");
         final var b = descriptor("com.example", "lib-b", "1.0.0", "lib.b");
@@ -150,13 +166,27 @@ class AbstractJavaDependencyAnalysisTest {
     }
 
     @Test
+    void dedupeByMavenCoordinates_mavenQualifierOrdering_prefersHigherRankQualifierOverLexicographic() {
+        // Plain String/Version#compareTo is case-sensitive lexicographic: "RC" (R=0x52) sorts
+        // below "beta" (b=0x62), so a naive compareTo would keep 2.0.0-beta1 here. Maven's own
+        // qualifier chain ranks rc (4) above beta (2), so 2.0.0-RC1 is the version Maven itself
+        // would pick — the same VersionOrder.MAVEN ordering AbstractDetectResolution.dedupeByMavenCoordinate
+        // already uses for this exact reason.
+        final var beta = descriptor("com.example", "lib", "2.0.0-beta1", "com.example.lib");
+        final var rc = descriptor("com.example", "lib", "2.0.0-RC1", "com.example.lib");
+        final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
+            List.of(beta, rc), (kept, dropped) -> { });
+        assertThat(result).containsExactly(rc);
+    }
+
+    @Test
     void dedupeByMavenCoordinates_preservesInsertionOrder() {
         final var a = descriptor("com.example", "lib-a", "1.0.0", "lib.a");
         final var b = descriptor("com.example", "lib-b", "1.0.0", "lib.b");
         final var c = descriptor("com.example", "lib-c", "1.0.0", "lib.c");
         final var result = AbstractJavaDependencyAnalysis.dedupeByMavenCoordinates(
             List.of(b, c, a), (kept, dropped) -> { });
-        assertThat(result.values()).containsExactly(b, c, a);
+        assertThat(result).containsExactly(b, c, a);
     }
 
     // -------------------------------------------------------------------------
@@ -263,12 +293,18 @@ class AbstractJavaDependencyAnalysisTest {
         assertThat(AbstractJavaDependencyAnalysis.moduleNameFromListDepsLine("")).isEqualTo("");
     }
 
+    // Dedupe now keys off the resolved artifact path (see MavenCoordinateDedupe), following the
+    // same <groupId-path>/<artifactId>/<version>/<artifactId>-<version>.jar local-repository layout
+    // AbstractDetectResolutionTest uses for the same reason — so two descriptors with the same
+    // groupId/artifactId land under the same coordinate directory regardless of module name.
     private static ArtifactDescriptor descriptor(final String groupId,
                                                  final String artifactId,
                                                  final String version,
                                                  final String moduleName) {
         final Artifact artifact = Artifact.create(groupId, artifactId, version, "jar");
         final ModuleReference reference = ModuleReference.of(moduleName);
-        return ArtifactDescriptor.create(reference, artifact);
+        final Path path = Path.of("/repo", groupId.replace('.', '/'), artifactId, version,
+            artifactId + "-" + version + ".jar");
+        return ArtifactDescriptor.create(reference, artifact, path);
     }
 }
