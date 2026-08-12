@@ -151,6 +151,31 @@ class AbstractDetectResolutionTest {
     }
 
     @Test
+    void resolveCompiledOutput_spinOutputHasOnlyResources_prefersOlderButGenuinelyCompiledMavenOutput()
+        throws IOException {
+        // the exact race behind the spin1-build-spin2 "module not found" failure: CopyResources (a
+        // @PreProcess prerequisite of Compile) writes resource files into spin's own build output
+        // before Compile has produced a single .class file. A directory that's non-empty for that
+        // reason alone must not beat a fully-populated Maven candidate on the freshest-mtime tie-break,
+        // even though the resource file's mtime is newer than anything in the Maven candidate.
+        final Path spinOutput = projectRoot.resolve(".build/main/classes");
+        Files.createDirectories(spinOutput);
+        final Path resource = spinOutput.resolve("application.properties");
+        Files.createFile(resource);
+        setModifiedTime(resource, FileTime.fromMillis(10_000));
+
+        final Path mavenClasses = projectRoot.resolve("target/classes");
+        Files.createDirectories(mavenClasses);
+        final Path mavenClass = mavenClasses.resolve("Foo.class");
+        Files.createFile(mavenClass);
+        setModifiedTime(mavenClass, FileTime.fromMillis(1_000));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.ENABLED))
+            .contains(mavenClasses);
+    }
+
+    @Test
     void resolveCompiledOutput_mavenClassesExist_butReuseDisabled_returnsEmpty() throws IOException {
         final Path mavenClasses = projectRoot.resolve("target/classes");
         Files.createDirectories(mavenClasses);

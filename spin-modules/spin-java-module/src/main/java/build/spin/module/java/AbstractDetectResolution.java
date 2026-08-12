@@ -415,15 +415,18 @@ public abstract class AbstractDetectResolution
                     ? BuildOutputLocations.gradle(projectPath, isTest ? "classes/java/test" : "classes/java/main")
                     : Optional.<Path>empty())
             .flatMap(Optional::stream)
-            // a candidate directory can exist but still be empty -- e.g. CleanPlugin$CreateBuildPath
-            // creates <buildDir>/main/target up front as a prerequisite for several tasks, independent
-            // of whether Compile has actually run yet. Treating that as "already built" would let it
-            // win the freshest-mtime tie-break below against an older but fully-populated candidate
-            // (e.g. Maven's target/classes from an earlier reactor build) whenever that sibling's own
-            // Compile task happens to be running concurrently and unordered relative to this check
-            // (as it legitimately can be -- see siblingCompileDependencies), handing back a module-path
-            // entry with nothing compiled into it yet.
-            .filter(AbstractDetectResolution::isNonEmptyDirectory)
+            // a candidate directory can exist but still lack any compiled output -- e.g.
+            // CleanPlugin$CreateBuildPath creates <buildDir>/main/target up front as a prerequisite for
+            // several tasks, and CopyResources (a @PreProcess prerequisite of Compile) unconditionally
+            // writes resource files into this exact same directory before Compile produces a single
+            // .class file. Treating either of those as "already built" would let a directory with
+            // nothing compiled into it yet -- non-empty, but only from a mkdir or a resource copy -- win
+            // the freshest-mtime tie-break below against an older but fully-populated candidate (e.g.
+            // Maven's target/classes from an earlier reactor build) whenever that sibling's own Compile
+            // task happens to be running concurrently and unordered relative to this check (as it
+            // legitimately can be -- see siblingCompileDependencies), handing back a module-path entry
+            // that the requiring module then fails to find classes in.
+            .filter(path -> containsCompiledClasses(path, false))
             .toList();
 
         // Only walk candidate trees to compare mtimes when there's an actual ambiguity to resolve —
@@ -434,15 +437,6 @@ public abstract class AbstractDetectResolution
             case 1 -> Optional.of(candidates.get(0));
             default -> candidates.stream().max(Comparator.comparing(BuildOutputLocations::latestModifiedTime));
         };
-    }
-
-    private static boolean isNonEmptyDirectory(final Path path) {
-        try (Stream<Path> entries = Files.list(path)) {
-            return entries.findAny().isPresent();
-        }
-        catch (final IOException e) {
-            return false;
-        }
     }
 
     /**
@@ -513,12 +507,11 @@ public abstract class AbstractDetectResolution
      *
      * <p>Deliberately narrower than {@link BuildOutputLocations#latestModifiedTime}, which takes the
      * newest file of any kind: {@code CopyResources} is a {@code @PreProcess} prerequisite of
-     * {@code Compile} and unconditionally rewrites resource files into this exact same directory,
-     * regardless of whether {@code Compile} ends up reusing it (see
-     * {@code AbstractResourcePlugin.CopyResources#doCopy}). Including those resource mtimes here would
-     * let a resource file {@code CopyResources} just touched mask genuinely stale {@code .class} files
-     * sitting right next to it, making a stale compile look up to date and never re-invoking
-     * {@code javac}.
+     * {@code Compile} and writes resource files into this exact same directory whenever it doesn't
+     * skip itself (see {@code AbstractResourcePlugin.CopyResources#doCopy}). Including those resource
+     * mtimes here would let a resource file {@code CopyResources} just touched mask genuinely stale
+     * {@code .class} files sitting right next to it, making a stale compile look up to date and never
+     * re-invoking {@code javac}.
      *
      * @param directory the candidate already-built output directory
      * @return the latest {@link FileTime} among {@code .class} files under {@code directory}
@@ -820,6 +813,32 @@ public abstract class AbstractDetectResolution
             .forEach(sources::add);
 
         return isUpToDate(output.get(), sources.build());
+    }
+
+    /**
+     * Determines whether {@code output} is at least as new as every file under {@code projectPath}'s
+     * declared {@code scope} source root (e.g. {@code src/main/java}), if that root exists.
+     *
+     * <p>Used by {@code AbstractResourcePlugin.CopyResources} to decide whether it's safe to skip
+     * copying resources into {@code output}: if {@code output} is already at least as new as the
+     * declared source, {@link AbstractCompile}'s own freshness check -- run against this exact same
+     * {@code output} candidate -- will independently reach the same "reuse, don't touch this
+     * directory" conclusion, so skipping the resource copy here can never leave a freshly
+     * (re)compiled directory missing its resources: the two decisions can't diverge, because both are
+     * gated on the same declared source being unchanged rather than on resource freshness.
+     *
+     * @param projectPath the project root
+     * @param scope       the {@link SourcePathKind} whose declared source root to check (MAIN or TEST)
+     * @param output      the candidate already-built output directory
+     * @return {@code true} if {@code output} is at least as new as every file under the declared source root
+     */
+    static boolean isDeclaredSourceUpToDate(final Path projectPath, final SourcePathKind scope, final Path output) {
+        final Path sourceRoot = projectPath.resolve(scope.sourceRoot().orElseThrow() + "java");
+        final PathSetBuilder sources = PathSetBuilder.create();
+        if (Files.isDirectory(sourceRoot)) {
+            sources.add(sourceRoot);
+        }
+        return isUpToDate(output, sources.build());
     }
 
     static Optional<Reference> crossProjectDeps(final Project prj,
