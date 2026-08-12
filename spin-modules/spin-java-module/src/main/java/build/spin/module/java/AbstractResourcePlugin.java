@@ -87,6 +87,17 @@ public abstract class AbstractResourcePlugin {
         /**
          * Copies resources from the detected source paths into the build directory.
          *
+         * <p>Always copies unconditionally, even when {@link AbstractCompile} is about to reuse an
+         * already-valid candidate for the same project instead of invoking {@code javac}: this task
+         * runs {@code @PreProcess} the compile (before it), so it cannot yet know whether the compile
+         * will reuse existing output or write fresh classes into this same directory -- and those two
+         * "is this already up to date" checks compare the candidate's freshness against different
+         * inputs (resource files here, source files there), so they are not guaranteed to agree. If
+         * this task skipped copying based on the resources alone being fresh while the compile then
+         * decided the source was stale and wrote a fresh, resource-less directory, that directory would
+         * end up missing its resources entirely. Copying resources is cheap, so there is no reason to
+         * risk that divergence for the sake of skipping it.
+         *
          * @param paths     the source resource paths
          * @param buildPath the root build {@link Path}
          * @return the {@link PathSet} of copied resources

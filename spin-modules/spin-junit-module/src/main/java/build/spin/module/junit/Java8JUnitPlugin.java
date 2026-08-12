@@ -42,6 +42,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -126,7 +127,8 @@ public class Java8JUnitPlugin
          */
         public PathSet compile(final @From(DetectSourcePaths.class) Map<SourcePathKind, PathSet> sourcePaths,
                                final @From(DetectTestResolution.class) CompilationResolution resolution,
-                               final @From(CleanPlugin.CreateBuildPath.class) Path buildPath)
+                               final @From(CleanPlugin.CreateBuildPath.class) Path buildPath,
+                               final @From(Java8CompilerPlugin.Compile.class) Optional<PathSet> ownMainOutput)
             throws Exception {
 
             // the path in which to place the compiled classes
@@ -134,7 +136,18 @@ public class Java8JUnitPlugin
 
             final PathSet sourceCode = build.spin.common.task.DetectSourcePaths.filesOf(sourcePaths, SourcePathKind.TEST);
 
-            return super.compile(sourceCode, resolution, buildPath, targetPath);
+            // DetectTestResolution's own "this project's own main output" seed is best-effort and can
+            // race Java8CompilerPlugin.Compile (see AbstractDetectResolution#create); dependencies()
+            // below already force-orders this task after that Compile task, so merge its result in
+            // directly here rather than trusting DetectTestResolution's (possibly stale) snapshot.
+            // Must still route through the same module-path-vs-classpath decision as every other
+            // resolution candidate -- base's own main output is frequently a named module, and a named
+            // module placed on the classpath is invisible to JUnit's modular (-m) launch.
+            final CompilationResolution effectiveResolution = ownMainOutput
+                .map(output -> resolution.withAdditional(output, AbstractDetectResolution::isNamedModule))
+                .orElse(resolution);
+
+            return super.compile(sourceCode, effectiveResolution, buildPath, targetPath);
         }
     }
 
@@ -156,9 +169,19 @@ public class Java8JUnitPlugin
         }
 
         public PathSet test(final @From(DetectTestResolution.class) CompilationResolution resolution,
-                            final @From(CleanPlugin.CreateBuildPath.class) Path buildPath) {
+                            final @From(CleanPlugin.CreateBuildPath.class) Path buildPath,
+                            final @From(Compile.class) PathSet compiledTestClasses,
+                            final @From(Java8CompilerPlugin.Compile.class) Optional<PathSet> ownMainOutput) {
 
-            return super.test(resolution, buildPath);
+            // see the identical comment on Compile#compile above -- this task's own dependencies()
+            // already force-orders it after Java8CompilerPlugin.Compile (transitively, via Compile
+            // above), so merge its result in directly rather than trusting DetectTestResolution's
+            // (possibly stale) snapshot.
+            final CompilationResolution effectiveResolution = ownMainOutput
+                .map(output -> resolution.withAdditional(output, AbstractDetectResolution::isNamedModule))
+                .orElse(resolution);
+
+            return super.test(effectiveResolution, buildPath, compiledTestClasses);
         }
     }
 

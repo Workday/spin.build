@@ -20,6 +20,8 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.io.PathSet;
+import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
@@ -38,6 +40,7 @@ import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.BuildDirectoryName;
+import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
@@ -45,6 +48,7 @@ import java.io.IOException;
 import java.lang.module.ModuleFinder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -109,6 +113,14 @@ public abstract class AbstractDetectResolution
     private TelemetryRecorder recorder;
 
     /**
+     * Whether already-built Maven/Gradle output is trusted as equivalent to spin's own {@code .build/}
+     * output -- see {@link ReuseExternalBuildOutput}. Disabled by default, so this resolution and the
+     * sibling-ordering decision in {@link #dependencies()} only ever recognize spin's own prior output.
+     */
+    @Inject
+    private ReuseExternalBuildOutput reuseExternalBuildOutput;
+
+    /**
      * Which {@link SourcePathKind} this resolution is for — {@link SourcePathKind#MAIN} or
      * {@link SourcePathKind#TEST} — provided by the enclosing plugin ({@code AbstractJavaPlugin}
      * vs {@code AbstractJUnitPlugin}). Gates the TEST-only sibling-main-output inclusion in
@@ -150,12 +162,23 @@ public abstract class AbstractDetectResolution
 
         // seed the frontier from additional paths first — TEST scope also sees this project's own
         // compiled MAIN output (e.g. so JUnit test sources can see the project's own main sources),
-        // when a same-major-version compiler plugin has run for this project.
+        // when a same-major-version compiler plugin has run for this project. This is deliberately a
+        // best-effort disk check, not an ordering guarantee -- dependencies() below does NOT force the
+        // matching-major-version Compile task, so this can race it (e.g. when this task is requested
+        // in isolation, or scheduled before Compile finishes) and miss output that hasn't been written
+        // yet. Forcing that edge here would serialize this task's own (potentially slow) dependency
+        // resolution behind Compile's (potentially slow) javac invocation for every project in the
+        // workspace, destroying real parallelism between the two. Instead, JUnitPlugin's Compile and
+        // Test tasks -- which already force-order against their own project's main Compile task via
+        // their own dependencies() overrides -- separately and reliably inject that same main output
+        // themselves (see Java25JUnitPlugin.Compile#compile / Test#test), so correctness there never
+        // depends on winning this race.
         if (this.scope == SourcePathKind.TEST) {
             final boolean hasMatchingCompilerPlugin = this.project.plugins(JavaCompilerPlugin.class)
                 .anyMatch(p -> p.getJavaVersion().major() == this.javaVersion.major());
             if (hasMatchingCompilerPlugin) {
-                resolveCompiledOutput(this.project.path(), this.buildDirectoryName.get(), this.target.get())
+                resolveCompiledOutput(this.project.path(), this.buildDirectoryName.get(), this.target.get(),
+                        SourcePathKind.MAIN, this.reuseExternalBuildOutput)
                     .ifPresent(siblingCandidates::add);
             }
         }
@@ -178,8 +201,9 @@ public abstract class AbstractDetectResolution
             final Optional<Project> sibling = siblingProviding(this.project, name);
 
             if (sibling.isPresent()) {
-                final Optional<Path> siblingClasses = resolveCompiledOutput(
-                    sibling.get().path(), this.buildDirectoryName.get(), this.target.get());
+                final Optional<Path> siblingClasses = resolveCompiledOutput(sibling.get().path(),
+                    this.buildDirectoryName.get(), this.target.get(), SourcePathKind.MAIN,
+                    this.reuseExternalBuildOutput);
                 siblingClasses.ifPresent(siblingCandidates::add);
 
                 // enqueue the sibling's own direct requires onto the frontier
@@ -377,11 +401,19 @@ public abstract class AbstractDetectResolution
     // one forever.
     protected static Optional<Path> resolveCompiledOutput(final Path projectPath,
                                                            final String buildDirectoryName,
-                                                           final String targetDirectoryName) {
+                                                           final String targetDirectoryName,
+                                                           final SourcePathKind scope,
+                                                           final ReuseExternalBuildOutput reuseExternalBuildOutput) {
+        final boolean isTest = scope == SourcePathKind.TEST;
+        final boolean reuseExternal = reuseExternalBuildOutput == ReuseExternalBuildOutput.ENABLED;
         final List<Path> candidates = Stream.of(
-                BuildOutputLocations.spin(projectPath, buildDirectoryName, targetDirectoryName),
-                BuildOutputLocations.maven(projectPath, "classes"),
-                BuildOutputLocations.gradle(projectPath, "classes/java/main"))
+                BuildOutputLocations.spin(projectPath, buildDirectoryName, targetDirectoryName, scope),
+                reuseExternal
+                    ? BuildOutputLocations.maven(projectPath, isTest ? "test-classes" : "classes")
+                    : Optional.<Path>empty(),
+                reuseExternal
+                    ? BuildOutputLocations.gradle(projectPath, isTest ? "classes/java/test" : "classes/java/main")
+                    : Optional.<Path>empty())
             .flatMap(Optional::stream)
             // a candidate directory can exist but still be empty -- e.g. CleanPlugin$CreateBuildPath
             // creates <buildDir>/main/target up front as a prerequisite for several tasks, independent
@@ -409,6 +441,123 @@ public abstract class AbstractDetectResolution
             return entries.findAny().isPresent();
         }
         catch (final IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Determines whether {@code directory} contains at least one compiled {@code .class} file
+     * anywhere beneath it (except under {@code META-INF/versions/}, which a different multi-release
+     * variant of the same project may have already populated on its own). Used by both
+     * {@link AbstractCompile} and {@code AbstractResourcePlugin.CopyResources} to decide whether a
+     * {@link #resolveCompiledOutput} candidate is genuinely already-built output, rather than just a
+     * non-empty directory -- {@code CopyResources} writes into this exact same conventional directory
+     * independently of {@link AbstractCompile}, so a directory that only has resources in it
+     * (compilation hasn't happened yet) is non-empty but contains no compiled output at all.
+     *
+     * @param directory the candidate compiled-output directory
+     * @return {@code true} if a {@code .class} file exists anywhere beneath {@code directory}, outside
+     *         {@code META-INF/versions/}
+     */
+    static boolean containsCompiledClasses(final Path directory) {
+        return containsCompiledClasses(directory, true);
+    }
+
+    /**
+     * As {@link #containsCompiledClasses(Path)}, but callers already scoped to a specific
+     * multi-release variant's own {@code META-INF/versions/N} sub-directory (or the classpath/module
+     * candidate needs no such carve-out, e.g. {@code AbstractResourcePlugin.CopyResources}) can allow
+     * a match under {@code META-INF/versions/} too.
+     *
+     * @param directory             the candidate compiled-output directory
+     * @param excludeVersionsSubdir {@code true} to ignore {@code .class} files under
+     *                              {@code META-INF/versions/} -- e.g. the default-variant, top-level
+     *                              check, where a sibling non-default variant's partial write there
+     *                              must not be mistaken for this variant's own output
+     * @return {@code true} if a {@code .class} file exists anywhere beneath {@code directory},
+     *         subject to the {@code META-INF/versions/} exclusion when requested
+     */
+    static boolean containsCompiledClasses(final Path directory, final boolean excludeVersionsSubdir) {
+        final Path versionsDir = directory.resolve("META-INF").resolve("versions");
+        try (Stream<Path> walk = Files.walk(directory)) {
+            return walk
+                .filter(p -> !excludeVersionsSubdir || !p.startsWith(versionsDir))
+                .anyMatch(p -> p.getFileName().toString().endsWith(".class"));
+        } catch (final IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Determines whether {@code outputDirectory} was produced no earlier than every file reachable
+     * from {@code inputPaths} was last modified, i.e. whether it's safe to reuse as already-built
+     * output instead of regenerating it. Shared by {@link AbstractCompile} ({@code inputPaths} is
+     * individual {@code .java} source files) and {@code AbstractResourcePlugin.CopyResources}
+     * ({@code inputPaths} is resource root directories, e.g. {@code src/main/resources}) so both make
+     * the same kind of freshness decision about the same candidate directory. Entries in
+     * {@code inputPaths} that are themselves directories are walked, since a directory's own mtime
+     * doesn't change when a file nested inside it is edited.
+     *
+     * @param outputDirectory the candidate already-built output directory
+     * @param inputPaths      the files (or root directories of files) that would otherwise be (re)generated
+     * @return {@code true} if {@code outputDirectory} is at least as new as every file reachable from {@code inputPaths}
+     */
+    static boolean isUpToDate(final Path outputDirectory, final PathSet inputPaths) {
+        final FileTime outputTime = latestClassFileModifiedTime(outputDirectory);
+        return inputPaths.stream().allMatch(path -> isUpToDate(path, outputTime));
+    }
+
+    /**
+     * Returns the most recent last-modified time of any {@code .class} file anywhere under
+     * {@code directory}, falling back to epoch if none exist.
+     *
+     * <p>Deliberately narrower than {@link BuildOutputLocations#latestModifiedTime}, which takes the
+     * newest file of any kind: {@code CopyResources} is a {@code @PreProcess} prerequisite of
+     * {@code Compile} and unconditionally rewrites resource files into this exact same directory,
+     * regardless of whether {@code Compile} ends up reusing it (see
+     * {@code AbstractResourcePlugin.CopyResources#doCopy}). Including those resource mtimes here would
+     * let a resource file {@code CopyResources} just touched mask genuinely stale {@code .class} files
+     * sitting right next to it, making a stale compile look up to date and never re-invoking
+     * {@code javac}.
+     *
+     * @param directory the candidate already-built output directory
+     * @return the latest {@link FileTime} among {@code .class} files under {@code directory}
+     */
+    private static FileTime latestClassFileModifiedTime(final Path directory) {
+        try (Stream<Path> walk = Files.walk(directory)) {
+            return walk
+                .filter(p -> p.getFileName().toString().endsWith(".class"))
+                .map(p -> {
+                    try {
+                        return Files.getLastModifiedTime(p);
+                    } catch (final IOException e) {
+                        return FileTime.fromMillis(0);
+                    }
+                })
+                .max(Comparator.naturalOrder())
+                .orElse(FileTime.fromMillis(0));
+        } catch (final IOException e) {
+            return FileTime.fromMillis(0);
+        }
+    }
+
+    private static boolean isUpToDate(final Path path, final FileTime outputTime) {
+        if (Files.isDirectory(path)) {
+            try (Stream<Path> walk = Files.walk(path)) {
+                return walk.filter(Files::isRegularFile).allMatch(p -> isFileUpToDate(p, outputTime));
+            } catch (final IOException e) {
+                // can't establish freshness -- don't risk serving stale output
+                return false;
+            }
+        }
+        return isFileUpToDate(path, outputTime);
+    }
+
+    private static boolean isFileUpToDate(final Path file, final FileTime outputTime) {
+        try {
+            return Files.getLastModifiedTime(file).compareTo(outputTime) <= 0;
+        } catch (final IOException e) {
+            // can't establish freshness -- don't risk serving stale output
             return false;
         }
     }
@@ -553,6 +702,24 @@ public abstract class AbstractDetectResolution
         return versionDir == null ? path.toString() : versionDir.getFileName().toString();
     }
 
+    /**
+     * Determines whether {@code path} is a real (named) JPMS module -- i.e. resolves to at least one
+     * module via {@link ModuleFinder} -- as opposed to an unnamed/automatic-module candidate. Used to
+     * decide module-path vs classpath placement for a candidate a caller already has on hand (see
+     * {@code CompilationResolution#withAdditional}), the same question {@link ModuleGraphClassifier}
+     * answers for every other candidate that goes through the ordinary resolution pipeline.
+     *
+     * @param path the candidate directory or jar
+     * @return {@code true} if {@code path} resolves to at least one named module
+     */
+    public static boolean isNamedModule(final Path path) {
+        try {
+            return ModuleFinder.of(path).findAll().stream().findFirst().isPresent();
+        } catch (final RuntimeException e) {
+            return false;
+        }
+    }
+
     private static Optional<String> moduleNameOf(final Path path, final TelemetryRecorder recorder) {
         try {
             return ModuleFinder.of(path).findAll().stream()
@@ -567,43 +734,92 @@ public abstract class AbstractDetectResolution
 
     @Override
     public Stream<Reference> dependencies() {
-        return siblingCompileDependencies(
-            this.project, this.moduleDescriptor, this.buildDirectoryName.get(), this.target.get());
+        return siblingCompileDependencies(this.project, this.moduleDescriptor, this.buildDirectoryName.get(),
+            this.target.get(), this.reuseExternalBuildOutput);
     }
 
     /**
-     * Locates, for every workspace sibling {@code requires}d by {@code moduleDescriptor} that isn't
-     * already built, the {@link Reference} to that sibling's {@link JavaCompilerPlugin.Compile} task —
-     * shared between {@link AbstractDetectResolution} and {@link AbstractCompile}, since both must
-     * force the same siblings to (re)compile before they can proceed, for the same reason: an unbuilt
-     * sibling has nothing on disk yet for {@link #resolveCompiledOutput} to hand back.
+     * Locates, for every workspace sibling {@code requires}d by {@code moduleDescriptor} whose
+     * existing compiled output (if any) isn't up to date with its own source, the {@link Reference} to
+     * that sibling's {@link JavaCompilerPlugin.Compile} task — shared between
+     * {@link AbstractDetectResolution} and {@link AbstractCompile}, since both must force the same
+     * siblings before they can proceed.
+     *
+     * <p>Checks freshness (via {@link #isSiblingOutputUpToDate}), not just existence of a build-output
+     * directory: those aren't the same thing, and treating "some output exists" as "already built" let
+     * a stale leftover output (e.g. from an earlier build of this same project, before its source
+     * changed) go unrefreshed forever, since {@code Compile} was never even scheduled to run and give
+     * its own up-to-date check a chance to reject it. Conversely, forcing every required sibling
+     * unconditionally (skipping this check entirely) is also wrong: it schedules -- and creates a
+     * {@code .build} directory for -- siblings whose already-built output is genuinely current,
+     * defeating the entire point of {@link ReuseExternalBuildOutput}.
      *
      * @param project             the {@link Project} whose {@code requires} clauses to walk
      * @param moduleDescriptor    the {@link JDKModuleDescriptor} to read {@code requires} clauses from
      * @param buildDirectoryName  spin's own build directory name, to check for prior spin output
      * @param targetDirectoryName the target directory name, to check for prior spin/Maven/Gradle output
+     * @param reuseExternalBuildOutput whether Maven/Gradle output counts as "already built" -- see
+     *                                 {@link ReuseExternalBuildOutput}
      * @return the {@link Reference}s to force
      */
     static Stream<Reference> siblingCompileDependencies(final Project project,
                                                         final JDKModuleDescriptor moduleDescriptor,
                                                         final String buildDirectoryName,
-                                                        final String targetDirectoryName) {
+                                                        final String targetDirectoryName,
+                                                        final ReuseExternalBuildOutput reuseExternalBuildOutput) {
         final var workspace = project.workspace();
-
-        // resolveCompiledOutput performs up to three Files.list I/O calls per sibling and doesn't
-        // depend on which `requires` clause is being resolved -- compute the set of not-yet-built
-        // siblings once, rather than once per (requires clause, sibling) pair.
-        final Set<Project> unbuiltSiblings = workspace.stream()
-            .filter(prj -> resolveCompiledOutput(prj.path(), buildDirectoryName, targetDirectoryName).isEmpty())
-            .collect(Collectors.toCollection(LinkedHashSet::new));
 
         return moduleDescriptor.requiresClauses()
             .map(r -> r.requiresModuleName().toString())
-            .flatMap(name -> unbuiltSiblings.stream()
+            .flatMap(name -> workspace.stream()
                 .flatMap(prj -> JavaCompilerPlugin.resolveRequiredCompilerPlugin(prj, name, moduleDescriptor)
                     .optional()
+                    .filter(plugin -> !isSiblingOutputUpToDate(prj, plugin, buildDirectoryName,
+                        targetDirectoryName, reuseExternalBuildOutput))
                     .flatMap(plugin -> crossProjectDeps(prj, plugin))
                     .stream()));
+    }
+
+    /**
+     * Determines whether {@code sibling}'s already-built MAIN output (if any) is up to date with its
+     * own declared source, so {@link #siblingCompileDependencies} can decide whether forcing its
+     * {@link JavaCompilerPlugin.Compile} task is actually necessary.
+     *
+     * <p>Checks both the default and {@code plugin}'s own major-version-suffixed source directories
+     * (e.g. {@code src/main/java} and {@code src/main/java25}) without needing the system default
+     * {@link JDKVersion} to pick between them the way {@link SourcePathKind#detect} does -- checking
+     * both unconditionally can only make this over-conservative (an extra forced rebuild), never miss a
+     * genuinely stale source file.
+     *
+     * @param sibling                  the candidate workspace sibling {@link Project}
+     * @param plugin                   the sibling's matched {@link JavaCompilerPlugin}
+     * @param buildDirectoryName       spin's own build directory name, to check for prior spin output
+     * @param targetDirectoryName      the target directory name, to check for prior spin/Maven/Gradle output
+     * @param reuseExternalBuildOutput whether Maven/Gradle output counts as "already built" -- see
+     *                                 {@link ReuseExternalBuildOutput}
+     * @return {@code true} if {@code sibling} already has compiled output that's current with its source
+     */
+    private static boolean isSiblingOutputUpToDate(final Project sibling,
+                                                    final JavaCompilerPlugin plugin,
+                                                    final String buildDirectoryName,
+                                                    final String targetDirectoryName,
+                                                    final ReuseExternalBuildOutput reuseExternalBuildOutput) {
+
+        final Optional<Path> output = resolveCompiledOutput(sibling.path(), buildDirectoryName,
+            targetDirectoryName, SourcePathKind.MAIN, reuseExternalBuildOutput);
+
+        if (output.isEmpty() || !containsCompiledClasses(output.get())) {
+            return false;
+        }
+
+        final String sourceRoot = SourcePathKind.MAIN.sourceRoot().orElseThrow() + "java";
+        final PathSetBuilder sources = PathSetBuilder.create();
+        Stream.of(sibling.path().resolve(sourceRoot),
+                sibling.path().resolve(sourceRoot + plugin.getJavaVersion().major()))
+            .filter(Files::isDirectory)
+            .forEach(sources::add);
+
+        return isUpToDate(output.get(), sources.build());
     }
 
     static Optional<Reference> crossProjectDeps(final Project prj,

@@ -22,6 +22,7 @@ package build.spin.module.java;
 
 import build.base.foundation.Exceptional;
 import build.base.foundation.UniformResource;
+import build.base.io.PathSet;
 import build.base.telemetry.Diagnostic;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
@@ -33,11 +34,13 @@ import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.foundation.naming.NonCachingNameProvider;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.RequiresVersionTrait;
+import build.spin.common.task.SourcePathKind;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
+import build.spin.option.ReuseExternalBuildOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -120,7 +123,8 @@ class AbstractDetectResolutionTest {
 
     @Test
     void resolveCompiledOutput_noneExists_returnsEmpty() {
-        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes")).isEmpty();
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.DISABLED)).isEmpty();
     }
 
     @Test
@@ -129,7 +133,8 @@ class AbstractDetectResolutionTest {
         Files.createDirectories(spinOutput);
         Files.createFile(spinOutput.resolve("Foo.class"));
 
-        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.DISABLED))
             .contains(spinOutput);
     }
 
@@ -141,31 +146,99 @@ class AbstractDetectResolutionTest {
         final Path spinOutput = projectRoot.resolve(".build/main/classes");
         Files.createDirectories(spinOutput);
 
-        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes")).isEmpty();
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.DISABLED)).isEmpty();
     }
 
     @Test
-    void resolveCompiledOutput_mavenClassesExist_returnsMavenPath() throws IOException {
+    void resolveCompiledOutput_mavenClassesExist_butReuseDisabled_returnsEmpty() throws IOException {
         final Path mavenClasses = projectRoot.resolve("target/classes");
         Files.createDirectories(mavenClasses);
         Files.createFile(mavenClasses.resolve("Foo.class"));
 
-        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.DISABLED)).isEmpty();
+    }
+
+    @Test
+    void resolveCompiledOutput_mavenClassesExist_reuseEnabled_returnsMavenPath() throws IOException {
+        final Path mavenClasses = projectRoot.resolve("target/classes");
+        Files.createDirectories(mavenClasses);
+        Files.createFile(mavenClasses.resolve("Foo.class"));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.ENABLED))
             .contains(mavenClasses);
     }
 
     @Test
-    void resolveCompiledOutput_gradleClassesExist_returnsGradlePath() throws IOException {
+    void resolveCompiledOutput_gradleClassesExist_butReuseDisabled_returnsEmpty() throws IOException {
         final Path gradleClasses = projectRoot.resolve("build/classes/java/main");
         Files.createDirectories(gradleClasses);
         Files.createFile(gradleClasses.resolve("Foo.class"));
 
-        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.DISABLED)).isEmpty();
+    }
+
+    @Test
+    void resolveCompiledOutput_gradleClassesExist_reuseEnabled_returnsGradlePath() throws IOException {
+        final Path gradleClasses = projectRoot.resolve("build/classes/java/main");
+        Files.createDirectories(gradleClasses);
+        Files.createFile(gradleClasses.resolve("Foo.class"));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.ENABLED))
             .contains(gradleClasses);
     }
 
     @Test
-    void resolveCompiledOutput_spinAndMavenExist_prefersFresherMaven() throws IOException {
+    void resolveCompiledOutput_testScope_mavenReuseEnabled_returnsMavenTestClassesNotMainClasses() throws IOException {
+        // for SourcePathKind.TEST, the Maven candidate must be target/test-classes -- target/classes
+        // (the MAIN candidate) exists here too, to confirm the TEST-scope lookup doesn't fall back to it.
+        final Path mavenMainClasses = projectRoot.resolve("target/classes");
+        Files.createDirectories(mavenMainClasses);
+        Files.createFile(mavenMainClasses.resolve("Foo.class"));
+
+        final Path mavenTestClasses = projectRoot.resolve("target/test-classes");
+        Files.createDirectories(mavenTestClasses);
+        Files.createFile(mavenTestClasses.resolve("FooTest.class"));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.TEST, ReuseExternalBuildOutput.ENABLED))
+            .contains(mavenTestClasses);
+    }
+
+    @Test
+    void resolveCompiledOutput_testScope_gradleReuseEnabled_returnsGradleTestClassesNotMainClasses() throws IOException {
+        // for SourcePathKind.TEST, the Gradle candidate must be build/classes/java/test --
+        // build/classes/java/main (the MAIN candidate) exists here too, to confirm the TEST-scope
+        // lookup doesn't fall back to it.
+        final Path gradleMainClasses = projectRoot.resolve("build/classes/java/main");
+        Files.createDirectories(gradleMainClasses);
+        Files.createFile(gradleMainClasses.resolve("Foo.class"));
+
+        final Path gradleTestClasses = projectRoot.resolve("build/classes/java/test");
+        Files.createDirectories(gradleTestClasses);
+        Files.createFile(gradleTestClasses.resolve("FooTest.class"));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.TEST, ReuseExternalBuildOutput.ENABLED))
+            .contains(gradleTestClasses);
+    }
+
+    @Test
+    void resolveCompiledOutput_testScope_mavenClassesExist_butReuseDisabled_returnsEmpty() throws IOException {
+        final Path mavenTestClasses = projectRoot.resolve("target/test-classes");
+        Files.createDirectories(mavenTestClasses);
+        Files.createFile(mavenTestClasses.resolve("FooTest.class"));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.TEST, ReuseExternalBuildOutput.DISABLED)).isEmpty();
+    }
+
+    @Test
+    void resolveCompiledOutput_spinAndMavenExist_reuseEnabled_prefersFresherMaven() throws IOException {
         final Path spinOutput = projectRoot.resolve(".build/main/classes");
         final Path mavenClasses = projectRoot.resolve("target/classes");
         Files.createDirectories(spinOutput);
@@ -179,8 +252,32 @@ class AbstractDetectResolutionTest {
         setModifiedTime(mavenClass, FileTime.fromMillis(2_000));
         setModifiedTime(mavenClasses, FileTime.fromMillis(2_000));
 
-        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.ENABLED))
             .contains(mavenClasses);
+    }
+
+    @Test
+    void resolveCompiledOutput_spinAndMavenExist_reuseDisabled_alwaysPrefersSpinRegardlessOfFreshness()
+        throws IOException {
+        // with reuse disabled, Maven's output isn't a candidate at all -- even when it's fresher --
+        // so spin's own output wins unconditionally rather than via the freshness tiebreak.
+        final Path spinOutput = projectRoot.resolve(".build/main/classes");
+        final Path mavenClasses = projectRoot.resolve("target/classes");
+        Files.createDirectories(spinOutput);
+        Files.createDirectories(mavenClasses);
+        final Path spinClass = spinOutput.resolve("Foo.class");
+        final Path mavenClass = mavenClasses.resolve("Foo.class");
+        Files.createFile(spinClass);
+        Files.createFile(mavenClass);
+        setModifiedTime(spinClass, FileTime.fromMillis(1_000));
+        setModifiedTime(spinOutput, FileTime.fromMillis(1_000));
+        setModifiedTime(mavenClass, FileTime.fromMillis(2_000));
+        setModifiedTime(mavenClasses, FileTime.fromMillis(2_000));
+
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.DISABLED))
+            .contains(spinOutput);
     }
 
     @Test
@@ -198,7 +295,8 @@ class AbstractDetectResolutionTest {
         setModifiedTime(mavenClass, FileTime.fromMillis(1_000));
         setModifiedTime(mavenClasses, FileTime.fromMillis(1_000));
 
-        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.ENABLED))
             .contains(spinOutput);
     }
 
@@ -222,12 +320,148 @@ class AbstractDetectResolutionTest {
         setModifiedTime(freshClass, FileTime.fromMillis(5_000));
         setModifiedTime(spinOutput, FileTime.fromMillis(5_000));
 
-        assertThat(AbstractDetectResolution.resolveCompiledOutput(projectRoot, ".build", "classes"))
+        assertThat(AbstractDetectResolution.resolveCompiledOutput(
+            projectRoot, ".build", "classes", SourcePathKind.MAIN, ReuseExternalBuildOutput.ENABLED))
             .contains(spinOutput);
     }
 
     private static void setModifiedTime(final Path path, final FileTime time) throws IOException {
         Files.setLastModifiedTime(path, time);
+    }
+
+    @Test
+    void containsCompiledClasses_classFileAtTopLevel_returnsTrue() throws IOException {
+        final Path directory = projectRoot.resolve("classes");
+        Files.createDirectories(directory);
+        Files.createFile(directory.resolve("Foo.class"));
+
+        assertThat(AbstractDetectResolution.containsCompiledClasses(directory)).isTrue();
+    }
+
+    @Test
+    void containsCompiledClasses_classFileNestedOutsideVersions_returnsTrue() throws IOException {
+        final Path directory = projectRoot.resolve("classes");
+        final Path nested = Files.createDirectories(directory.resolve("build/spin/module/java"));
+        Files.createFile(nested.resolve("Foo.class"));
+
+        assertThat(AbstractDetectResolution.containsCompiledClasses(directory)).isTrue();
+    }
+
+    @Test
+    void containsCompiledClasses_onlyResourceFiles_returnsFalse() throws IOException {
+        // e.g. CopyResources has already run but Compile hasn't -- the directory is non-empty but
+        // contains nothing that was actually compiled.
+        final Path directory = projectRoot.resolve("classes");
+        Files.createDirectories(directory);
+        Files.createFile(directory.resolve("application.properties"));
+
+        assertThat(AbstractDetectResolution.containsCompiledClasses(directory)).isFalse();
+    }
+
+    @Test
+    void containsCompiledClasses_classOnlyUnderVersionsSubdir_excludingVersions_returnsFalse() throws IOException {
+        // the default-variant, top-level check: a sibling non-default variant's own partial write
+        // under META-INF/versions/N must not be mistaken for this variant's own (not-yet-written)
+        // top-level output.
+        final Path directory = projectRoot.resolve("classes");
+        final Path versioned = Files.createDirectories(directory.resolve("META-INF/versions/25"));
+        Files.createFile(versioned.resolve("Foo.class"));
+
+        assertThat(AbstractDetectResolution.containsCompiledClasses(directory, true)).isFalse();
+    }
+
+    @Test
+    void containsCompiledClasses_classOnlyUnderVersionsSubdir_includingVersions_returnsTrue() throws IOException {
+        // a caller already scoped to a specific variant's own META-INF/versions/N sub-directory
+        // allows a match there.
+        final Path directory = projectRoot.resolve("classes");
+        final Path versioned = Files.createDirectories(directory.resolve("META-INF/versions/25"));
+        Files.createFile(versioned.resolve("Foo.class"));
+
+        assertThat(AbstractDetectResolution.containsCompiledClasses(directory, false)).isTrue();
+    }
+
+    @Test
+    void isUpToDate_outputNewerThanAllInputs_returnsTrue() throws IOException {
+        final Path output = projectRoot.resolve("classes");
+        Files.createDirectories(output);
+        final Path outputClass = output.resolve("Foo.class");
+        Files.createFile(outputClass);
+        setModifiedTime(outputClass, FileTime.fromMillis(2_000));
+
+        final Path source = projectRoot.resolve("Foo.java");
+        Files.createFile(source);
+        setModifiedTime(source, FileTime.fromMillis(1_000));
+
+        assertThat(AbstractDetectResolution.isUpToDate(output, PathSet.of(source))).isTrue();
+    }
+
+    @Test
+    void isUpToDate_inputNewerThanOutput_returnsFalse() throws IOException {
+        final Path output = projectRoot.resolve("classes");
+        Files.createDirectories(output);
+        final Path outputClass = output.resolve("Foo.class");
+        Files.createFile(outputClass);
+        setModifiedTime(outputClass, FileTime.fromMillis(1_000));
+
+        final Path source = projectRoot.resolve("Foo.java");
+        Files.createFile(source);
+        setModifiedTime(source, FileTime.fromMillis(2_000));
+
+        assertThat(AbstractDetectResolution.isUpToDate(output, PathSet.of(source))).isFalse();
+    }
+
+    @Test
+    void isUpToDate_inputIsDirectoryWithNestedNewerFile_returnsFalse() throws IOException {
+        // resources are passed as their root directory (e.g. src/main/resources), not individual
+        // files -- a directory's own mtime doesn't change when a file nested inside it is edited, so
+        // the check must walk into it.
+        final Path output = projectRoot.resolve("classes");
+        Files.createDirectories(output);
+        final Path outputClass = output.resolve("Foo.class");
+        Files.createFile(outputClass);
+        setModifiedTime(outputClass, FileTime.fromMillis(1_000));
+
+        final Path resourceRoot = projectRoot.resolve("src/main/resources");
+        final Path nested = Files.createDirectories(resourceRoot.resolve("config"));
+        final Path resourceFile = nested.resolve("application.properties");
+        Files.createFile(resourceFile);
+        setModifiedTime(resourceFile, FileTime.fromMillis(2_000));
+
+        assertThat(AbstractDetectResolution.isUpToDate(output, PathSet.of(resourceRoot))).isFalse();
+    }
+
+    @Test
+    void isUpToDate_noInputPaths_returnsTrue() throws IOException {
+        final Path output = projectRoot.resolve("classes");
+        Files.createDirectories(output);
+        Files.createFile(output.resolve("Foo.class"));
+
+        assertThat(AbstractDetectResolution.isUpToDate(output, PathSet.empty())).isTrue();
+    }
+
+    @Test
+    void isUpToDate_staleClassFileButFreshlyTouchedResource_returnsFalse() throws IOException {
+        // the exact bug this scoping exists for: CopyResources unconditionally rewrites resource
+        // files into this same output directory as a @PreProcess prerequisite of Compile, regardless
+        // of whether Compile ends up reusing existing output. A freshly-touched resource sitting next
+        // to a genuinely stale .class file must not make the directory as a whole look up to date --
+        // only the .class file's own mtime should count.
+        final Path output = projectRoot.resolve("classes");
+        Files.createDirectories(output);
+        final Path outputClass = output.resolve("Foo.class");
+        Files.createFile(outputClass);
+        setModifiedTime(outputClass, FileTime.fromMillis(1_000));
+
+        final Path freshResource = output.resolve("application.properties");
+        Files.createFile(freshResource);
+        setModifiedTime(freshResource, FileTime.fromMillis(10_000));
+
+        final Path source = projectRoot.resolve("Foo.java");
+        Files.createFile(source);
+        setModifiedTime(source, FileTime.fromMillis(5_000));
+
+        assertThat(AbstractDetectResolution.isUpToDate(output, PathSet.of(source))).isFalse();
     }
 
     @Test

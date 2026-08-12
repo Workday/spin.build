@@ -55,7 +55,6 @@ import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleReference;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.module.modulesystem.UnresolvableModuleException;
-import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 import org.w3c.dom.Document;
@@ -205,27 +204,53 @@ public class MavenPlugin
     public static class CreateModuleArchiveBuilder
         implements Task<JarBuilder> {
 
-        @Inject
-        private TargetDirectoryName target;
-
         /**
          * Creates and populates an {@link JarBuilder} containing the compiled code and resources for the
          * {@link Project}.
          *
-         * @param manifest  the {@link Manifest}
-         * @param buildPath the {@link Path} for build output
-         * @param pathSets  the {@link Stream} of compilation {@link PathSet}s
+         * @param manifest the {@link Manifest}
+         * @param pathSets the {@link Stream} of compilation {@link PathSet}s
          * @return a new {@link JarBuilder}
          */
         public JarBuilder create(final @From(CreateModuleManifest.class) Manifest manifest,
-                                 final @From(CleanPlugin.CreateBuildPath.class) Path buildPath,
                                  final @From(JavaCompilerPlugin.Compile.class) Stream<PathSet> pathSets)
             throws IOException {
 
             final JarBuilder builder = new JarBuilder(manifest);
 
-            final Path target = buildPath.resolve(MAIN_OUTPUT_PREFIX + this.target.get());
-            builder.content().add(target);
+            final List<Path> paths = pathSets.flatMap(PathSet::stream).distinct().toList();
+
+            for (final Path path : paths) {
+                // for a multi-release module, a non-default-version variant's compiled output can
+                // physically live inside the default variant's own output tree, at
+                // "<default variant root>/META-INF/versions/N" (see AbstractCompile) -- in that case
+                // adding the default variant's root already recursively picks it up at the correct
+                // jar-relative location, so adding it again here separately would duplicate every
+                // entry underneath it. Only add paths not already covered by another path in the set.
+                final boolean coveredByAnotherPath = paths.stream()
+                    .anyMatch(other -> !other.equals(path) && path.startsWith(other));
+
+                if (coveredByAnotherPath) {
+                    continue;
+                }
+
+                final Path versionsDir = path.getParent();
+                final boolean isVersionedVariant = versionsDir != null
+                    && "versions".equals(String.valueOf(versionsDir.getFileName()))
+                    && versionsDir.getParent() != null
+                    && "META-INF".equals(String.valueOf(versionsDir.getParent().getFileName()));
+
+                if (isVersionedVariant) {
+                    // the default variant reused an external tool's output (e.g. Maven's own
+                    // target/classes) that has no META-INF/versions/N tree of its own, so this
+                    // variant's output isn't nested under anything else being added -- it must be
+                    // placed under its own explicit versioned path rather than flattened to the jar
+                    // root, which is what adding it unnamed would otherwise do.
+                    builder.content().add("META-INF/versions/" + path.getFileName() + "/", path);
+                } else {
+                    builder.content().add(path);
+                }
+            }
 
             return builder;
         }
