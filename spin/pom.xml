@@ -129,6 +129,10 @@
             <groupId>build.base</groupId>
             <artifactId>base-table</artifactId>
         </dependency>
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-telemetry</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

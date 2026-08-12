@@ -216,9 +216,17 @@ public abstract class AbstractJavaPlugin
                         }
                     })
                     .orElseGet(() -> {
-                        this.recorder.warn(
-                            "[%s] does not define a ModuleDescriptor. Defaulting to an empty ModuleDescriptor.",
-                            this.project.name());
+                        // a missing MAIN module-info.java is notable enough to warrant a warning, but a
+                        // missing TEST module-info.java (sourceScope() == TEST, per AbstractJUnitPlugin)
+                        // is the routine, common case for a Project with no test-specific module
+                        // requirements - not worth a warning on every such Project
+                        final String message =
+                            "[%s] does not define a ModuleDescriptor. Defaulting to an empty ModuleDescriptor.";
+                        if (sourceScope() == SourcePathKind.TEST) {
+                            this.recorder.diagnostic(message, this.project.name());
+                        } else {
+                            this.recorder.warn(message, this.project.name());
+                        }
                         return automaticDescriptor(normalizedProjectName);
                     });
 

@@ -22,7 +22,6 @@ package build.spin.engine;
 
 import build.base.configuration.Configuration;
 import build.base.foundation.Capture;
-import build.base.foundation.UniformResource;
 import build.base.foundation.memoizer.Memoizer;
 import build.base.foundation.stream.Streamable;
 import build.base.foundation.stream.Streams;
@@ -33,6 +32,7 @@ import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Reference;
 import build.spin.Resource;
+import build.spin.SpinURI;
 import build.spin.Task;
 import build.spin.Visitor;
 import build.spin.Workspace;
@@ -160,7 +160,7 @@ public abstract class AbstractProject implements Project {
 
         this.engine = engine;
 
-        final URI uri = UniformResource.createURI("project", path.toAbsolutePath().toString());
+        final URI uri = SpinURI.create("project", path.toAbsolutePath().toString());
         this.recorder = new TelemetryPublisher(uri, this.engine::publish);
         this.parent = parent;
         this.path = path;

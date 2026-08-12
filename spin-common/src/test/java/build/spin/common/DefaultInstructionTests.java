@@ -100,7 +100,7 @@ class DefaultInstructionTests {
         instruction.addDependency(dep);
 
         assertThat(instruction.dependencies()).doesNotContain(dep);
-        verify(recorder, atLeastOnce()).warn(anyString(), any(), any());
+        verify(recorder, atLeastOnce()).warn(anyString(), any());
     }
 
     /**
@@ -140,6 +140,6 @@ class DefaultInstructionTests {
         instruction.addDependent(dep);
 
         assertThat(instruction.dependents()).doesNotContain(dep);
-        verify(recorder, atLeastOnce()).warn(anyString(), any(), any());
+        verify(recorder, atLeastOnce()).warn(anyString(), any());
     }
 }

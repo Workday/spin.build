@@ -259,6 +259,22 @@ public class DefaultInstruction<T>
     }
 
     @Override
+    public String toString() {
+        return getReference().toString();
+    }
+
+    /**
+     * Obtains the {@link TelemetryRecorder} scoped to the {@link Task} this {@link DefaultInstruction}
+     * executes (ie: {@code spin-task://workspace/project/task-name}), rather than the coarser
+     * {@link DefaultProgram}-wide recorder.
+     *
+     * @return the {@link TelemetryRecorder}
+     */
+    public TelemetryRecorder getRecorder() {
+        return this.recorder;
+    }
+
+    @Override
     public Task<?> getTask() {
         return this.task;
     }
@@ -323,8 +339,7 @@ public class DefaultInstruction<T>
         if (reference.project().getPlugin(reference.getPluginClass()).isPresent()) {
             this.dependencies.add(reference);
         } else {
-            this.recorder.warn("Task dependency [%s] is not available in project [%s] - skipping",
-                reference, reference.project().name());
+            this.recorder.warn("Task dependency [%s] is not available in its project - skipping", reference);
         }
     }
 
@@ -352,8 +367,7 @@ public class DefaultInstruction<T>
         if (reference.project().getPlugin(reference.getPluginClass()).isPresent()) {
             this.dependents.add(reference);
         } else {
-            this.recorder.warn("Task dependent [%s] is not available in project [%s] - skipping",
-                reference, reference.project().name());
+            this.recorder.warn("Task dependent [%s] is not available in its project - skipping", reference);
         }
     }
 

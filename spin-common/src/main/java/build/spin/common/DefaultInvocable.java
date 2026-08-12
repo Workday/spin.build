@@ -29,8 +29,6 @@ import jakarta.inject.Inject;
 
 import java.net.URI;
 
-import static build.base.foundation.Introspection.describe;
-
 /**
  * The default implementation of an {@link Invocable}.
  *
@@ -101,10 +99,7 @@ public class DefaultInvocable<T>
 
     @Override
     public String toString() {
-        return "Task for Project [" + getProject().name() + "] " +
-            "Plugin [" + getPlugin().name() + "] " +
-            "Task [" + getTaskName() + "] " +
-            "Class [" + describe(this.taskClass) + "]";
+        return getReference().toString();
     }
 
     @Override

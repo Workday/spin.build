@@ -21,13 +21,13 @@ package build.spin.common.util;
  */
 
 import build.base.foundation.Introspection;
-import build.base.foundation.UniformResource;
 import build.codemodel.dependency.injection.Context;
 import build.codemodel.dependency.injection.InjectionFramework;
 import build.codemodel.dependency.injection.ProvidesResolver;
 import build.spin.Invocable;
 import build.spin.Plugin;
 import build.spin.Project;
+import build.spin.SpinURI;
 import build.spin.Task;
 import build.spin.annotation.SpecifiedBy;
 import build.spin.common.DefaultInvocable;
@@ -128,9 +128,17 @@ public class Invocables {
             project = project.parent().orElse(null);
         }
 
-        path = path + invocable.getTaskName();
+        // always qualify the task-name with its owning Plugin's name, since a Task is always defined
+        // by exactly one Plugin, and the same task-name (eg: "compile") is reused across different
+        // Plugins - but the Plugin's display name (see Engine#pluginDisplayName) is enough for that and
+        // reads far more cleanly than its fully-qualified name in the (near-universal) case where no
+        // other Plugin discovered for this invocation shares its simple name
+        final Class<? extends Plugin> pluginClass = invocable.getPlugin().getClass();
+        final String pluginName = invocable.getProject().engine().pluginDisplayName(pluginClass);
 
-        return UniformResource.createURI("task", UniformResource.sanitize(path));
+        path = path + pluginName + "." + invocable.getTaskName();
+
+        return SpinURI.create("task", path);
     }
 
     /**

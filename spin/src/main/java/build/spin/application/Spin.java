@@ -27,6 +27,7 @@ import build.base.foundation.Introspection;
 import build.base.option.JDKVersion;
 import build.base.option.WorkingDirectory;
 import build.base.table.Table;
+import build.base.telemetry.Telemetry;
 import build.spin.AssetCache;
 import build.spin.BackgroundProcessor;
 import build.spin.Daemon;
@@ -60,6 +61,9 @@ import java.io.InputStreamReader;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -73,7 +77,25 @@ import java.util.stream.Stream;
 
 public class Spin {
 
+    /**
+     * Formats a {@link build.base.telemetry.Telemetry#instant()} for the console: {@code Telemetry}'s
+     * own {@code toString()} (base.build) never prints one, so correlating interleaved output from
+     * concurrently-executing tasks -- e.g. "was this task actually graph-blocked, or just slow to get
+     * scheduled" -- otherwise requires reconstructing wall-clock order from relative durations by hand.
+     */
+    private static final DateTimeFormatter TELEMETRY_TIMESTAMP_FORMAT =
+        DateTimeFormatter.ofPattern("HH:mm:ss.SSS").withZone(ZoneId.systemDefault());
+
     private Spin() {
+    }
+
+    /**
+     * Prints a "[spin]" console message prefixed with the current time, formatted identically to
+     * {@link Telemetry} events, so pre-{@link Engine} bootstrap/discovery output (which predates the
+     * {@link Engine}'s own {@link Telemetry} stream) can still be correlated against it.
+     */
+    private static void log(final String format, final Object... args) {
+        System.err.print(TELEMETRY_TIMESTAMP_FORMAT.format(Instant.now()) + " [spin] " + String.format(format, args));
     }
 
     static void main(final String[] args) {
@@ -174,15 +196,15 @@ public class Spin {
         options.compute(JDKVersion.class, existing -> existing != null ? existing : JDKVersion.current());
         options.compute(OperatingSystem.class, existing -> existing != null ? existing : OperatingSystem.detect());
         options.compute(EngineVersion.class, existing -> existing != null ? existing : EngineVersion.autodetect());
-        System.err.printf("[spin] Engine Version: %s\n", options.get(EngineVersion.class));
-        System.err.printf("[spin] Operating System: %s\n", options.get(OperatingSystem.class));
-        System.err.printf("[spin] Java Version: %s\n", JDKVersion.current());
-        System.err.printf("[spin] Server Port: %s\n", options.get(ServerPort.class));
+        log("Engine Version: %s\n", options.get(EngineVersion.class));
+        log("Operating System: %s\n", options.get(OperatingSystem.class));
+        log("Java Version: %s\n", JDKVersion.current());
+        log("Server Port: %s\n", options.get(ServerPort.class));
         System.err.println();
 
         final FileSystem fileSystem = FileSystems.getDefault();
         final Path userPath = fileSystem.getPath(System.getProperty("user.dir"));
-        System.err.printf("[spin] Current Folder: %s\n", userPath);
+        log("Current Folder: %s\n", userPath);
 
         Optional.ofNullable(options.getWithoutDefault(WorkingDirectory.class))
             .map(directory -> userPath.resolve(fileSystem.getPath(directory.get())))
@@ -191,7 +213,7 @@ public class Spin {
 
         final Table table = Table.create();
         options.stream().forEach(option -> table.addRow(option.getClass().getSimpleName(), option.toString()));
-        System.err.printf("[spin] Bootstrap Options:\n%s\n", table);
+        log("Bootstrap Options:\n%s\n", table);
 
         return new DefaultEngine(
             Thread.currentThread().getContextClassLoader(),
@@ -199,7 +221,10 @@ public class Spin {
             options.build(),
             Optional.of(parser),
             Optional.ofNullable(args),
-            Optional.of(observable -> observable.subscribe(event -> System.err.printf("%s\n", event))));
+            Optional.of(observable -> observable.subscribe(event -> {
+                final Telemetry telemetry = (Telemetry) event;
+                System.err.printf("%s %s\n", TELEMETRY_TIMESTAMP_FORMAT.format(telemetry.instant()), telemetry);
+            })));
     }
 
     private record ParseResult(CommandLineParser parser, LinkedHashSet<String> tasks) {
@@ -215,7 +240,7 @@ public class Spin {
             .toAbsolutePath()
             .resolve(engine.options().get(WorkingDirectory.class).get());
 
-        System.err.printf("[spin] Discovering Workspace for Project in [%s]\n", path);
+        log("Discovering Workspace for Project in [%s]\n", path);
 
         final Workspace workspace = engine.createWorkspace(path)
             .orElseThrow(() -> new RuntimeException("Failed to discover workspace containing " + path));
@@ -224,12 +249,12 @@ public class Spin {
             .orElseThrow(() -> new IllegalStateException(
                 "No project found in workspace [" + workspace.path() + "] at path [" + path + "]"));
 
-        System.err.printf("[spin] Detected Project [%s] at [%s]\n", project.name(), project.path());
-        System.err.printf("[spin] (Within Workspace [%s] at [%s])\n", workspace.name(), workspace.path());
+        log("Detected Project [%s] at [%s]\n", project.name(), project.path());
+        log("(Within Workspace [%s] at [%s])\n", workspace.name(), workspace.path());
 
         final StringBuilder builder = new StringBuilder(4096);
         workspace.treeify(builder, "", "", p -> p.name() + (p == project ? " *" : ""));
-        System.err.printf("[spin] Workspace Structure:\n%s\n", builder);
+        log("Workspace Structure:\n%s\n", builder);
 
         final var availableTasks = workspace.stream()
             .flatMap(Project::invocables)
@@ -237,14 +262,14 @@ public class Spin {
             .distinct()
             .sorted()
             .toList();
-        System.err.printf("[spin] Available Tasks: %s\n", availableTasks);
+        log("Available Tasks: %s\n", availableTasks);
 
         return new Discovery(workspace, project);
     }
 
     private static void runServerMode(final Engine engine, final Workspace workspace) {
 
-        System.err.printf("[spin] Starting in Server Mode...\n");
+        log("Starting in Server Mode...\n");
 
         final LinkedHashSet<BackgroundProcessor> processors = new LinkedHashSet<>();
         engine.services(BackgroundProcessor.class).forEach(processors::add);
@@ -260,15 +285,15 @@ public class Spin {
         final CompletableFuture<Integer> terminationFuture = new CompletableFuture<>();
 
         final Consumer<? super BackgroundProcessor> start = processor -> {
-            final var processorName = Introspection.describe(processor.getClass());
-            System.err.printf("[spin] Starting: [%s]\n", processorName);
+            final var processorName = Introspection.describe(processor.getClass()).replace('$', '.');
+            log("Starting: [%s]\n", processorName);
 
             final var exceptional = processor.start();
 
             if (exceptional.isEmpty()) {
                 // didn't start the processor... that's ok!
             } else if (exceptional.isException()) {
-                System.err.printf("[spin] Starting Failed (exceptionally): [%s]\n", processorName);
+                log("Starting Failed (exceptionally): [%s]\n", processorName);
                 exceptional.exception().get().printStackTrace(System.err);
             } else {
                 final var future = exceptional.orElseThrow(
@@ -277,15 +302,15 @@ public class Spin {
                 futures.put(future, processor);
 
                 if (!future.isDone()) {
-                    System.err.printf("[spin] Started: [%s]\n", processorName);
+                    log("Started: [%s]\n", processorName);
                 }
 
                 future.whenComplete((statusCode, throwable) -> {
                     if (throwable == null) {
-                        System.err.printf("[spin] Terminated: [%s] (%d)\n", processorName, statusCode);
+                        log("Terminated: [%s] (%d)\n", processorName, statusCode);
                         terminationFuture.complete(statusCode);
                     } else {
-                        System.err.printf("[spin] Terminated (exceptionally): [%s]\n", processorName);
+                        log("Terminated (exceptionally): [%s]\n", processorName);
                         throwable.printStackTrace(System.err);
                         terminationFuture.completeExceptionally(throwable);
                     }
@@ -296,7 +321,7 @@ public class Spin {
         processors.forEach(start);
 
         if (futures.isEmpty()) {
-            System.err.printf("[spin] No Background Processors (Servers or Daemons) Discovered or Started.\n");
+            log("No Background Processors (Servers or Daemons) Discovered or Started.\n");
             System.exit(-1);
         }
 
@@ -308,7 +333,7 @@ public class Spin {
             engine.close();
             System.exit(terminationFuture.get());
         } catch (final Exception e) {
-            System.err.printf("[spin] Unexpected Spin Termination Failure\n");
+            log("Unexpected Spin Termination Failure\n");
             e.printStackTrace(System.err);
             System.exit(-1);
         }
@@ -321,7 +346,7 @@ public class Spin {
                                      final LinkedHashSet<String> tasks) {
 
         if (tasks.isEmpty()) {
-            System.err.printf("[spin] No tasks specified.\n");
+            log("No tasks specified.\n");
             workspace.close();
             System.exit(0);
         }
@@ -340,14 +365,14 @@ public class Spin {
                     .forEach(invocable -> cache.get(invocable.getReference())
                         .ifPresent(result -> shared.putIfAbsent(invocable, result)));
             } catch (final ProgramExecutionException e) {
-                System.err.printf("[spin] Program Execution Failed\n");
+                log("Program Execution Failed\n");
                 e.printStackTrace(System.err);
                 System.exit(-1);
             }
         });
 
         workspace.close();
-        System.err.printf("[spin] Program Execution Completed\n");
+        log("Program Execution Completed\n");
         System.exit(0);
     }
 

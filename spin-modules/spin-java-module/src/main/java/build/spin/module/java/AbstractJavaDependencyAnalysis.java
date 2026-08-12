@@ -276,7 +276,7 @@ public abstract class AbstractJavaDependencyAnalysis
                                     requiredModules.add(r.name());
                                 })
                                 .filter(r -> shouldProcess(r.name(), r.version(), processed))
-                                .peek(r -> this.recorder.info("[jdeps] Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.moduleName().toString(), r))
+                                .peek(r -> this.recorder.info("Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.moduleName().toString(), r))
                                 .forEach(pending::push);
 
                             return reference;
@@ -287,7 +287,7 @@ public abstract class AbstractJavaDependencyAnalysis
                                 final String reason = resolvedDescriptor.exception()
                                     .map(e -> ": " + e.getClass().getSimpleName() + ": " + e.getMessage())
                                     .orElse("");
-                                this.recorder.info("[jdeps] Ignoring module [%s] — no ModuleDescriptor available%s", reference, reason);
+                                this.recorder.info("Ignoring module [%s] — no ModuleDescriptor available%s", reference, reason);
                             } else {
                                 // no module-info.class and no Automatic-Module-Name: genuinely unnamed jar
                                 unnamedArtifactDescriptors.put(artifact, artifactDescriptor);
