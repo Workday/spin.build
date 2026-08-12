@@ -16,7 +16,7 @@ import static org.mockito.Mockito.when;
 class ReferenceTests {
 
     /**
-     * Verifies that {@link Reference#equals(Object)} does not throw a {@link NullPointerException}
+     * Verifies that {@code equals(Object)} does not throw a {@link NullPointerException}
      * when {@link Reference#getPluginClass()} returns {@code null} (i.e. the task is not a static
      * inner class of a {@link Plugin}).
      */
@@ -108,7 +108,7 @@ class ReferenceTests {
     }
 
     /**
-     * Verifies that {@link Reference#toString()} renders as {@code project/PluginDisplayName.Task},
+     * Verifies that {@code toString()} renders as {@code project/PluginDisplayName.Task},
      * deferring to {@link Engine#pluginDisplayName} for the declaring {@link Plugin}'s portion of the
      * name rather than ever using the {@code $}-separated nested-class {@link Class#getName()}.
      */
