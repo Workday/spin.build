@@ -51,6 +51,7 @@ import build.spin.option.EngineVersion;
 import build.spin.option.JlinkTargets;
 import build.spin.option.NetworkAccess;
 import build.spin.option.OperatingSystem;
+import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.option.ServerMode;
 import build.spin.option.ServerPort;
 import build.spin.option.Verbose;
@@ -169,6 +170,7 @@ public class Spin {
             .option(ServerMode.class)
             .option(ServerPort.class)
             .option(JlinkTargets.class)
+            .option(ReuseExternalBuildOutput.class)
             .build();
 
         aliases.forEach(parser::registerCategory);

@@ -35,6 +35,7 @@ import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractDetectResolution;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.java.Java8CompilerPlugin;
+import build.spin.module.java.JavaCompilerPlugin;
 import build.spin.module.java.JavaPlatform;
 import build.spin.module.junit.Java25JUnitPlugin;
 import build.spin.module.junit.Java8JUnitPlugin;
@@ -51,6 +52,7 @@ import build.spin.module.modulesystem.PomBasedModuleVersioning;
 import build.spin.module.modulesystem.PomBasedTestModuleDescriptor;
 import build.spin.module.modulesystem.TestModuleDescriptor;
 import build.spin.option.JlinkTargets;
+import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.testing.RequireJavaVersion;
 import build.spin.testing.WorkspaceDiscovery;
 import build.spin.testing.WorkspacePath;
@@ -197,30 +199,52 @@ public class JavaProjectTests {
 
     @Test
     @WorkspacePath("maven-built-main")
+    @RequireJavaVersion("25")
     void shouldIncludeMavenBuiltMainOutputInTestResolution(final Engine engine, final Workspace workspace)
         throws Exception {
 
-        // Simulates a project already compiled by `mvn compile` directly -- never by spin: a
+        // Simulates a project already compiled by `mvn compile` directly -- never (yet) by spin: a
         // target/classes directory exists on disk before spin has run at all, while spin's own
         // .build directory does not exist yet. additionalSiblingCandidates() must find this via
         // the same spin/Maven/Gradle-aware lookup used for sibling-project candidates
         // (resolveCompiledOutput), not the previously-hardcoded .build/main/<target> convention,
         // which never exists for a project like this one.
-        // marker is deliberately not named *.class: this workspace lives under target/test-classes
-        // (see @WorkspacePath), and maven-dependency-plugin's analyze-only goal bytecode-scans every
-        // .class file it finds there, including ones tests write at runtime -- a genuinely empty
-        // placeholder .class file isn't valid bytecode and fails that scan.
+        deleteRecursively(workspace.path().resolve("target"));
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        // pre-build for real, once, via spin, to get genuine bytecode -- AbstractDetectResolution#dependencies
+        // now forces this project's own main Compile task to run before test resolution (see
+        // shouldForceOwnMainCompileBeforeTestResolution), and AbstractCompile#compile only ever reuses a
+        // candidate that actually contains compiled classes, so the Maven candidate below needs to be
+        // real bytecode rather than a placeholder marker file (marker is deliberately not named *.class
+        // elsewhere in this class for the same maven-dependency-plugin bytecode-scan reason noted on
+        // shouldReuseAlreadyBuiltMavenOutputWithoutInvokingJavac -- that constraint doesn't apply here
+        // since this candidate is genuine bytecode, not a stand-in)
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        final Path spinOutput = workspace.path().resolve(".build/main/target");
+        assertThat(spinOutput.resolve("Foo.class"))
+            .as("sanity check: expected the pre-build step to have actually compiled [Foo]")
+            .exists();
+
+        // relocate that output to the Maven convention (target/classes) and remove spin's own
+        // .build directory, simulating "already built by Maven, never (yet) built by spin"
         final Path mavenClasses = workspace.path().resolve("target/classes");
         Files.createDirectories(mavenClasses);
-        Files.createFile(mavenClasses.resolve("Foo.marker"));
+        copyDirectoryContents(spinOutput, mavenClasses);
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        assertThat(workspace.path().resolve(".build")).doesNotExist();
 
         assertThat(workspace.getPlugin(Java25JUnitPlugin.class)).isPresent();
 
-        // run only the test-resolution task -- not the whole test-compile chain -- so this
-        // project's own main Java compiler task never runs and .build/main/<target> is
-        // guaranteed to not exist, deterministically modelling "already built by Maven, never
-        // built by spin" rather than relying on scheduler ordering within a single invocation
-        final Program program = engine.createProgram(workspace, Task.Pattern.of("detect.test.compilation.resolution"));
+        // requesting only the test-resolution task now also forces this project's own main Compile
+        // task (see shouldForceOwnMainCompileBeforeTestResolution) -- Maven's target/classes is
+        // already up to date with Foo.java (just written, strictly newer than the checked-out source
+        // file), so AbstractCompile's own freshness short-circuit reuses it directly rather than
+        // writing a fresh .build/main/target
+        final Program program = engine.createProgram(workspace,
+            Task.Pattern.of("detect.test.compilation.resolution"), ReuseExternalBuildOutput.ENABLED);
         final AssetCache cache = DefaultAssetCache.create();
 
         final AssetCache results = program.execute(cache);
@@ -233,6 +257,223 @@ public class JavaProjectTests {
         assertThat(Stream.concat(resolution.modulePath().stream(), resolution.classPath().stream()))
             .as("expected the Maven-built target/classes output to be a resolution candidate")
             .contains(mavenClasses);
+
+        assertThat(workspace.path().resolve(".build/main/target"))
+            .as("expected AbstractCompile to have reused Maven's target/classes directly rather than "
+                + "writing a fresh .build/main/target")
+            .doesNotExist();
+    }
+
+    @Test
+    @WorkspacePath("maven-built-main")
+    @RequireJavaVersion("25")
+    void shouldReuseAlreadyBuiltMavenOutputWithoutInvokingJavac(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // The exact scenario docs/spin-build-issues.md's "spin1-build-spin2" write-up settles on as
+        // the fix: AbstractCompile.compile() must itself detect an already-valid Maven target/classes
+        // and skip invoking javac entirely, rather than relying on a graph-level "should I force this
+        // sibling" decision that a concurrently-running AbstractDetectResolution can observe mid-write
+        // (a TOCTOU race). This locks in the compile-task-level guard directly, distinct from
+        // shouldNotRecompileAnAlreadyBuiltWorkspaceSibling below, which only locks in the graph-edge
+        // guard that decides whether to force a *sibling's* Compile task.
+        deleteRecursively(workspace.path().resolve("target"));
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        // pre-build for real, once, via spin, to get genuine bytecode -- an empty placeholder .class
+        // file isn't valid bytecode and fails maven-dependency-plugin's analyze-only bytecode scan of
+        // this fixture once it's copied under this module's own target/test-classes (see the
+        // "marker is deliberately not named *.class" note on shouldIncludeMavenBuiltMainOutputInTestResolution)
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        final Path spinOutput = workspace.path().resolve(".build/main/target");
+        assertThat(spinOutput.resolve("Foo.class"))
+            .as("sanity check: expected the pre-build step to have actually compiled [Foo]")
+            .exists();
+
+        // relocate that output to the Maven convention (target/classes) and remove spin's own
+        // .build directory, simulating "already built by Maven, never (yet) built by spin"
+        final Path mavenClasses = workspace.path().resolve("target/classes");
+        Files.createDirectories(mavenClasses);
+        copyDirectoryContents(spinOutput, mavenClasses);
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        assertThat(workspace.path().resolve(".build")).doesNotExist();
+
+        // compile again, from a fresh cache -- Maven's target/classes is already up to date with
+        // Foo.java (just written, strictly newer than the checked-out source file). Reuse of external
+        // build output is opt-in (see ReuseExternalBuildOutput) — this test is specifically exercising
+        // that opted-in path.
+        final AssetCache results = engine.createProgram(
+                workspace, Task.Pattern.of("compile"), ReuseExternalBuildOutput.ENABLED)
+            .execute(DefaultAssetCache.create());
+
+        assertThat(workspace.path().resolve(".build/arguments-25"))
+            .as("expected AbstractCompile to skip invoking javac entirely -- javac's arguments file "
+                + "is only ever written immediately before launching the javac process")
+            .doesNotExist();
+
+        final var compiledOutput = results.get(workspace, JavaCompilerPlugin.Compile.class)
+            .map(Asset::get)
+            .orElseThrow(() -> new AssertionError("Expected a Compile PathSet asset for [" + workspace + "]"));
+
+        assertThat(compiledOutput.stream())
+            .as("expected Compile to have returned Maven's target/classes directly, rather than a "
+                + "freshly (re)compiled .build/main/target")
+            .containsExactly(mavenClasses);
+    }
+
+    @Test
+    @WorkspacePath("maven-built-main")
+    @RequireJavaVersion("25")
+    void shouldRecompileWhenReusableMavenOutputIsStale(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // Companion to shouldReuseAlreadyBuiltMavenOutputWithoutInvokingJavac above -- that test locks
+        // in the "reuse" side of AbstractCompile's freshness check (AbstractDetectResolution.isUpToDate);
+        // this locks in the other side, that a genuinely stale candidate is rejected and javac still runs.
+        deleteRecursively(workspace.path().resolve("target"));
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        // pre-build for real, once, via spin, to get genuine bytecode -- an empty placeholder .class
+        // file isn't valid bytecode and fails maven-dependency-plugin's analyze-only bytecode scan of
+        // this fixture once it's copied under this module's own target/test-classes (see the
+        // "marker is deliberately not named *.class" note on shouldIncludeMavenBuiltMainOutputInTestResolution)
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        final Path spinPrebuildOutput = workspace.path().resolve(".build/main/target");
+        assertThat(spinPrebuildOutput.resolve("Foo.class"))
+            .as("sanity check: expected the pre-build step to have actually compiled [Foo]")
+            .exists();
+
+        // relocate that genuine bytecode to the Maven convention (target/classes), remove spin's own
+        // .build directory, and back-date it well before Foo.java's on-disk mtime -- simulating
+        // "already built by Maven, but from a version of Foo.java older than what's checked out now"
+        final Path mavenClasses = workspace.path().resolve("target/classes");
+        Files.createDirectories(mavenClasses);
+        copyDirectoryContents(spinPrebuildOutput, mavenClasses);
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        final var staleTime = java.nio.file.attribute.FileTime.fromMillis(1);
+        try (Stream<Path> walk = Files.walk(mavenClasses)) {
+            for (final Path p : (Iterable<Path>) walk::iterator) {
+                Files.setLastModifiedTime(p, staleTime);
+            }
+        }
+
+        final AssetCache results = engine.createProgram(
+                workspace, Task.Pattern.of("compile"), ReuseExternalBuildOutput.ENABLED)
+            .execute(DefaultAssetCache.create());
+
+        assertThat(workspace.path().resolve(".build/arguments-25"))
+            .as("expected AbstractCompile to have invoked javac -- the stale Maven candidate must not "
+                + "have short-circuited compilation")
+            .exists();
+
+        final Path spinOutput = workspace.path().resolve(".build/main/target");
+        assertThat(spinOutput.resolve("Foo.class"))
+            .as("expected a freshly compiled Foo.class under spin's own output")
+            .exists();
+
+        final var compiledOutput = results.get(workspace, JavaCompilerPlugin.Compile.class)
+            .map(Asset::get)
+            .orElseThrow(() -> new AssertionError("Expected a Compile PathSet asset for [" + workspace + "]"));
+
+        assertThat(compiledOutput.stream())
+            .as("expected Compile to have returned its own freshly (re)compiled output, not the stale "
+                + "Maven candidate")
+            .containsExactly(spinOutput);
+    }
+
+    @Test
+    @WorkspacePath("maven-built-main")
+    @RequireJavaVersion("25")
+    void shouldSkipRecompileOfItsOwnUpToDateOutputEvenWithReuseDisabled(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // AbstractCompile's freshness short-circuit isn't gated by ReuseExternalBuildOutput -- that
+        // option only controls whether Maven/Gradle output is a *candidate* at all (see
+        // AbstractDetectResolution.resolveCompiledOutput); spin's own prior .build output is always a
+        // candidate, reuse enabled or not. This locks in that a second compile against an already
+        // up-to-date spin output skips javac even with reuse left at its DISABLED default.
+        deleteRecursively(workspace.path().resolve("target"));
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        engine.createProgram(workspace, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+
+        final Path spinOutput = workspace.path().resolve(".build/main/target");
+        assertThat(spinOutput.resolve("Foo.class"))
+            .as("sanity check: expected the pre-build step to have actually compiled [Foo]")
+            .exists();
+
+        final Path argumentsFile = workspace.path().resolve(".build/arguments-25");
+        assertThat(argumentsFile)
+            .as("sanity check: expected the pre-build step to have invoked javac")
+            .exists();
+        Files.delete(argumentsFile);
+
+        // compile again, from a fresh cache, with ReuseExternalBuildOutput left at its DISABLED default
+        final AssetCache results = engine.createProgram(workspace, Task.Pattern.of("compile"))
+            .execute(DefaultAssetCache.create());
+
+        assertThat(argumentsFile)
+            .as("expected AbstractCompile to skip invoking javac entirely on the second compile -- "
+                + "javac's arguments file is only ever written immediately before launching the javac "
+                + "process, and this test deleted it after the pre-build step specifically to detect a "
+                + "second invocation")
+            .doesNotExist();
+
+        final var compiledOutput = results.get(workspace, JavaCompilerPlugin.Compile.class)
+            .map(Asset::get)
+            .orElseThrow(() -> new AssertionError("Expected a Compile PathSet asset for [" + workspace + "]"));
+
+        assertThat(compiledOutput.stream())
+            .as("expected Compile to have returned its already-built .build/main/target directly")
+            .containsExactly(spinOutput);
+    }
+
+    @Test
+    @WorkspacePath("maven-built-main")
+    @RequireJavaVersion("25")
+    void shouldCompileTestsAgainstOwnMainOutputEvenWhenTestResolutionRanBeforeMainCompile(
+            final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // AbstractDetectResolution#create's "this project's own main output" seed for TEST-scope
+        // resolution is deliberately best-effort (see the comment there) -- dependencies() does NOT
+        // force this project's own main Compile task, so detect-test-resolution can race it and finish
+        // first, computing (and caching, since CompilationResolution is an AssetCache-cached asset) a
+        // resolution that genuinely lacks the project's own main output. This test reproduces that
+        // outcome deterministically -- by running detect-test-resolution alone, before main has ever
+        // been compiled -- rather than relying on timing, then proves test-compile still succeeds
+        // (FooTest.java references Foo, a main class) against the SAME stale cached resolution,
+        // because Java25JUnitPlugin.Compile injects its own project's main output directly (see
+        // @From(Java25CompilerPlugin.Compile.class) Optional<PathSet>) rather than trusting
+        // DetectTestResolution's snapshot alone.
+        deleteRecursively(workspace.path().resolve("target"));
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        final AssetCache afterResolution = engine.createProgram(
+                workspace, Task.Pattern.of("detect.test.compilation.resolution"))
+            .execute(DefaultAssetCache.create());
+
+        final CompilationResolution staleResolution = afterResolution.get(workspace, AbstractDetectResolution.class)
+            .map(Asset::get)
+            .orElseThrow(() -> new AssertionError("Expected a CompilationResolution asset for [" + workspace + "]"));
+
+        assertThat(Stream.concat(staleResolution.modulePath().stream(), staleResolution.classPath().stream()))
+            .as("sanity check: expected the stale resolution to genuinely lack the project's own "
+                + "(not yet built) main output, reproducing the race this test guards against")
+            .noneMatch(p -> p.toString().contains(".build/main"));
+
+        // reusing the cache populated above -- so the stale CompilationResolution is what gets reused --
+        // request test-compile; it must still succeed despite that stale/incomplete cached resolution
+        engine.createProgram(workspace, Task.Pattern.of("test-compile")).execute(afterResolution);
+
+        assertThat(workspace.path().resolve(".build/test/target/FooTest.class"))
+            .as("expected FooTest.java (referencing Foo) to have compiled successfully despite the "
+                + "stale cached resolution")
+            .exists();
     }
 
     @Test
@@ -277,8 +518,11 @@ public class JavaProjectTests {
         assertThat(libraryProject.path().resolve(".build")).doesNotExist();
 
         // now compile "consumer" only, with a fresh (empty) cache -- library's already-built output
-        // at target/classes should be enough to satisfy the requires clause without spin recompiling it
-        engine.createProgram(consumerProject, Task.Pattern.of("compile")).execute(DefaultAssetCache.create());
+        // at target/classes should be enough to satisfy the requires clause without spin recompiling it.
+        // Reuse of external build output is opt-in (see ReuseExternalBuildOutput) — this test is
+        // specifically exercising that opted-in path.
+        engine.createProgram(consumerProject, Task.Pattern.of("compile"), ReuseExternalBuildOutput.ENABLED)
+            .execute(DefaultAssetCache.create());
 
         assertThat(consumerProject.path().resolve(".build/main/target/com/example/consumer/Consumer.class"))
             .as("expected [consumer] to have actually compiled")

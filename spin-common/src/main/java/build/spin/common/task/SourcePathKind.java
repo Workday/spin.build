@@ -154,7 +154,7 @@ public enum SourcePathKind {
     static PathSet detectGenerated(final Path projectPath, final String buildDirectoryName) {
         final PathSetBuilder builder = PathSetBuilder.create();
 
-        final boolean usedSpin = BuildOutputLocations.spin(projectPath, buildDirectoryName, "generated-sources")
+        final boolean usedSpin = BuildOutputLocations.spin(projectPath, buildDirectoryName, "generated-sources", MAIN)
             .map(p -> {
                 builder.add(p);
                 return true;
@@ -180,7 +180,7 @@ public enum SourcePathKind {
         // full (see detectGenerated above), so falling back to Maven's generated-sources here too would
         // source the same external-tool output (e.g. .jt templates) from two different roots and
         // produce "duplicate class" errors.
-        final boolean usedSpin = BuildOutputLocations.spin(projectPath, buildDirectoryName, "generated-sources")
+        final boolean usedSpin = BuildOutputLocations.spin(projectPath, buildDirectoryName, "generated-sources", MAIN)
             .isPresent();
 
         if (!usedSpin) {
