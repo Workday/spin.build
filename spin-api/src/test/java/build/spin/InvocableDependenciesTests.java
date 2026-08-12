@@ -81,6 +81,13 @@ class InvocableDependenciesTests {
         }
     }
 
+    private static class VoidTaskWithConcreteStreamFromDependency
+        implements Task {
+
+        public void run(final @From(SourceTask.class) Stream<Path> inputs) {
+        }
+    }
+
     private static Invocable<?> invocableFor(final Class<?> taskClass, final Project project) {
         return new Invocable<>() {
             @Override
@@ -279,5 +286,29 @@ class InvocableDependenciesTests {
                 + "abstract/interface Task must resolve to every matching concrete Task in the "
                 + "Project, not an empty Stream")
             .containsExactly(ConcreteAbstractSourceTask.class);
+    }
+
+    @Test
+    void toleratesAConcreteStreamFromTaskThatDoesNotExistInTheProject() {
+        final Project project = projectWithInvocables(Stream.empty());
+        final Invocable<?> invocable = invocableFor(VoidTaskWithConcreteStreamFromDependency.class, project);
+
+        assertThat(dependencies(invocable))
+            .as("mirrors ResourcePlugin.DetectModuleResourcePaths: a concrete Task declared as a "
+                + "Stream<T> @From dependency only exists in some Projects (e.g. ones with a resources "
+                + "directory), so it must resolve against the Project's actual Invocables and tolerate "
+                + "zero matches, rather than always producing a Reference to a Task that may not exist "
+                + "in this Project")
+            .isEmpty();
+    }
+
+    @Test
+    void resolvesAConcreteStreamFromTaskAgainstTheProjectWhenItIsPresent() {
+        final Invocable<?> sourceInvocable = invocableFor(SourceTask.class, projectWithInvocables(Stream.empty()));
+        final Project project = projectWithInvocables(Stream.of(sourceInvocable));
+        final Invocable<?> invocable = invocableFor(VoidTaskWithConcreteStreamFromDependency.class, project);
+
+        assertThat(dependencies(invocable))
+            .containsExactly(SourceTask.class);
     }
 }

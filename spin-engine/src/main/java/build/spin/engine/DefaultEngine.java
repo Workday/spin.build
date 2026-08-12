@@ -28,7 +28,6 @@ import build.base.flow.Publisher;
 import build.base.flow.Subscriber;
 import build.base.flow.SubscriberRegistry;
 import build.base.foundation.Introspection;
-import build.base.foundation.UniformResource;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
@@ -57,6 +56,7 @@ import build.spin.Program;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Service;
+import build.spin.SpinURI;
 import build.spin.Workspace;
 import build.spin.annotation.Bootstrap;
 import build.spin.common.DefaultProgram;
@@ -73,10 +73,13 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -152,6 +155,12 @@ public final class DefaultEngine implements Engine {
     private final LinkedHashMap<Class<? extends Service>, Service> services;
 
     /**
+     * The simple names shared by more than one distinct {@link Plugin} {@link Class} discovered by this
+     * {@link Engine} - see {@link #pluginDisplayName(Class)}.
+     */
+    private final Set<String> ambiguousPluginSimpleNames;
+
+    /**
      * Constructs a new {@link Engine} with the specified {@link FileSystem} for {@link Project} discovery,
      * {@link ServiceLoader.Provider}s for {@link Extension.MetaClass}s, and {@link Configuration} to provide bootstrap
      * {@link Option}s.
@@ -186,7 +195,7 @@ public final class DefaultEngine implements Engine {
         this.arguments = commandLineArguments == null ? EMPTY : commandLineArguments.orElse(EMPTY);
 
         // establish TelemetryRecorder
-        final URI uri = UniformResource.createURI("engine", this);
+        final URI uri = SpinURI.create("engine", this.getClass().getSimpleName());
         this.observers = new SubscriberRegistry<>();
         this.recorder = new TelemetryPublisher(uri, this::publish);
 
@@ -254,6 +263,16 @@ public final class DefaultEngine implements Engine {
             .filter(provider -> !Service.MetaClass.class.isAssignableFrom(provider.type()))
             .forEach(provider -> createExtensionMetaClass(provider.type(), this.context));
 
+        // determine, once, the simple names shared by more than one distinct Plugin discovered for this
+        // invocation - see pluginDisplayName()
+        this.ambiguousPluginSimpleNames = metaClasses(Plugin.MetaClass.class)
+            .map(Plugin.MetaClass::getExtensionClass)
+            .collect(Collectors.groupingBy(Class::getSimpleName, Collectors.counting()))
+            .entrySet().stream()
+            .filter(entry -> entry.getValue() > 1)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toUnmodifiableSet());
+
         // configure the provided CommandLineParse to include the
         // Extension.MetaClass command-line
         // options
@@ -277,8 +296,7 @@ public final class DefaultEngine implements Engine {
         final Class<T> extensionMetaClassClass,
         final Context context) {
 
-        final URI classUri = UniformResource.createURI("class",
-            UniformResource.sanitize(Introspection.describe(extensionMetaClassClass)));
+        final URI classUri = SpinURI.create("class", extensionMetaClassClass.getSimpleName());
 
         final Context metaClassContext = context.newContext();
         metaClassContext.bind(TelemetryRecorder.class).to(new TelemetryPublisher(classUri, this::publish));
@@ -296,7 +314,7 @@ public final class DefaultEngine implements Engine {
 
         this.recorder.diagnostic("Detected %s %s",
             metaClass.scheme(),
-            Introspection.describe(metaClass.getExtensionClass()));
+            Introspection.describe(metaClass.getExtensionClass()).replace('$', '.'));
 
         return metaClass;
     }
@@ -315,7 +333,7 @@ public final class DefaultEngine implements Engine {
         final Context extensionContext = metaClassContext.newContext();
         extensionContext.bind((Class<Extension.MetaClass>) metaClass.getClass()).to(metaClass);
         extensionContext.bind(TelemetryRecorder.class).to(new TelemetryPublisher(
-            UniformResource.createURI(metaClass.scheme(), Introspection.describe(metaClass.getExtensionClass())),
+            SpinURI.create(metaClass.scheme(), metaClass.getExtensionClass().getSimpleName()),
             this::publish));
         extensionContext.bind(Context.class).to(extensionContext);
 
@@ -377,6 +395,13 @@ public final class DefaultEngine implements Engine {
     }
 
     @Override
+    public String pluginDisplayName(final Class<? extends Plugin> pluginClass) {
+        return this.ambiguousPluginSimpleNames.contains(pluginClass.getSimpleName())
+            ? pluginClass.getName()
+            : pluginClass.getSimpleName();
+    }
+
+    @Override
     public Optional<Path> getWorkspacePath(final Path path) {
 
         Path workspacePath = null;
@@ -392,7 +417,8 @@ public final class DefaultEngine implements Engine {
             // (terminate early when the Workspace is detected)
             if (metaClasses(Resource.MetaClass.class)
                 .filter(metaClass -> metaClass.isWorkspace(detectionPath)).peek(
-                    metaClass -> this.recorder.diagnostic("%s detected Workspace at %s", metaClass,
+                    metaClass -> this.recorder.diagnostic("%s detected Workspace at %s",
+                        Introspection.describe(metaClass.getClass()).replace('$', '.'),
                         detectionPath))
                 .findFirst().isPresent()) {
 

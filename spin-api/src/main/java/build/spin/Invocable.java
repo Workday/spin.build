@@ -226,23 +226,24 @@ public interface Invocable<T> {
                     .flatMap(parameter -> {
                         final From from = parameter.getDeclaredAnnotation(From.class);
 
-                        // determine if the Task requires a result from a concrete class or a Stream of results
-                        // from an abstract Task
                         final Class<? extends Task<?>> fromTaskClass = from.value();
+                        final boolean abstractFromClass =
+                            fromTaskClass.isInterface() || Modifier.isAbstract(fromTaskClass.getModifiers());
 
-                        if (fromTaskClass.isInterface() || Modifier.isAbstract(fromTaskClass.getModifiers())) {
-                            // ensure the parameter type for injection is a Stream — unless the Task
-                            // is annotated @Merge, in which case a plain result type is also allowed:
-                            // every matching implementor still becomes a dependency edge here, but the
-                            // framework combines their results via the Task's own merge(Stream<T>)
-                            // method before injection, rather than requiring the caller to do so
-                            if (Stream.class.isAssignableFrom(parameter.getType())
-                                || fromTaskClass.isAnnotationPresent(Merge.class)) {
+                        // a Stream<T> parameter (or a @Merge-annotated Task) tolerates zero matching
+                        // Invocables in the Project - eg: ResourcePlugin.DetectModuleResourcePaths is a
+                        // concrete Task that only exists for Projects with a resources directory - so
+                        // resolve it against the Project's actual Invocables rather than unconditionally
+                        // pointing at a Task that may not exist here, regardless of whether the declared
+                        // @From Task itself is abstract or concrete
+                        if (Stream.class.isAssignableFrom(parameter.getType())
+                            || fromTaskClass.isAnnotationPresent(Merge.class)) {
 
-                                return getProject().getInvocables(fromTaskClass)
-                                    .map(Invocable::getReference);
-                            }
+                            return getProject().getInvocables(fromTaskClass)
+                                .map(Invocable::getReference);
+                        }
 
+                        if (abstractFromClass) {
                             // as we're using an abstract class, the parameter to be injected must be a
                             // Stream, unless the Task is annotated @Merge
                             throw new IllegalArgumentException("The @From parameter [" + describe(parameter) + "] "

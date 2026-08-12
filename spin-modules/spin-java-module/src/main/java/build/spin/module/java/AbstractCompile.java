@@ -215,7 +215,7 @@ public abstract class AbstractCompile
         }
 
         if (effectiveSourceCode.isEmpty()) {
-            this.recorder.diagnostic("Skipping compile for [%s]: no source files", this.project.path());
+            this.recorder.diagnostic("Skipping compile: no source files");
             return emptySourceResult(targetPath);
         }
 
@@ -232,7 +232,7 @@ public abstract class AbstractCompile
             .orElse(ModuleVersioning.DEFAULT_VERSION);
 
         final Activity compilation = this.recorder
-            .commence("Compiling %d file(s) for [%s] as [%s] ", effectiveSourceCode.size(), this.project.path(), version);
+            .commence("Compiling %d file(s) as [%s]", effectiveSourceCode.size(), version);
 
         // determine the target location for the compiles classes based on the JDKVersion
         final Path target;
@@ -348,7 +348,8 @@ public abstract class AbstractCompile
 
             // lastly include the source code to compile
             effectiveSourceCode.stream()
-                .peek(path -> this.recorder.diagnostic("Preparing [%s] for compilation", path))
+                .peek(path -> this.recorder.diagnostic(
+                    "Preparing [%s] for compilation", this.project.path().relativize(path)))
                 .forEach(writer::println);
         }
 
@@ -379,10 +380,10 @@ public abstract class AbstractCompile
             .with(string -> string.startsWith(compilingPrefix), string -> {
                 if (checkingCount.getAndIncrement() == 0) {
                     parsing.ifPresent(Activity::complete);
-                    compiling.set(this.recorder.commence(parseCount.get(), "Compiling"));
+                    compiling.set(this.recorder.commence(parseCount.get(), "Checking"));
                 } else {
                     compiling.ifPresent(meter ->
-                        meter.progress("Compiling [%s]",
+                        meter.progress("Checking [%s]",
                             string.substring(parsingPrefix.length(), string.length() - 1)));
                 }
             })
@@ -473,11 +474,14 @@ public abstract class AbstractCompile
 
     private void flushError(final Capture<String> error, final ErrorCapture captured) {
         error.ifPresent(e -> {
-            if (ErrorCapture.isJavacWarning(e)) {
-                this.recorder.warn(e);
+            // javac reports source paths absolutely; strip the project root so messages read
+            // relative to it (eg: "src/main/java/...") instead of the full filesystem path
+            final String relativized = e.replace(this.project.path().toString() + File.separator, "");
+            if (ErrorCapture.isJavacWarning(relativized)) {
+                this.recorder.warn(relativized);
             } else {
-                this.recorder.error(e);
-                captured.append(e);
+                this.recorder.error(relativized);
+                captured.append(relativized);
             }
         });
         error.clear();
