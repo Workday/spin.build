@@ -326,30 +326,17 @@ public abstract class AbstractDetectResolution
                                                        final TelemetryRecorder recorder) {
 
         final String moduleName = r.requiresModuleName().toString();
-        final Optional<Version> moduleVersion = versioning.getVersion(moduleName);
-        final Optional<Version> requiresVersion = JDKModuleDescriptor.requiresVersion(r);
+        final Optional<Version> requiredVersion =
+            RequiredVersionResolution.resolve(r, moduleName, projectName, versioning, recorder);
 
-        final Version requiredVersion;
-        if (moduleVersion.isPresent()) {
-            if (requiresVersion.isPresent() && !requiresVersion.get().equals(moduleVersion.get())) {
-                recorder.warn(
-                    "External require [%s] in [%s] declares version [%s] but the workspace ModuleVersioning "
-                        + "catalog resolved [%s] — using the catalog version",
-                    moduleName, projectName, requiresVersion.get(), moduleVersion.get());
-            }
-            requiredVersion = moduleVersion.get();
-        }
-        else if (requiresVersion.isPresent()) {
-            requiredVersion = requiresVersion.get();
-        }
-        else {
+        if (requiredVersion.isEmpty()) {
             recorder.diagnostic(
                 "Cannot determine version for external require [%s] in [%s] — skipping",
                 moduleName, projectName);
             return Optional.empty();
         }
 
-        final ModuleReference moduleReference = ModuleReference.of(moduleName, requiredVersion);
+        final ModuleReference moduleReference = ModuleReference.of(moduleName, requiredVersion.get());
         final Optional<Artifact> artifact = catalog.getArtifact(moduleReference, Optional.of(recorder));
 
         if (artifact.isEmpty()) {
@@ -362,7 +349,7 @@ public abstract class AbstractDetectResolution
             else {
                 recorder.warn(
                     "Module [%s] requested at version [%s] but the ModuleCatalog only has %s — skipping",
-                    moduleName, requiredVersion, knownVersions);
+                    moduleName, requiredVersion.get(), knownVersions);
             }
         }
 
