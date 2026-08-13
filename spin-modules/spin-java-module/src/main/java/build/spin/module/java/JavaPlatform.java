@@ -36,6 +36,7 @@ import java.nio.file.FileSystem;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.SortedSet;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -159,10 +160,9 @@ public class JavaPlatform
      * @return {@link Optional} {@link JDK}
      */
     public Optional<JDK> getVersion(final int major, final TargetPlatform target) {
-        return stream()
+        return preferJavaHome(stream()
             .filter(jdk -> jdk.version().major() == major)
-            .filter(jdk -> matches(jdk, target))
-            .findFirst();
+            .filter(jdk -> matches(jdk, target)));
     }
 
     /**
@@ -172,9 +172,58 @@ public class JavaPlatform
      * @return {@link Optional} {@link JDK}
      */
     public Optional<JDK> getLatest(final TargetPlatform target) {
-        return stream()
-            .filter(jdk -> matches(jdk, target))
-            .findFirst();
+        return preferJavaHome(stream()
+            .filter(jdk -> matches(jdk, target)));
+    }
+
+    /**
+     * Among {@code candidates} (ordered best-first, as {@link #stream()} yields them), prefers the
+     * entry whose home matches the {@code JAVA_HOME} environment variable over the nominal best
+     * (first) entry — but only among entries tied on {@link JDKVersion} with that first entry, i.e.
+     * only to break a tie the underlying comparator otherwise resolves arbitrarily.
+     * <p>
+     * Without this, two equally-versioned {@link JDK}s (e.g. a CI runner's preinstalled JDK and the
+     * one the build was actually configured to use via {@code JAVA_HOME}) are ordered solely by an
+     * incidental string comparison of their install paths, which can silently select the wrong one
+     * depending on whatever else happens to be installed on the host.
+     *
+     * @param candidates the candidate {@link JDK}s, ordered best-first
+     * @return the preferred {@link JDK}, if any
+     */
+    private static Optional<JDK> preferJavaHome(final Stream<JDK> candidates) {
+        return preferJavaHome(candidates, System.getenv("JAVA_HOME"));
+    }
+
+    /**
+     * As {@link #preferJavaHome(Stream)}, but with the {@code JAVA_HOME} value passed in explicitly
+     * rather than read from the environment, so the tie-break can be exercised deterministically
+     * without mutating the test process's own environment.
+     *
+     * @param candidates the candidate {@link JDK}s, ordered best-first
+     * @param javaHome   the {@code JAVA_HOME} value to prefer, or {@code null} if unset
+     * @return the preferred {@link JDK}, if any
+     */
+    // Visible for testing.
+    static Optional<JDK> preferJavaHome(final Stream<JDK> candidates, final String javaHome) {
+        final List<JDK> ordered = candidates.toList();
+        if (ordered.isEmpty()) {
+            return Optional.empty();
+        }
+
+        if (javaHome != null) {
+            final Path javaHomePath = Path.of(javaHome).normalize();
+            final JDKVersion bestVersion = ordered.getFirst().version();
+            for (final var jdk : ordered) {
+                if (!jdk.version().equals(bestVersion)) {
+                    break;
+                }
+                if (jdk.home().path().normalize().equals(javaHomePath)) {
+                    return Optional.of(jdk);
+                }
+            }
+        }
+
+        return Optional.of(ordered.getFirst());
     }
 
     /**
