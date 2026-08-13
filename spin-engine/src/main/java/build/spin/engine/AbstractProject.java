@@ -353,7 +353,7 @@ public abstract class AbstractProject implements Project {
     }
 
     @Override
-    public boolean isIgnored(final Path path) {
+    public final boolean isIgnored(final Path path) {
         return contains(path)
             && (resources().anyMatch(resource -> resource.isIgnored(path))
                 || (parent().map(parent -> parent.isIgnored(path)).orElse(false)));
