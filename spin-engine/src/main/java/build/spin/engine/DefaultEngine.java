@@ -517,7 +517,7 @@ public final class DefaultEngine implements Engine {
         }
     }
 
-    private Optional<Project> createProject(final Optional<Project> parent, final Path path) {
+    Optional<Project> createProject(final Optional<Project> parent, final Path path) {
 
         // ensure the Path is a Folder
         if (!isFolder(path)) {
@@ -604,12 +604,57 @@ public final class DefaultEngine implements Engine {
         // to the project
         try (Stream<Path> paths = Files.list(path)) {
             paths.filter(Folders::isFolder)
-                .filter(child -> parent.map(project -> !project.isIgnored(child)).orElse(true))
+                .filter(child -> !isBuildOutputDirectory(child))
+                .filter(child -> childParent.map(project -> !project.isIgnored(child)).orElse(true))
                 .forEach(child -> createProject(childParent, child));
         } catch (final IOException e) {
             throw new RuntimeException("Failed to read child projects", e);
         }
 
         return createdProject;
+    }
+
+    /**
+     * Gradle's default build-script filenames — evidence, alongside a {@code build/} sibling
+     * directory name, that the directory is actually Gradle's own output rather than a
+     * coincidentally-named directory (e.g. a Java package segment such as
+     * {@code src/main/java/build/...}).
+     */
+    private static final Set<String> GRADLE_BUILD_SCRIPT_FILENAMES =
+        Set.of("build.gradle", "build.gradle.kts");
+
+    /**
+     * Determines whether {@code path} is a known build-tool output directory (Maven's
+     * {@code target/}, Gradle's {@code build/}) that must never be recursed into during project
+     * discovery.
+     * <p>
+     * Without this, anything a build tool copies or writes into its own output directory — e.g.
+     * Maven's resource plugin copying {@code src/test/resources} verbatim into
+     * {@code target/test-classes}, including any nested {@code module-info.java} test fixtures —
+     * gets independently rediscovered by {@link #createProject} as a second, distinct candidate
+     * project. Unlike spin's own {@code .build/} output (already excluded because {@link Folders#isFolder}
+     * skips hidden directories), Maven/Gradle output directories aren't hidden, so this exclusion is
+     * required for those specifically.
+     * <p>
+     * Matching is deliberately not by directory name alone: {@code target} and, especially,
+     * {@code build} are common enough as ordinary directory names — including as a Java package
+     * segment, e.g. this very codebase's own {@code src/main/java/build/...} — that a bare name
+     * match would prune real source trees from discovery. A directory only counts as build-tool
+     * output when its parent also carries the corresponding build tool's own marker file
+     * ({@code pom.xml} for {@code target/}, a Gradle build script for {@code build/}), i.e. the
+     * directory actually sits where that build tool would place its output.
+     *
+     * @param path the candidate child {@link Path}
+     * @return {@code true} if {@code path} is build-tool output for a build tool detected in its parent
+     */
+    static boolean isBuildOutputDirectory(final Path path) {
+        final Path parent = path.getParent();
+
+        return switch (path.getFileName().toString()) {
+            case "target" -> Files.exists(parent.resolve("pom.xml"));
+            case "build" -> GRADLE_BUILD_SCRIPT_FILENAMES.stream()
+                .anyMatch(scriptName -> Files.exists(parent.resolve(scriptName)));
+            default -> false;
+        };
     }
 }
