@@ -28,6 +28,7 @@ import build.spawn.jdk.option.JDKHome;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -99,6 +100,94 @@ class JavaPlatformTest {
         final var target = new TargetPlatform(OperatingSystem.MAC, Architecture.AARCH64);
 
         assertThat(platform.getLatest(target)).contains(mac25);
+    }
+
+    // --- JAVA_HOME tie-break for same-version JDKs ---
+    //
+    // Regression coverage for a real, reported failure: a CI runner had two JDKs both reporting
+    // version 25.0.4 (a preinstalled Temurin and the Zulu actually staged for the build via
+    // JAVA_HOME) — the previous path-string tie-break picked whichever sorted first
+    // alphabetically ("Temurin" < "Zulu"), silently ignoring which JDK the build was actually
+    // configured to use.
+
+    @Test
+    void preferJavaHome_fallsBackToTheFirstCandidateWhenJavaHomeIsUnset() {
+        final var temurin = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/25.0.4-7/x64");
+        final var zulu = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Zulu_jdk/25.0.4-7/x64");
+
+        // candidates are already ordered best-first by the caller (as stream() yields them);
+        // with no JAVA_HOME to break the tie, the first (nominal-best) entry wins, same as before
+        assertThat(JavaPlatform.preferJavaHome(Stream.of(temurin, zulu), null)).contains(temurin);
+    }
+
+    @Test
+    void preferJavaHome_prefersTheJavaHomeMatchOverPathOrderingOnATie() {
+        final var temurin = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/25.0.4-7/x64");
+        final var zulu = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Zulu_jdk/25.0.4-7/x64");
+
+        // Temurin still sorts first, but JAVA_HOME points at the Zulu install actually staged for
+        // the build -- that one must win the tie instead
+        assertThat(JavaPlatform.preferJavaHome(Stream.of(temurin, zulu), zulu.home().path().toString()))
+            .contains(zulu);
+    }
+
+    @Test
+    void preferJavaHome_ignoresJavaHomeWhenItDoesNotMatchTheBestVersion() {
+        final var older = jdk("21.0.1", OperatingSystem.LINUX, Architecture.X86_64, "/opt/hostedtoolcache/old");
+        final var newer = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64, "/opt/hostedtoolcache/new");
+
+        // JAVA_HOME points at the older, non-best JDK -- the tie-break only ever operates among
+        // entries tied on the *best* version, so it must not downgrade to a worse version
+        assertThat(JavaPlatform.preferJavaHome(Stream.of(newer, older), older.home().path().toString()))
+            .contains(newer);
+    }
+
+    @Test
+    void preferJavaHome_fallsBackToTheFirstCandidateWhenJavaHomeMatchesNoCandidate() {
+        final var temurin = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/25.0.4-7/x64");
+        final var zulu = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Zulu_jdk/25.0.4-7/x64");
+
+        // JAVA_HOME is set but doesn't match either tied candidate -- must fall back to the nominal
+        // best (first) entry rather than e.g. throwing or returning empty
+        assertThat(JavaPlatform.preferJavaHome(Stream.of(temurin, zulu), "/opt/hostedtoolcache/does-not-exist"))
+            .contains(temurin);
+    }
+
+    @Test
+    void preferJavaHome_matchesJavaHomeDespiteNonNormalizedPathDifferences() {
+        final var temurin = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/25.0.4-7/x64");
+        final var zulu = jdk("25.0.4", OperatingSystem.LINUX, Architecture.X86_64,
+            "/opt/hostedtoolcache/Java_Zulu_jdk/25.0.4-7/x64");
+
+        // JAVA_HOME carries a trailing slash and a redundant "." segment -- the comparison must
+        // normalize both sides rather than requiring a literal string match
+        assertThat(JavaPlatform.preferJavaHome(Stream.of(temurin, zulu),
+            "/opt/hostedtoolcache/./Java_Zulu_jdk/25.0.4-7/x64/"))
+            .contains(zulu);
+    }
+
+    @Test
+    void preferJavaHome_returnsEmptyWhenThereAreNoCandidates() {
+        assertThat(JavaPlatform.preferJavaHome(Stream.<JDK>empty(), "/opt/hostedtoolcache/anything")).isEmpty();
+    }
+
+    @Test
+    void getVersion_delegatesToPreferJavaHomeUsingTheRealEnvironment() {
+        // sanity check that the public getVersion(major, target) overload actually routes through
+        // preferJavaHome(candidates, System.getenv("JAVA_HOME")) rather than the raw unbroken tie --
+        // exercised with a single candidate so the result is deterministic regardless of whatever
+        // JAVA_HOME happens to be set to in this test process
+        final var host = jdk("25.0.3", OperatingSystem.current(), Architecture.current(), "/usr/lib/jvm/zulu25-host");
+        final var platform = new JavaPlatform(List.of(host));
+
+        assertThat(platform.getVersion(25)).contains(host);
     }
 
     // --- host-platform scoping for getVersion(major)/getLatest()/getEarliest() ---
