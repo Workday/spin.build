@@ -557,14 +557,20 @@ public final class DefaultEngine implements Engine {
 
             context.bind(Project.class).to(project);
             context.bind(Workspace.class).to(project.workspace());
-            context.addResolver(new ProjectResourceResolver(project));
 
             // establish Resources for the project (allowing them to be injected
-            // into the Plugins)
+            // into the Plugins). ProjectResourceResolver must not be registered until after this
+            // loop: it resolves a requested Resource type from the Project hierarchy, and since
+            // this Project's own Resources haven't been attached to project.resources yet, adding
+            // it earlier would let it silently satisfy a Resource-creation request (eg: creating
+            // this Project's own ConfigurationResource) with an ancestor's already-created instance
+            // of the same type instead of actually constructing this Project's own.
             metaClasses(Resource.MetaClass.class)
                 .filter(metaClass -> metaClass.isWorkspace(path) || metaClass.isDetectedIn(project))
                 .map(metaClass -> createExtension(metaClass, context)).map(Resource.class::cast)
                 .forEach(resource -> project.resources.put(resource.getClass(), resource));
+
+            context.addResolver(new ProjectResourceResolver(project));
 
             // establish the Plugins for the project
             metaClasses(Plugin.MetaClass.class).filter(metaClass -> metaClass.isDetectedIn(path))
