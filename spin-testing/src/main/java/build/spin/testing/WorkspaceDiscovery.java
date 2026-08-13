@@ -22,13 +22,13 @@ package build.spin.testing;
 
 import build.base.configuration.Configuration;
 import build.base.foundation.Strings;
-import build.base.foundation.UniformResource;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.dependency.injection.Dependency;
 import build.codemodel.dependency.injection.IndependentDependency;
 import build.spin.Engine;
 import build.spin.Project;
+import build.spin.SpinURI;
 import build.spin.Workspace;
 import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.engine.DefaultEngine;
@@ -65,7 +65,7 @@ public class WorkspaceDiscovery
      * The {@link TelemetryRecorder} for {@link WorkspaceDiscovery} events.
      */
     final TelemetryRecorder recorder = new TelemetryPublisher(
-        UniformResource.createURI("class", WorkspaceDiscovery.class.getCanonicalName()),
+        SpinURI.create("class", WorkspaceDiscovery.class.getSimpleName()),
         System.out::println);
 
     /**
@@ -146,7 +146,7 @@ public class WorkspaceDiscovery
             Optional.empty());
 
         // establish a simple Observer to output Engine Telemetry
-        engine.subscribe(event -> recorder.info("Telemetry: %s", event));
+        engine.subscribe(event -> this.recorder.info("Telemetry: %s", event));
 
         // determine the path of the Workspace for testing based on the @WorkspacePath
         final Path workspacePath = path

@@ -52,6 +52,7 @@ import build.spin.module.modulesystem.CompilerArguments;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.BuildDirectoryName;
+import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
@@ -61,6 +62,7 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -114,6 +116,19 @@ public abstract class AbstractCompile
     private BuildDirectoryName buildDirectoryName;
 
     @Inject
+    private ReuseExternalBuildOutput reuseExternalBuildOutput;
+
+    /**
+     * The {@link SourcePathKind} this compile is for — {@link SourcePathKind#MAIN} for the ordinary
+     * Java compiler plugins, {@link SourcePathKind#TEST} for the JUnit plugins' test-compile, provided
+     * by the enclosing {@code Plugin} (see {@code AbstractJavaPlugin#sourceScope}). Determines which
+     * scope's already-built output the short-circuit below looks for — a test compile must never be
+     * satisfied by the project's already-built MAIN output.
+     */
+    @Inject
+    private SourcePathKind scope;
+
+    @Inject
     private TargetDirectoryName targetDirectoryName;
 
     private String buildProcessorModulePath() {
@@ -147,7 +162,8 @@ public abstract class AbstractCompile
         // JavaCompilerPlugin.Compile task when it isn't already built (shared with AbstractDetectResolution,
         // which forces the same siblings for the same reason)
         final Stream<Reference> requiresDeps = AbstractDetectResolution.siblingCompileDependencies(
-            this.project, this.moduleDescriptor, this.buildDirectoryName.get(), this.targetDirectoryName.get());
+            this.project, this.moduleDescriptor, this.buildDirectoryName.get(), this.targetDirectoryName.get(),
+            this.reuseExternalBuildOutput);
 
         // also depend on any workspace annotation processor modules so they are compiled before us
         final Stream<Reference> processorDeps = AnnotationProcessorPaths
@@ -191,7 +207,9 @@ public abstract class AbstractCompile
      * @param resolution the {@link CompilationResolution} (module-path and classpath)
      * @param buildPath  the build {@link Path} (.build)
      * @param targetPath the path in which to place the compiled classes
-     * @return the {@link PathSet} containing the compiled classes
+     * @return the {@link PathSet} containing the compiled classes -- an already-valid build from
+     *         another tool (or a prior compile of this project) reused as-is, without invoking
+     *         {@code javac}, when it's at least as new as every file in {@code sourceCode}
      * @throws Exception should compilation fail
      */
     protected PathSet compile(final PathSet sourceCode,
@@ -215,16 +233,52 @@ public abstract class AbstractCompile
         }
 
         if (effectiveSourceCode.isEmpty()) {
-            this.recorder.diagnostic("Skipping compile for [%s]: no source files", this.project.path());
+            this.recorder.diagnostic("Skipping compile: no source files");
             return emptySourceResult(targetPath);
         }
-
-        final ModulePath modulePath = ModulePath.of(resolution.modulePath().stream());
-        final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
         // compilation output location varies depending on whether the plugin is
         // using the system provided version of java
         final boolean isDefaultJavaVersion = this.javaVersion.major() == this.systemJavaVersion.major();
+
+        // reuse an already-valid build from another tool (Maven's target/classes especially) or a
+        // prior spin compile of this same project, rather than unconditionally re-invoking javac —
+        // a genuine perf win, and it also closes the spin1-build-spin2 module-not-found race: a
+        // sibling whose Compile task reuses valid output never writes a fresh, momentarily-incomplete
+        // directory for a concurrently-running AbstractDetectResolution to observe mid-write.
+        //
+        // For a multi-release project, a non-default-version variant's compile writes only into
+        // targetPath/META-INF/versions/N, leaving targetPath's own top-level output untouched -- so
+        // the check below must look at the exact sub-path *this* variant would itself produce, not
+        // just "does the shared project-level output directory have classes anywhere in it". Without
+        // that, the default-version variant would see the versions/N subfolder a sibling variant just
+        // wrote and wrongly conclude its own (never-yet-written) top-level output already exists.
+        // resolveCompiledOutput's own "non-empty directory" check is not enough here either:
+        // CopyResources writes into this exact same directory independently of Compile, so a
+        // directory that only has resources in it (Compile hasn't run yet) is non-empty but contains
+        // no compiled output at all -- containsCompiledClasses guards against mistaking that for
+        // "already built".
+        final String variantRelativeOutput = isDefaultJavaVersion
+            ? null
+            : "META-INF/versions/" + this.javaVersion.major();
+
+        final Optional<Path> existingOutput = AbstractDetectResolution.resolveCompiledOutput(
+                this.project.path(), this.buildDirectoryName.get(), this.targetDirectoryName.get(), this.scope,
+                this.reuseExternalBuildOutput)
+            .map(dir -> variantRelativeOutput == null ? dir : dir.resolve(variantRelativeOutput))
+            .filter(Files::isDirectory);
+
+        if (existingOutput.isPresent()
+            && AbstractDetectResolution.containsCompiledClasses(existingOutput.get(), isDefaultJavaVersion)
+            && AbstractDetectResolution.isUpToDate(existingOutput.get(), effectiveSourceCode)) {
+            this.recorder.diagnostic(
+                "Skipping compile for [%s]: existing output at [%s] is up to date with source",
+                this.project.path(), existingOutput.get());
+            return PathSetBuilder.create(existingOutput.get()).build();
+        }
+
+        final ModulePath modulePath = ModulePath.of(resolution.modulePath().stream());
+        final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
 
         // determine the version of the Module being compiled (or use the system provided version)
         final Version version = this.versioning
@@ -232,7 +286,7 @@ public abstract class AbstractCompile
             .orElse(ModuleVersioning.DEFAULT_VERSION);
 
         final Activity compilation = this.recorder
-            .commence("Compiling %d file(s) for [%s] as [%s] ", effectiveSourceCode.size(), this.project.path(), version);
+            .commence("Compiling %d file(s) as [%s]", effectiveSourceCode.size(), version);
 
         // determine the target location for the compiles classes based on the JDKVersion
         final Path target;
@@ -348,7 +402,8 @@ public abstract class AbstractCompile
 
             // lastly include the source code to compile
             effectiveSourceCode.stream()
-                .peek(path -> this.recorder.diagnostic("Preparing [%s] for compilation", path))
+                .peek(path -> this.recorder.diagnostic(
+                    "Preparing [%s] for compilation", this.project.path().relativize(path)))
                 .forEach(writer::println);
         }
 
@@ -379,10 +434,10 @@ public abstract class AbstractCompile
             .with(string -> string.startsWith(compilingPrefix), string -> {
                 if (checkingCount.getAndIncrement() == 0) {
                     parsing.ifPresent(Activity::complete);
-                    compiling.set(this.recorder.commence(parseCount.get(), "Compiling"));
+                    compiling.set(this.recorder.commence(parseCount.get(), "Checking"));
                 } else {
                     compiling.ifPresent(meter ->
-                        meter.progress("Compiling [%s]",
+                        meter.progress("Checking [%s]",
                             string.substring(parsingPrefix.length(), string.length() - 1)));
                 }
             })
@@ -473,11 +528,14 @@ public abstract class AbstractCompile
 
     private void flushError(final Capture<String> error, final ErrorCapture captured) {
         error.ifPresent(e -> {
-            if (ErrorCapture.isJavacWarning(e)) {
-                this.recorder.warn(e);
+            // javac reports source paths absolutely; strip the project root so messages read
+            // relative to it (eg: "src/main/java/...") instead of the full filesystem path
+            final String relativized = e.replace(this.project.path().toString() + File.separator, "");
+            if (ErrorCapture.isJavacWarning(relativized)) {
+                this.recorder.warn(relativized);
             } else {
-                this.recorder.error(e);
-                captured.append(e);
+                this.recorder.error(relativized);
+                captured.append(relativized);
             }
         });
         error.clear();

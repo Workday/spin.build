@@ -29,6 +29,7 @@ import build.base.option.JDKVersion;
 import build.base.table.Table;
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.percolate.core.ModuleGraphClassifier;
@@ -253,16 +254,9 @@ public abstract class AbstractJavaDependencyAnalysis
                                 .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
                                 .map(r -> {
                                     final String name = r.requiresModuleName().toString();
-                                    // Prefer the version from the requires clause (bytecode only).
-                                    // Fall back to whatever version we already know for this module
-                                    // name — workspace modules come from source module-info files
-                                    // which carry no version, but their ArtifactDescriptor (loaded
-                                    // at the start of jdeps) has the correct version.
-                                    final Optional<Version> version = JDKModuleDescriptor.requiresVersion(r)
-                                        .or(() -> artifactDescriptors.values().stream()
-                                            .filter(d -> d.reference().name().equals(name))
-                                            .findFirst()
-                                            .flatMap(d -> d.reference().version()));
+                                    final Optional<Version> version = resolveRequiredVersion(
+                                        r, name, moduleDescriptor.moduleName().toString(),
+                                        this.versioning, artifactDescriptors.values(), this.recorder);
                                     return ModuleReference.of(name, version);
                                 })
                                 // GraalVM modules are not available in standard JDKs; exclude the entire namespace
@@ -276,7 +270,7 @@ public abstract class AbstractJavaDependencyAnalysis
                                     requiredModules.add(r.name());
                                 })
                                 .filter(r -> shouldProcess(r.name(), r.version(), processed))
-                                .peek(r -> this.recorder.info("[jdeps] Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.moduleName().toString(), r))
+                                .peek(r -> this.recorder.info("Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.moduleName().toString(), r))
                                 .forEach(pending::push);
 
                             return reference;
@@ -287,7 +281,7 @@ public abstract class AbstractJavaDependencyAnalysis
                                 final String reason = resolvedDescriptor.exception()
                                     .map(e -> ": " + e.getClass().getSimpleName() + ": " + e.getMessage())
                                     .orElse("");
-                                this.recorder.info("[jdeps] Ignoring module [%s] — no ModuleDescriptor available%s", reference, reason);
+                                this.recorder.info("Ignoring module [%s] — no ModuleDescriptor available%s", reference, reason);
                             } else {
                                 // no module-info.class and no Automatic-Module-Name: genuinely unnamed jar
                                 unnamedArtifactDescriptors.put(artifact, artifactDescriptor);
@@ -635,6 +629,38 @@ public abstract class AbstractJavaDependencyAnalysis
     static String moduleNameFromListDepsLine(final String line) {
         final int slash = line.indexOf('/');
         return slash < 0 ? line : line.substring(0, slash);
+    }
+
+    /**
+     * Resolves the {@link Version} to use for a compiled {@code requires} clause discovered while
+     * walking an already-published dependency's {@code module-info.class}, deferring to {@link
+     * RequiredVersionResolution} for the catalog-wins-over-bytecode-hint precedence shared with
+     * {@link AbstractDetectResolution#resolveExternalArtifact}, then falling back further to an
+     * already-resolved {@link ArtifactDescriptor} when neither source has an answer — the case for a
+     * workspace sibling, whose source {@code module-info.java} carries no compiled version at all.
+     *
+     * @param r                   the compiled {@code requires} clause
+     * @param name                {@code r}'s required module name
+     * @param requiringModuleName the name of the module declaring {@code r}, for diagnostics
+     * @param versioning          the workspace-wide {@link ModuleVersioning}
+     * @param artifactDescriptors already-resolved {@link ArtifactDescriptor}s to fall back to when
+     *                            neither the catalog nor the bytecode hint has an answer
+     * @param recorder            the {@link TelemetryRecorder} for diagnostics
+     * @return the resolved {@link Version}, if one could be determined from any source
+     */
+    // Visible for testing.
+    static Optional<Version> resolveRequiredVersion(final RequiresModuleDescriptor r,
+                                                    final String name,
+                                                    final String requiringModuleName,
+                                                    final ModuleVersioning versioning,
+                                                    final Collection<ArtifactDescriptor> artifactDescriptors,
+                                                    final TelemetryRecorder recorder) {
+
+        return RequiredVersionResolution.resolve(r, name, requiringModuleName, versioning, recorder)
+            .or(() -> artifactDescriptors.stream()
+                .filter(d -> d.reference().name().equals(name))
+                .findFirst()
+                .flatMap(d -> d.reference().version()));
     }
 
     /**

@@ -16,7 +16,7 @@ import static org.mockito.Mockito.when;
 class ReferenceTests {
 
     /**
-     * Verifies that {@link Reference#equals(Object)} does not throw a {@link NullPointerException}
+     * Verifies that {@code equals(Object)} does not throw a {@link NullPointerException}
      * when {@link Reference#getPluginClass()} returns {@code null} (i.e. the task is not a static
      * inner class of a {@link Plugin}).
      */
@@ -105,5 +105,34 @@ class ReferenceTests {
 
         assertDoesNotThrow(() -> refWithNullPlugin.equals(refWithPlugin));
         assertThat(refWithNullPlugin.equals(refWithPlugin)).isFalse();
+    }
+
+    /**
+     * Verifies that {@code toString()} renders as {@code project/PluginDisplayName.Task},
+     * deferring to {@link Engine#pluginDisplayName} for the declaring {@link Plugin}'s portion of the
+     * name rather than ever using the {@code $}-separated nested-class {@link Class#getName()}.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void toStringUsesSlashSeparatorAndPluginDisplayName() {
+        final Project project = mock(Project.class);
+        when(project.name()).thenReturn("my-project");
+
+        final Engine engine = mock(Engine.class);
+        when(project.engine()).thenReturn(engine);
+        when(engine.pluginDisplayName((Class<? extends Plugin>) (Class<?>) ReferenceTests.class))
+            .thenReturn("build.spin.ReferenceTests");
+
+        final Class<? extends Task<?>> taskClass =
+            (Class<? extends Task<?>>) (Class<?>) NestedTask.class;
+        final Reference ref = Reference.of(project, taskClass);
+
+        assertThat(ref.toString()).isEqualTo("my-project/build.spin.ReferenceTests.NestedTask");
+    }
+
+    private static class NestedTask implements Task<String> {
+        public String compute() {
+            return "";
+        }
     }
 }

@@ -21,6 +21,8 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
+import build.codemodel.jdk.JDKCodeModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -113,6 +115,74 @@ class PomBasedModuleVersioningTests {
         assertThat(versioning.getVersion("build.base.marshalling"))
             .isPresent()
             .hasValueSatisfying(v -> assertThat(v.get()).isEqualTo("0.22.1"));
+    }
+
+    @Test
+    void buildFromWorkspace_keepsHighestVersionWhenSameModuleReachedAtDifferentVersions(
+        @TempDir final Path workspace, @TempDir final Path localRepo) throws Exception {
+        // Reproduces a real-world bug: two workspace modules transitively depend on the same
+        // coordinate through different paths, pinned to different versions -- whichever path the
+        // walker's BFS visits first must not permanently pin the lower version.
+        Files.writeString(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-old-path</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-new-path</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final Path oldPathDir = localRepo.resolve("build/base/base-old-path/1.0.0");
+        Files.createDirectories(oldPathDir);
+        Files.writeString(oldPathDir.resolve("base-old-path-1.0.0.pom"), """
+            <project>
+              <groupId>build.base</groupId>
+              <artifactId>base-old-path</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-shared</artifactId>
+                  <version>0.30.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final Path newPathDir = localRepo.resolve("build/base/base-new-path/1.0.0");
+        Files.createDirectories(newPathDir);
+        Files.writeString(newPathDir.resolve("base-new-path-1.0.0.pom"), """
+            <project>
+              <groupId>build.base</groupId>
+              <artifactId>base-new-path</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-shared</artifactId>
+                  <version>0.30.1</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final ModuleVersioning versioning = PomBasedModuleVersioning.buildFromWorkspace(
+            workspace, localRepo, new JDKCodeModel(new NonCachingNameProvider()), RECORDER);
+
+        assertThat(versioning.getVersion("build.base.shared"))
+            .isPresent()
+            .hasValueSatisfying(v -> assertThat(v.get()).isEqualTo("0.30.1"));
     }
 
     @Test

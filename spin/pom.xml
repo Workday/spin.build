@@ -129,6 +129,10 @@
             <groupId>build.base</groupId>
             <artifactId>base-table</artifactId>
         </dependency>
+        <dependency>
+            <groupId>build.base</groupId>
+            <artifactId>base-telemetry</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
@@ -184,11 +188,17 @@
                             <scope>runtime</scope>
                             <additionalJvmArgs>
                                 <additionalJvmArg>--enable-preview</additionalJvmArg>
+                                <!--uncomment this to easily debug the build-->
+                                <!--<additionalJvmArg>-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:5005</additionalJvmArg>-->
                             </additionalJvmArgs>
                             <arguments>
                                 <argument>clean</argument>
                                 <argument>jlink</argument>
                                 <argument>--jlink-host-only</argument>
+                                <!-- spin1 already recompiled every sibling as part of this Maven reactor
+                                     build; no point paying to recompile them again with spin's own javac
+                                     here just to build spin2 -->
+                                <argument>--reuse-external-build-output</argument>
                             </arguments>
                         </configuration>
                     </execution>

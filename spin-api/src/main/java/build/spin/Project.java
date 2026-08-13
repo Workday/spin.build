@@ -285,6 +285,11 @@ public interface Project
      * <p>
      * {@link Project}s determine when {@link Path}s are ignored by consulting their {@link Resource}s
      * {@link Resource#isIgnored(Path)} method.
+     * <p>
+     * Implementations must be monotonic with respect to {@link #parent()}: if {@code parent().isIgnored(path)}
+     * is {@code true}, this method must also return {@code true} for the same {@link Path}. Callers (e.g.
+     * project discovery) are entitled to rely on a parent {@link Project}'s answer as a lower bound for any
+     * child {@link Project}'s answer.
      *
      * @param path the {@link Path}
      * @return {@code true} if the {@link Path} must be ignored, {@code false} otherwise

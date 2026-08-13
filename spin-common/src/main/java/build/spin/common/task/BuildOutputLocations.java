@@ -39,11 +39,12 @@ public final class BuildOutputLocations {
     }
 
     /**
-     * Returns the spin output path for {@code relPath} under {@code buildDir/main/},
+     * Returns the spin output path for {@code relPath} under {@code buildDir/<scope>/},
      * if that path exists on disk.
      */
-    public static Optional<Path> spin(final Path project, final String buildDir, final String relPath) {
-        return existing(project.resolve(buildDir + "/" + SourcePathKind.MAIN.outputPrefix().orElseThrow() + relPath));
+    public static Optional<Path> spin(final Path project, final String buildDir, final String relPath,
+                                      final SourcePathKind scope) {
+        return existing(project.resolve(buildDir + "/" + scope.outputPrefix().orElseThrow() + relPath));
     }
 
     /**

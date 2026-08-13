@@ -23,7 +23,6 @@ package build.spin.common;
 import build.base.configuration.Configuration;
 import build.base.foundation.Capture;
 import build.base.foundation.Introspection;
-import build.base.foundation.UniformResource;
 import build.base.graph.Graph;
 import build.base.graph.GraphCycles;
 import build.base.telemetry.Activity;
@@ -47,6 +46,7 @@ import build.spin.Program;
 import build.spin.ProgramExecutionException;
 import build.spin.Project;
 import build.spin.Reference;
+import build.spin.SpinURI;
 import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.annotation.PostProcess;
@@ -57,6 +57,7 @@ import build.spin.common.telemetry.TelemetryPublisher;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -71,8 +72,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
-
-import static build.base.foundation.Introspection.describe;
 
 /**
  * The default implementation of a {@link Program}.
@@ -141,8 +140,13 @@ public final class DefaultProgram
         this.optionsByType = optionsByType == null ? Configuration.empty() : optionsByType;
         this.instructions = new LinkedHashMap<>();
 
+        // determine the Task.Pattern
+        final Task.Pattern pattern = this.optionsByType
+            .getOptional(Task.Pattern.class)
+            .orElseThrow(() -> new RuntimeException("Failed to define a Task.Pattern"));
+
         // establish TelemetryRecorder
-        final URI uri = UniformResource.createURI("program", this);
+        final URI uri = SpinURI.create("program", pattern.get());
         this.recorder = new TelemetryPublisher(uri, this.engine::publish);
 
         this.context = this.framework.newContext(new ProgramModule(this.optionsByType, project.workspace()));
@@ -150,11 +154,6 @@ public final class DefaultProgram
         this.context.addResolver(this.engine.context().resolver());
         this.context.bind(Program.class).to(this);
         this.context.validate();
-
-        // determine the Task.Pattern
-        final Task.Pattern pattern = this.optionsByType
-            .getOptional(Task.Pattern.class)
-            .orElseThrow(() -> new RuntimeException("Failed to define a Task.Pattern"));
 
         // TODO: prepare the plugins for each of the Projects?
 
@@ -175,7 +174,7 @@ public final class DefaultProgram
         // we've not yet included the @Automatic Tasks
         boolean includedAutomaticTasks = false;
 
-        this.recorder.info("Found %d Task(s)", stack.size());
+        this.recorder.info("Found %d Invocable(s)", stack.size());
 
         final Activity creatingInstructions = this.recorder
             .commence("Creating Instructions for [%s]", project.name());
@@ -250,10 +249,7 @@ public final class DefaultProgram
                 // resolves an Optional<X>-typed dependency, so other resolvers must get first refusal
                 taskContext.addResolver(new ProjectResourceResolver(taskProject));
 
-                this.recorder.diagnostic("Creating Instruction [%s] defined by [%s] for [%s]",
-                    describe(taskInvocable.getTaskClass()),
-                    taskInvocable.getPlugin().name(),
-                    taskInvocable.getProject().name());
+                this.recorder.diagnostic("Creating Instruction [%s]", taskInvocable);
 
                 // create the Executable Instruction
                 final DefaultInstruction<?> instruction = new DefaultInstruction<>(
@@ -331,37 +327,52 @@ public final class DefaultProgram
 
         inference.complete();
 
-        this.recorder.diagnostic("Instructions for %s are as follows (not ordered)", project.name());
+        this.recorder.diagnostic("Enumerating %d unordered Instruction(s)", this.instructions.size());
 
         this.instructions.values()
             .forEach(instruction -> {
-                this.recorder.diagnostic("Instruction #%d: %s", instruction.getIdentity(), instruction.getReference());
-                instruction.dependencies()
-                    .forEach(reference -> this.recorder.diagnostic("   requires %s", reference));
+                this.recorder.diagnostic("Instruction #%d: %s", instruction.getIdentity(), instruction);
+
+                // group same-task cross-project sibling dependencies (eg: forcing every workspace
+                // sibling's own Compile task) onto a single line instead of one repetitive line per
+                // project naming the identical task over and over
+                final LinkedHashMap<String, List<String>> dependenciesByTask = new LinkedHashMap<>();
+                instruction.dependencies().forEach(reference ->
+                    dependenciesByTask
+                        .computeIfAbsent(reference.taskDisplayName(), __ -> new ArrayList<>())
+                        .add(reference.project().name()));
+
+                dependenciesByTask.forEach((task, projectNames) -> {
+                    if (projectNames.size() == 1) {
+                        this.recorder.diagnostic("   requires %s/%s", projectNames.get(0), task);
+                    } else {
+                        this.recorder.diagnostic("   requires %s in %s", task, projectNames);
+                    }
+                });
 
                 instruction.codependencies()
                     .filter(definition ->
                         Introspection.hasDeclaredAnnotation(definition.getTaskClass(), PreProcess.class))
                     .forEach(definition ->
-                        this.recorder.diagnostic("   pre-processed by %s", definition.getReference()));
+                        this.recorder.diagnostic("   pre-processed by %s", definition));
 
                 instruction.codependencies()
                     .filter(definition ->
                         Introspection.hasDeclaredAnnotation(definition.getTaskClass(), PostProcess.class))
                     .forEach(definition ->
-                        this.recorder.diagnostic("   post-processed by %s", definition.getReference()));
+                        this.recorder.diagnostic("   post-processed by %s", definition));
             });
 
-        this.recorder.diagnostic("Project-level Dependencies:");
+        if (projects.values().stream().anyMatch(deps -> !deps.isEmpty())) {
+            this.recorder.diagnostic("Project-level Dependencies:");
 
-        projects.forEach((prj, deps) -> {
-            if (deps.isEmpty()) {
-                this.recorder.diagnostic("Project %s has no dependencies", prj.name());
-            } else {
-                this.recorder.diagnostic("Project %s", prj.name());
-                deps.forEach(dep -> this.recorder.diagnostic("   requires %s", dep.name()));
-            }
-        });
+            projects.forEach((prj, deps) -> {
+                if (!deps.isEmpty()) {
+                    this.recorder.diagnostic("Project %s", prj.name());
+                    deps.forEach(dep -> this.recorder.diagnostic("   requires %s", dep.name()));
+                }
+            });
+        }
     }
 
     record ProgramModule(Configuration options, Workspace workspace) implements Module {
@@ -392,7 +403,7 @@ public final class DefaultProgram
                 "Cyclic task dependency detected: " + this.detectedCycle);
         }
 
-        final Meter execution = this.recorder.commence(this.instructions.size(), "Executing Program Tasks");
+        final Meter execution = this.recorder.commence(this.instructions.size(), "Executing Program Instructions");
 
         final AssetCache localCache = DefaultAssetCache.create();
         final AssetCache executionCache = NearAssetCache.of(localCache, cache);
@@ -467,7 +478,10 @@ public final class DefaultProgram
             final DefaultInstruction<?> instruction = this.instructions.get(reference);
             final Invocable<?> invocable = instruction.getInvocable();
             final Task<?> task = instruction.getTask();
-            final Activity activity = this.recorder.commence("Executing %s", invocable);
+            // the Instruction's own recorder URI (spin-task://workspace/project/task-name) already
+            // identifies the Project and Task; no need to repeat that (or the redundant Invocable
+            // Class) in the message itself
+            final Activity activity = instruction.getRecorder().commence("Executing");
 
             final Context executionContext = this.framework.newContext();
             executionContext.addResolver(new FromResolver(this.recorder, instruction, executionCache));

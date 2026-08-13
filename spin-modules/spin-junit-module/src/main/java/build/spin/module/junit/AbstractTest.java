@@ -91,12 +91,18 @@ public abstract class AbstractTest
     /**
      * Execute tests in the specified build {@link Path}, using the provided module-path and classpath.
      *
-     * @param resolution the {@link CompilationResolution} (module-path and classpath)
-     * @param buildPath  the build {@link Path}
+     * @param resolution         the {@link CompilationResolution} (module-path and classpath)
+     * @param buildPath          the build {@link Path}
+     * @param compiledTestClasses the {@link PathSet} returned by this project's own test {@code Compile}
+     *                            task -- its single entry is wherever the compiled test classes actually
+     *                            live, which is not necessarily {@code buildPath}'s conventional
+     *                            {@code .build/test/<target>} location: {@code Compile} may have reused
+     *                            an already-valid build from Maven/Gradle instead of writing there
      * @return the {@link PathSet} containing the JUnit Reports
      */
     protected PathSet test(final CompilationResolution resolution,
-                           final Path buildPath) {
+                           final Path buildPath,
+                           final PathSet compiledTestClasses) {
 
         final ModulePath modulePath = ModulePath.of(resolution.modulePath().stream());
         final ClassPath classPath = ClassPath.of(resolution.classPath().stream());
@@ -105,8 +111,9 @@ public abstract class AbstractTest
         final String jupiterVersion = AbstractJUnitPlugin.jupiterVersion(this.versioning);
         final boolean useSubcommand = AbstractJUnitPlugin.jupiterMajorVersion(jupiterVersion) >= 6;
 
-        final Path testClassesDir =
-            buildPath.resolve(SourcePathKind.TEST.outputPrefix().orElseThrow() + this.target.get());
+        final Path testClassesDir = compiledTestClasses.stream().findFirst()
+            .orElseThrow(() -> new IllegalStateException(
+                "Test Compile produced no output for [" + this.project.path() + "]"));
         final Path reportPath = buildPath.resolve("reports/tests");
 
         // include the multi-version compiled classes for non-default JDK test plugins

@@ -22,10 +22,14 @@ package build.spin.module.java;
 
 import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
+import build.base.telemetry.TelemetryRecorder;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.common.task.AbstractCopy;
+import build.spin.common.task.SourcePathKind;
+import build.spin.option.BuildDirectoryName;
+import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
@@ -76,7 +80,28 @@ public abstract class AbstractResourcePlugin {
         extends AbstractCopy {
 
         @Inject
+        private TelemetryRecorder recorder;
+
+        @Inject
+        private Project project;
+
+        @Inject
+        private BuildDirectoryName buildDirectoryName;
+
+        @Inject
         private TargetDirectoryName target;
+
+        @Inject
+        private ReuseExternalBuildOutput reuseExternalBuildOutput;
+
+        /**
+         * The {@link SourcePathKind} these resources belong to -- {@link SourcePathKind#MAIN} or
+         * {@link SourcePathKind#TEST} -- provided by the enclosing {@code Plugin} (see
+         * {@code AbstractJavaPlugin#sourceScope}). Determines which scope's already-built output the
+         * short-circuit below checks, mirroring {@link AbstractCompile#scope}.
+         */
+        @Inject
+        private SourcePathKind scope;
 
         /**
          * Returns the destination sub-path prefix within the build directory
@@ -85,15 +110,37 @@ public abstract class AbstractResourcePlugin {
         protected abstract String destinationPrefix();
 
         /**
-         * Copies resources from the detected source paths into the build directory.
+         * Copies resources from the detected source paths into the build directory, unless
+         * {@link AbstractCompile} is already going to reuse an already-valid candidate for this
+         * project instead of invoking {@code javac} -- in which case that candidate's declared source
+         * is unchanged (see {@link AbstractDetectResolution#isDeclaredSourceUpToDate}), so
+         * {@link AbstractCompile} will never overwrite the directory this task would otherwise copy
+         * into, and copying here would just be discarded work that also risks landing exactly the
+         * race this method exists to avoid (see {@link AbstractDetectResolution#resolveCompiledOutput}).
          *
          * @param paths     the source resource paths
          * @param buildPath the root build {@link Path}
-         * @return the {@link PathSet} of copied resources
+         * @return the {@link PathSet} of copied resources, or an empty {@link PathSet} if the copy was skipped
          */
         protected PathSet doCopy(final PathSet paths, final Path buildPath) {
-            final PathSetBuilder builder = PathSetBuilder.create();
             final Path destination = buildPath.resolve(destinationPrefix() + this.target.get());
+
+            final boolean alreadyBuilt = AbstractDetectResolution.resolveCompiledOutput(
+                    this.project.path(), this.buildDirectoryName.get(), this.target.get(), this.scope,
+                    this.reuseExternalBuildOutput)
+                .filter(AbstractDetectResolution::containsCompiledClasses)
+                .filter(output -> AbstractDetectResolution.isDeclaredSourceUpToDate(
+                    this.project.path(), this.scope, output))
+                .isPresent();
+
+            if (alreadyBuilt) {
+                this.recorder.diagnostic(
+                    "Skipping resource copy for [%s]: Compile will reuse existing output, not writing into [%s]",
+                    this.project.path(), destination);
+                return PathSet.empty();
+            }
+
+            final PathSetBuilder builder = PathSetBuilder.create();
 
             paths.stream()
                 .map(source -> super.copy(source, destination))

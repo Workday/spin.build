@@ -22,8 +22,6 @@ package build.spin;
 
 import java.util.Objects;
 
-import static build.base.foundation.Introspection.describe;
-
 /**
  * Defines a reference to a {@link Class} of {@link Task} in a specific {@link Project}.
  *
@@ -54,9 +52,7 @@ public interface Reference {
 
             @Override
             public String toString() {
-                return "Project [" + project.name() + "] " +
-                    "Plugin [" + describe(getPluginClass()) + "] " +
-                    "Task [" + describe(taskClass) + "] ";
+                return project.name() + "/" + taskDisplayName();
             }
 
             @Override
@@ -96,5 +92,19 @@ public interface Reference {
     @SuppressWarnings("unchecked")
     default Class<? extends Plugin> getPluginClass() {
         return (Class<? extends Plugin>) getTaskClass().getDeclaringClass();
+    }
+
+    /**
+     * Obtains the display name of the {@link Task}, qualified by its declaring {@link Plugin}'s display
+     * name (see {@link Engine#pluginDisplayName}) rather than its fully-qualified {@link Class} name -
+     * the {@link Plugin}'s simple name is unique enough in virtually every invocation and reads far more
+     * cleanly than its fully-qualified name.
+     *
+     * @return the display name of the {@link Task}, eg: {@code JavaPlugin.Compile}
+     */
+    default String taskDisplayName() {
+        final String pluginName = project().engine().pluginDisplayName(getPluginClass());
+
+        return pluginName + "." + getTaskClass().getSimpleName();
     }
 }

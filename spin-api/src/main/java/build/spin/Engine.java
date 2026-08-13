@@ -95,6 +95,21 @@ public interface Engine
     Stream<Service> services();
 
     /**
+     * Obtains the display name for a {@link Class} of {@link Plugin} - the simple {@link Class} name,
+     * unless another distinct {@link Plugin} {@link Class} discovered by this {@link Engine} shares the
+     * same simple name (eg: same {@link Class} name, different package), in which case the fully-qualified
+     * name is used instead so the two remain distinguishable.
+     * <p>
+     * Computed once across every {@link Plugin} discovered by this {@link Engine} for the entire
+     * invocation, rather than per-{@link Project} - a {@link Plugin} name clash is a property of what
+     * was discovered, not of which {@link Project} happens to be asking.
+     *
+     * @param pluginClass the {@link Class} of {@link Plugin}
+     * @return the display name for the {@link Plugin} {@link Class}
+     */
+    String pluginDisplayName(Class<? extends Plugin> pluginClass);
+
+    /**
      * Obtains a {@link Stream} of {@link Service}s defined by {@link Engine} assignable to the specified {@link Class}.
      *
      * @return the {@link Stream} of {@link Service}s

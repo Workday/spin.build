@@ -28,7 +28,6 @@ import build.base.flow.Publisher;
 import build.base.flow.Subscriber;
 import build.base.flow.SubscriberRegistry;
 import build.base.foundation.Introspection;
-import build.base.foundation.UniformResource;
 import build.base.option.JDKVersion;
 import build.base.telemetry.Telemetry;
 import build.base.telemetry.TelemetryRecorder;
@@ -57,6 +56,7 @@ import build.spin.Program;
 import build.spin.Project;
 import build.spin.Resource;
 import build.spin.Service;
+import build.spin.SpinURI;
 import build.spin.Workspace;
 import build.spin.annotation.Bootstrap;
 import build.spin.common.DefaultProgram;
@@ -74,10 +74,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -153,6 +156,12 @@ public final class DefaultEngine implements Engine {
     private final LinkedHashMap<Class<? extends Service>, Service> services;
 
     /**
+     * The simple names shared by more than one distinct {@link Plugin} {@link Class} discovered by this
+     * {@link Engine} - see {@link #pluginDisplayName(Class)}.
+     */
+    private final Set<String> ambiguousPluginSimpleNames;
+
+    /**
      * Constructs a new {@link Engine} with the specified {@link FileSystem} for {@link Project} discovery,
      * {@link ServiceLoader.Provider}s for {@link Extension.MetaClass}s, and {@link Configuration} to provide bootstrap
      * {@link Option}s.
@@ -187,7 +196,7 @@ public final class DefaultEngine implements Engine {
         this.arguments = commandLineArguments == null ? EMPTY : commandLineArguments.orElse(EMPTY);
 
         // establish TelemetryRecorder
-        final URI uri = UniformResource.createURI("engine", this);
+        final URI uri = SpinURI.create("engine", this.getClass().getSimpleName());
         this.observers = new SubscriberRegistry<>();
         this.recorder = new TelemetryPublisher(uri, this::publish);
 
@@ -255,6 +264,16 @@ public final class DefaultEngine implements Engine {
             .filter(provider -> !Service.MetaClass.class.isAssignableFrom(provider.type()))
             .forEach(provider -> createExtensionMetaClass(provider.type(), this.context));
 
+        // determine, once, the simple names shared by more than one distinct Plugin discovered for this
+        // invocation - see pluginDisplayName()
+        this.ambiguousPluginSimpleNames = metaClasses(Plugin.MetaClass.class)
+            .map(Plugin.MetaClass::getExtensionClass)
+            .collect(Collectors.groupingBy(Class::getSimpleName, Collectors.counting()))
+            .entrySet().stream()
+            .filter(entry -> entry.getValue() > 1)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toUnmodifiableSet());
+
         // configure the provided CommandLineParse to include the
         // Extension.MetaClass command-line
         // options
@@ -278,8 +297,7 @@ public final class DefaultEngine implements Engine {
         final Class<T> extensionMetaClassClass,
         final Context context) {
 
-        final URI classUri = UniformResource.createURI("class",
-            UniformResource.sanitize(Introspection.describe(extensionMetaClassClass)));
+        final URI classUri = SpinURI.create("class", extensionMetaClassClass.getSimpleName());
 
         final Context metaClassContext = context.newContext();
         metaClassContext.bind(TelemetryRecorder.class).to(new TelemetryPublisher(classUri, this::publish));
@@ -297,7 +315,7 @@ public final class DefaultEngine implements Engine {
 
         this.recorder.diagnostic("Detected %s %s",
             metaClass.scheme(),
-            Introspection.describe(metaClass.getExtensionClass()));
+            Introspection.describe(metaClass.getExtensionClass()).replace('$', '.'));
 
         return metaClass;
     }
@@ -316,7 +334,7 @@ public final class DefaultEngine implements Engine {
         final Context extensionContext = metaClassContext.newContext();
         extensionContext.bind((Class<Extension.MetaClass>) metaClass.getClass()).to(metaClass);
         extensionContext.bind(TelemetryRecorder.class).to(new TelemetryPublisher(
-            UniformResource.createURI(metaClass.scheme(), Introspection.describe(metaClass.getExtensionClass())),
+            SpinURI.create(metaClass.scheme(), metaClass.getExtensionClass().getSimpleName()),
             this::publish));
         extensionContext.bind(Context.class).to(extensionContext);
 
@@ -378,6 +396,13 @@ public final class DefaultEngine implements Engine {
     }
 
     @Override
+    public String pluginDisplayName(final Class<? extends Plugin> pluginClass) {
+        return this.ambiguousPluginSimpleNames.contains(pluginClass.getSimpleName())
+            ? pluginClass.getName()
+            : pluginClass.getSimpleName();
+    }
+
+    @Override
     public Optional<Path> getWorkspacePath(final Path path) {
 
         Path workspacePath = null;
@@ -393,7 +418,8 @@ public final class DefaultEngine implements Engine {
             // (terminate early when the Workspace is detected)
             if (metaClasses(Resource.MetaClass.class)
                 .filter(metaClass -> metaClass.isWorkspace(detectionPath)).peek(
-                    metaClass -> this.recorder.diagnostic("%s detected Workspace at %s", metaClass,
+                    metaClass -> this.recorder.diagnostic("%s detected Workspace at %s",
+                        Introspection.describe(metaClass.getClass()).replace('$', '.'),
                         detectionPath))
                 .findFirst().isPresent()) {
 
@@ -577,7 +603,7 @@ public final class DefaultEngine implements Engine {
      * @param path   the Project {@link Path}
      * @return an {@link Optional} {@link Project}
      */
-    private Optional<Project> createProject(final Optional<Project> parent, final Path path) {
+    Optional<Project> createProject(final Optional<Project> parent, final Path path) {
 
         // ensure the Path is a Folder
         if (!isFolder(path)) {
@@ -617,14 +643,20 @@ public final class DefaultEngine implements Engine {
 
             context.bind(Project.class).to(project);
             context.bind(Workspace.class).to(project.workspace());
-            context.addResolver(new ProjectResourceResolver(project));
 
             // establish Resources for the project (allowing them to be injected
-            // into the Plugins)
+            // into the Plugins). ProjectResourceResolver must not be registered until after this
+            // loop: it resolves a requested Resource type from the Project hierarchy, and since
+            // this Project's own Resources haven't been attached to project.resources yet, adding
+            // it earlier would let it silently satisfy a Resource-creation request (eg: creating
+            // this Project's own ConfigurationResource) with an ancestor's already-created instance
+            // of the same type instead of actually constructing this Project's own.
             metaClasses(Resource.MetaClass.class)
                 .filter(metaClass -> metaClass.isWorkspace(path) || metaClass.isDetectedIn(project))
                 .map(metaClass -> createExtension(metaClass, context)).map(Resource.class::cast)
                 .forEach(resource -> project.resources.put(resource.getClass(), resource));
+
+            context.addResolver(new ProjectResourceResolver(project));
 
             // establish the Plugins for the project
             metaClasses(Plugin.MetaClass.class).filter(metaClass -> metaClass.isDetectedIn(path))
@@ -658,12 +690,57 @@ public final class DefaultEngine implements Engine {
         // to the project
         try (Stream<Path> paths = Files.list(path)) {
             paths.filter(Folders::isFolder)
-                .filter(child -> parent.map(project -> !project.isIgnored(child)).orElse(true))
+                .filter(child -> !isBuildOutputDirectory(child))
+                .filter(child -> childParent.map(project -> !project.isIgnored(child)).orElse(true))
                 .forEach(child -> createProject(childParent, child));
         } catch (final IOException e) {
             throw new RuntimeException("Failed to read child projects", e);
         }
 
         return createdProject;
+    }
+
+    /**
+     * Gradle's default build-script filenames — evidence, alongside a {@code build/} sibling
+     * directory name, that the directory is actually Gradle's own output rather than a
+     * coincidentally-named directory (e.g. a Java package segment such as
+     * {@code src/main/java/build/...}).
+     */
+    private static final Set<String> GRADLE_BUILD_SCRIPT_FILENAMES =
+        Set.of("build.gradle", "build.gradle.kts");
+
+    /**
+     * Determines whether {@code path} is a known build-tool output directory (Maven's
+     * {@code target/}, Gradle's {@code build/}) that must never be recursed into during project
+     * discovery.
+     * <p>
+     * Without this, anything a build tool copies or writes into its own output directory — e.g.
+     * Maven's resource plugin copying {@code src/test/resources} verbatim into
+     * {@code target/test-classes}, including any nested {@code module-info.java} test fixtures —
+     * gets independently rediscovered by {@link #createProject} as a second, distinct candidate
+     * project. Unlike spin's own {@code .build/} output (already excluded because {@link Folders#isFolder}
+     * skips hidden directories), Maven/Gradle output directories aren't hidden, so this exclusion is
+     * required for those specifically.
+     * <p>
+     * Matching is deliberately not by directory name alone: {@code target} and, especially,
+     * {@code build} are common enough as ordinary directory names — including as a Java package
+     * segment, e.g. this very codebase's own {@code src/main/java/build/...} — that a bare name
+     * match would prune real source trees from discovery. A directory only counts as build-tool
+     * output when its parent also carries the corresponding build tool's own marker file
+     * ({@code pom.xml} for {@code target/}, a Gradle build script for {@code build/}), i.e. the
+     * directory actually sits where that build tool would place its output.
+     *
+     * @param path the candidate child {@link Path}
+     * @return {@code true} if {@code path} is build-tool output for a build tool detected in its parent
+     */
+    static boolean isBuildOutputDirectory(final Path path) {
+        final Path parent = path.getParent();
+
+        return switch (path.getFileName().toString()) {
+            case "target" -> Files.exists(parent.resolve("pom.xml"));
+            case "build" -> GRADLE_BUILD_SCRIPT_FILENAMES.stream()
+                .anyMatch(scriptName -> Files.exists(parent.resolve(scriptName)));
+            default -> false;
+        };
     }
 }

@@ -36,13 +36,6 @@
 
         <dependency>
             <groupId>build.spin</groupId>
-            <artifactId>spin-engine</artifactId>
-            <version>${revision}</version>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>build.spin</groupId>
             <artifactId>spin-testing</artifactId>
             <version>${revision}</version>
             <scope>test</scope>

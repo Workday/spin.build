@@ -46,11 +46,13 @@ import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.common.ProcessFailedException;
+import build.spin.common.task.SourcePathKind;
 import build.spin.common.util.Invocables;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleCatalog;
 import build.spin.module.modulesystem.ModuleVersioning;
 import build.spin.option.BuildDirectoryName;
+import build.spin.option.ReuseExternalBuildOutput;
 import build.spin.option.TargetDirectoryName;
 import jakarta.inject.Inject;
 
@@ -110,6 +112,9 @@ public class CustomizationPlugin
 
     @Inject
     private TargetDirectoryName target;
+
+    @Inject
+    private ReuseExternalBuildOutput reuseExternalBuildOutput;
 
     @Inject
     private ModuleVersioning versioning;
@@ -206,10 +211,16 @@ public class CustomizationPlugin
                        ).findFirst();
 
             if (dependency.isPresent()) {
-                // include the path to the dependency classes and resources
+                // include the path to the dependency classes and resources -- resolved the same way
+                // AbstractCompile itself decides "is this sibling already built" (spin's own .build/,
+                // or an already-valid Maven/Gradle build), rather than assuming the sibling's Compile
+                // task always wrote to the conventional .build/main/<target> location: it may have
+                // reused an already-valid build from elsewhere instead
                 final Path dependencyPath = dependency.get().path();
 
-                builder.add(dependencyPath.resolve(this.buildDirectoryName.get() + "/main/" + this.target.get()));
+                AbstractDetectResolution.resolveCompiledOutput(dependencyPath, this.buildDirectoryName.get(),
+                        this.target.get(), SourcePathKind.MAIN, this.reuseExternalBuildOutput)
+                    .ifPresent(builder::add);
             }
             else if (!includedModules.contains(requires.requiresModuleName().toString())) {
 
