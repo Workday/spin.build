@@ -20,10 +20,21 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.foundation.UniformResource;
+import build.base.telemetry.Telemetry;
+import build.base.telemetry.TelemetryRecorder;
+import build.base.telemetry.Warning;
 import build.base.version.Version;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.ConceptualCodeModel;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
+import build.codemodel.foundation.naming.NonCachingNameProvider;
+import build.codemodel.jdk.descriptor.RequiresVersionTrait;
+import build.spin.common.telemetry.TelemetryPublisher;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
 import build.spin.module.modulesystem.ModuleReference;
+import build.spin.module.modulesystem.ModuleVersioning;
 
 import org.junit.jupiter.api.Test;
 
@@ -252,6 +263,138 @@ class AbstractJavaDependencyAnalysisTest {
         seen.put("build.base.parsing", Optional.of(Version.parse("0.26.0")));
         assertThat(AbstractJavaDependencyAnalysis.shouldProcess(
             "build.base.parsing", Optional.empty(), seen)).isFalse();
+    }
+
+    // -------------------------------------------------------------------------
+    // resolveRequiredVersion
+    // -------------------------------------------------------------------------
+
+    private static TelemetryRecorder recorder() {
+        return new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractJavaDependencyAnalysisTest"),
+            System.out::println);
+    }
+
+    // builds a bare `requires <moduleName>;` clause, optionally with a bytecode-compiled-version
+    // hint — mirrors AbstractDetectResolutionTest's identical helper for resolveExternalArtifact.
+    private static RequiresModuleDescriptor requires(final String moduleName, final Optional<Version> version) {
+        final CodeModel codeModel = new ConceptualCodeModel(new NonCachingNameProvider());
+        final var name = codeModel.getNameProvider().getModuleName(moduleName).orElseThrow();
+        final RequiresModuleDescriptor r = RequiresModuleDescriptor.of(codeModel, name);
+
+        version.ifPresent(v -> r.addTrait(RequiresVersionTrait.of(v)));
+
+        return r;
+    }
+
+    @Test
+    void resolveRequiredVersion_catalogHasVersion_bytecodeHintAbsent_usesCatalogVersion() {
+        final RequiresModuleDescriptor r = requires("build.base.telemetry", Optional.empty());
+
+        final ModuleVersioning versioning = moduleName ->
+            "build.base.telemetry".equals(moduleName) ? Optional.of(Version.parse("0.30.2-SNAPSHOT")) : Optional.empty();
+
+        final Optional<Version> resolved = AbstractJavaDependencyAnalysis.resolveRequiredVersion(
+            r, "build.base.telemetry", "build.codemodel.jdk", versioning, List.of(), recorder());
+
+        assertThat(resolved).contains(Version.parse("0.30.2-SNAPSHOT"));
+    }
+
+    @Test
+    void resolveRequiredVersion_catalogAndBytecodeHintAgree_usesCatalogVersion_noWarning() {
+        final RequiresModuleDescriptor r = requires("build.base.telemetry", Optional.of(Version.parse("0.30.1")));
+
+        final ModuleVersioning versioning = moduleName ->
+            "build.base.telemetry".equals(moduleName) ? Optional.of(Version.parse("0.30.1")) : Optional.empty();
+
+        final List<Telemetry> emitted = new ArrayList<>();
+        final TelemetryRecorder recorder = new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractJavaDependencyAnalysisTest"),
+            emitted::add);
+
+        final Optional<Version> resolved = AbstractJavaDependencyAnalysis.resolveRequiredVersion(
+            r, "build.base.telemetry", "build.codemodel.jdk", versioning, List.of(), recorder);
+
+        assertThat(resolved).contains(Version.parse("0.30.1"));
+        assertThat(emitted).noneMatch(t -> t instanceof Warning);
+    }
+
+    @Test
+    void resolveRequiredVersion_catalogDivergesFromStaleBytecodeHint_prefersCatalogAndWarns() {
+        // the exact regression this method exists for: codemodel.jdk's own published jar has a
+        // requires clause for build.base.telemetry with a compiled-version hint of 0.30.1 — frozen
+        // in that jar's bytecode from whenever codemodel.jdk was last built — while the workspace's
+        // own ModuleVersioning catalog (walked fresh from every pom.xml/version.properties) has
+        // since moved on to 0.30.2-SNAPSHOT. The catalog must win, and the divergence must be
+        // visible rather than silently resolving to the stale version.
+        final RequiresModuleDescriptor r = requires("build.base.telemetry", Optional.of(Version.parse("0.30.1")));
+
+        final ModuleVersioning versioning = moduleName ->
+            "build.base.telemetry".equals(moduleName) ? Optional.of(Version.parse("0.30.2-SNAPSHOT")) : Optional.empty();
+
+        final List<Telemetry> emitted = new ArrayList<>();
+        final TelemetryRecorder recorder = new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractJavaDependencyAnalysisTest"),
+            emitted::add);
+
+        final Optional<Version> resolved = AbstractJavaDependencyAnalysis.resolveRequiredVersion(
+            r, "build.base.telemetry", "build.codemodel.jdk", versioning, List.of(), recorder);
+
+        assertThat(resolved).contains(Version.parse("0.30.2-SNAPSHOT"));
+        assertThat(emitted)
+            .as("a stale bytecode-compiled-version hint diverging from the workspace catalog must warn,"
+                + " naming both the declared and the resolved version")
+            .anyMatch(t -> t instanceof Warning
+                && t.toString().contains("0.30.1")
+                && t.toString().contains("0.30.2-SNAPSHOT"));
+    }
+
+    @Test
+    void resolveRequiredVersion_catalogEmpty_bytecodeHintPresent_fallsBackToBytecodeHint() {
+        final RequiresModuleDescriptor r = requires("build.base.telemetry", Optional.of(Version.parse("0.30.1")));
+
+        final ModuleVersioning versioning = _ -> Optional.empty();
+
+        final Optional<Version> resolved = AbstractJavaDependencyAnalysis.resolveRequiredVersion(
+            r, "build.base.telemetry", "build.codemodel.jdk", versioning, List.of(), recorder());
+
+        assertThat(resolved).contains(Version.parse("0.30.1"));
+    }
+
+    @Test
+    void resolveRequiredVersion_catalogAndBytecodeHintEmpty_fallsBackToKnownArtifactDescriptor() {
+        // workspace modules come from source module-info files, which carry no compiled-version
+        // hint at all — the only remaining source of a version is an already-resolved
+        // ArtifactDescriptor for that same module name, loaded earlier in the jdeps walk.
+        final RequiresModuleDescriptor r = requires("build.spin.common", Optional.empty());
+
+        final ModuleVersioning versioning = _ -> Optional.empty();
+
+        // built directly rather than via the shared descriptor(...) helper below: that helper's
+        // ModuleReference deliberately carries no version (it exists for the module-name-dedupe
+        // tests), but this fallback path specifically needs a *versioned* ModuleReference to fall
+        // back to.
+        final ArtifactDescriptor known = ArtifactDescriptor.create(
+            ModuleReference.of("build.spin.common", Version.parse("0.4.1-SNAPSHOT")),
+            Artifact.create("build.spin", "spin-common", "0.4.1-SNAPSHOT", "jar"),
+            Path.of("/repo/build/spin/spin-common/0.4.1-SNAPSHOT/spin-common-0.4.1-SNAPSHOT.jar"));
+
+        final Optional<Version> resolved = AbstractJavaDependencyAnalysis.resolveRequiredVersion(
+            r, "build.spin.common", "build.spin.application", versioning, List.of(known), recorder());
+
+        assertThat(resolved).contains(Version.parse("0.4.1-SNAPSHOT"));
+    }
+
+    @Test
+    void resolveRequiredVersion_noSourceHasAVersion_returnsEmpty() {
+        final RequiresModuleDescriptor r = requires("build.base.telemetry", Optional.empty());
+
+        final ModuleVersioning versioning = _ -> Optional.empty();
+
+        final Optional<Version> resolved = AbstractJavaDependencyAnalysis.resolveRequiredVersion(
+            r, "build.base.telemetry", "build.codemodel.jdk", versioning, List.of(), recorder());
+
+        assertThat(resolved).isEmpty();
     }
 
     // -------------------------------------------------------------------------
