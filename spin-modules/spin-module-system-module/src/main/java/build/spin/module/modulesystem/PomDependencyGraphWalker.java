@@ -21,6 +21,8 @@ package build.spin.module.modulesystem;
  */
 
 import build.base.telemetry.TelemetryRecorder;
+import build.base.version.Version;
+import build.base.version.VersionOrder;
 import build.codemodel.foundation.CodeModel;
 import build.spin.module.modulesystem.pom.Dependency;
 import build.spin.module.modulesystem.pom.Pom;
@@ -35,11 +37,9 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Walks a Maven workspace's {@code pom.xml} files and their transitive dependencies from the
@@ -92,8 +92,10 @@ final class PomDependencyGraphWalker {
         try {
             final PomReader pomReader = new PomReader(localRepo, recorder);
 
-            // visited keyed by "groupId:artifactId" to avoid re-processing
-            final Set<String> visited = new HashSet<>();
+            // visited keyed by "groupId:artifactId" -> the highest version visited so far for that
+            // coordinate. A later-discovered higher version re-enqueues the coordinate (see
+            // enqueueIfNew) rather than being silently dropped by a plain visited-set gate.
+            final Map<String, String> visited = new HashMap<>();
 
             // Phase 1: walk the workspace poms, visit each module's own artifact, and seed the
             // dependency BFS queue with their directly declared dependencies.
@@ -133,9 +135,12 @@ final class PomDependencyGraphWalker {
                     .forEach(d -> enqueueIfNew(d, workspaceCoordinates, visited, moduleQueue, recorder));
             }
 
-            // Phase 2: BFS transitive poms from the local repository. Each coordinate is visited
-            // exactly once — the visited gate fires before enqueue, so visitDependency is called
-            // here at dequeue time rather than at the enqueue site.
+            // Phase 2: BFS transitive poms from the local repository. A coordinate is visited once
+            // per distinct (non-superseded) version — the visited gate fires before enqueue, so
+            // visitDependency is called here at dequeue time rather than at the enqueue site. When a
+            // higher version of an already-visited coordinate is later discovered, it is re-enqueued
+            // and re-visited, so the last visit for a given coordinate always carries its highest
+            // discovered version.
             while (!moduleQueue.isEmpty()) {
                 final String[] coord = moduleQueue.poll();
                 visitDependency(coord[0], coord[1], coord[2], localRepo, recorder, codeModel, visitor);
@@ -227,16 +232,23 @@ final class PomDependencyGraphWalker {
 
     /**
      * Enqueues a dependency coordinate for Phase 2 BFS unless it belongs to a workspace module
-     * (already visited authoritatively via {@link #visitSelf}) or has already been visited.
+     * (already visited authoritatively via {@link #visitSelf}), or has already been visited at an
+     * equal or higher version.
      * <p>
      * When a coordinate does belong to a workspace module, and the dependency declares an explicit
      * version that disagrees with that module's own pom, this is surfaced via {@code recorder} —
      * otherwise the mismatch would be entirely invisible, since the dependency edge is deliberately
      * not walked (the workspace module's own version always wins).
+     * <p>
+     * When the same coordinate is reached more than once with different versions — two workspace
+     * modules can easily depend on the same transitive artifact through different paths, at
+     * different pinned versions — whichever path is visited first must not permanently win. A
+     * strictly higher version re-enqueues the coordinate so it is visited again; {@code visited} is
+     * updated so a subsequent equal-or-lower encounter is still suppressed.
      */
     private static void enqueueIfNew(final String[] coordinate,
                                      final Map<String, String> workspaceCoordinates,
-                                     final Set<String> visited,
+                                     final Map<String, String> visited,
                                      final Deque<String[]> moduleQueue,
                                      final TelemetryRecorder recorder) {
         final String key = coordinate[0] + ":" + coordinate[1];
@@ -250,8 +262,23 @@ final class PomDependencyGraphWalker {
             }
             return;
         }
-        if (visited.add(key)) {
+        final String existingVersion = visited.get(key);
+        if (existingVersion == null || isHigherVersion(coordinate[2], existingVersion)) {
+            visited.put(key, coordinate[2]);
             moduleQueue.add(coordinate);
+        }
+    }
+
+    /**
+     * Compares two raw version strings using Maven-qualifier-aware ordering, matching the
+     * conflict-resolution semantics {@code MavenCoordinateDedupe} already uses elsewhere in
+     * spin-java-module. Unparseable versions never supersede an existing one.
+     */
+    private static boolean isHigherVersion(final String candidate, final String existing) {
+        try {
+            return VersionOrder.MAVEN.compare(Version.parse(candidate), Version.parse(existing)) > 0;
+        } catch (final Exception e) {
+            return false;
         }
     }
 

@@ -22,6 +22,7 @@ package build.spin.module.modulesystem;
 
 import build.base.telemetry.TelemetryRecorder;
 import build.base.version.Version;
+import build.base.version.VersionOrder;
 import build.codemodel.dependency.injection.PostInject;
 import build.codemodel.foundation.CodeModel;
 import build.codemodel.foundation.naming.NonCachingNameProvider;
@@ -95,7 +96,14 @@ public class PomBasedModuleVersioning
             (names, groupId, artifactId, rawVersion) -> {
                 try {
                     final Version version = Version.parse(rawVersion);
-                    names.forEach(name -> versions.putIfAbsent(name, version));
+                    // keep the highest version registered for a name, not merely the first one
+                    // visited: the walker can (and, for a name reachable via more than one
+                    // transitive path, does) invoke this visitor more than once for the same name at
+                    // different versions -- an earlier, lower-version visit must not permanently pin
+                    // a name once a later visit discovers a higher one.
+                    names.forEach(name -> versions.merge(name, version,
+                        (existing, incoming) -> VersionOrder.MAVEN.compare(incoming, existing) > 0
+                            ? incoming : existing));
                 } catch (final Exception e) {
                     recorder.warn(e, "PomBasedModuleVersioning failed to parse version [%s] for [%s:%s]",
                         rawVersion, groupId, artifactId);
