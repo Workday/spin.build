@@ -588,6 +588,82 @@ class PomDependencyGraphWalkerTests {
     }
 
     @Test
+    void walk_revisitsCoordinateWithHigherVersionDiscoveredViaALaterPath(@TempDir final Path workspace,
+                                                                         @TempDir final Path localRepo)
+        throws Exception {
+        // Reproduces the real-world bug: two workspace dependencies transitively reach the same
+        // external coordinate through different paths, pinned to different versions in each path's
+        // own pom. Whichever path the BFS happens to visit first must not permanently win just
+        // because it got there first -- the higher version must supersede it.
+        writePom(workspace.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>root</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-old-path</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-new-path</artifactId>
+                  <version>1.0.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final Path oldPathDir = localRepo.resolve("build/base/base-old-path/1.0.0");
+        Files.createDirectories(oldPathDir);
+        writePom(oldPathDir.resolve("base-old-path-1.0.0.pom"), """
+            <project>
+              <groupId>build.base</groupId>
+              <artifactId>base-old-path</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-shared</artifactId>
+                  <version>0.30.0</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final Path newPathDir = localRepo.resolve("build/base/base-new-path/1.0.0");
+        Files.createDirectories(newPathDir);
+        writePom(newPathDir.resolve("base-new-path-1.0.0.pom"), """
+            <project>
+              <groupId>build.base</groupId>
+              <artifactId>base-new-path</artifactId>
+              <version>1.0.0</version>
+              <dependencies>
+                <dependency>
+                  <groupId>build.base</groupId>
+                  <artifactId>base-shared</artifactId>
+                  <version>0.30.1</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """);
+
+        final CollectingVisitor visitor = new CollectingVisitor();
+        PomDependencyGraphWalker.walk(workspace, localRepo, RECORDER, CODE_MODEL, visitor);
+
+        final List<Visit> sharedVisits = visitor.visits.stream()
+            .filter(v -> v.groupId().equals("build.base") && v.artifactId().equals("base-shared"))
+            .toList();
+
+        // the lower-version edge (visited first, via base-old-path) must not be the last word --
+        // once the higher-version edge (via base-new-path) is discovered, the coordinate is
+        // re-visited and the final visit must carry the higher version
+        assertThat(sharedVisits).isNotEmpty();
+        assertThat(sharedVisits.getLast().version()).isEqualTo("0.30.1");
+    }
+
+    @Test
     void walk_infersSameGroupVersionFromPomVersion(@TempDir final Path workspace) throws Exception {
         writePom(workspace.resolve("pom.xml"), """
             <project>
