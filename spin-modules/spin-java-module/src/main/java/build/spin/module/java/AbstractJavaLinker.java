@@ -277,7 +277,7 @@ public abstract class AbstractJavaLinker
                 if (nativePlatform.isPresent()) {
                     final var p = nativePlatform.get();
                     if (stripForeignNatives(staged, p.osDir(), p.archDir())) {
-                        this.recorder.info("[jlink] stripped foreign native platforms from %s (kept %s/%s)",
+                        this.recorder.info("stripped foreign native platforms from %s (kept %s/%s)",
                             staged.getFileName(), p.osDir(), p.archDir());
                     }
                 }
@@ -330,21 +330,31 @@ public abstract class AbstractJavaLinker
                 StandardOutputSubscriber.of(recordingObserver),
                 captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)));
 
+            final var linking = this.recorder.commence(
+                "linking runtime image for [%s] (target %s, %d module(s))",
+                packageName, target, addModules.size());
+
             try (var jlink = this.machine.launch(Application.class,
                 jlinkOptions.toArray(Option[]::new))) {
 
                 try {
                     jlink.onExit().get();
                 } catch (final Exception e) {
-                    throw new ProcessFailedException("jlink Execution Failed",
+                    final var exception = new ProcessFailedException("jlink Execution Failed",
                         ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
+                    linking.completeExceptionally(exception);
+                    throw exception;
                 }
 
                 if (jlink.exitValue().orElse(0) != 0) {
-                    throw new ProcessFailedException(
+                    final var exception = new ProcessFailedException(
                         "Runtime Image Generation Failed (exit code: " + jlink.exitValue().orElse(-1) + ")",
                         ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+                    linking.completeExceptionally(exception);
+                    throw exception;
                 }
+
+                linking.complete();
 
                 // -----
                 // Copy whatever jlink didn't link in: tainted module-path jars go to an external
@@ -374,7 +384,7 @@ public abstract class AbstractJavaLinker
                     if (nativePlatform.isPresent()) {
                         final var p = nativePlatform.get();
                         if (stripForeignNatives(destination, p.osDir(), p.archDir())) {
-                            this.recorder.info("[jlink] stripped foreign native platforms from %s (kept %s/%s)",
+                            this.recorder.info("stripped foreign native platforms from %s (kept %s/%s)",
                                 destination.getFileName(), p.osDir(), p.archDir());
                         }
                     }
@@ -456,6 +466,17 @@ public abstract class AbstractJavaLinker
         // JDK modules outside that image would otherwise fail. JmodModuleFinder reads real
         // descriptors straight out of the target's jmods/ (falling back to ModuleFinder.ofSystem()
         // only when there's no jmods/ dir to read, e.g. a JRE).
+        //
+        // Some JDK distributions (e.g. Eclipse Temurin's linux-x64 "jdk" download) don't ship a
+        // jmods/ directory at all -- it's a separate "jmods" download for those vendors -- so this
+        // fallback is reachable even for a nominally full JDK, not just a JRE. Left silent, the
+        // only symptom downstream is a confusing "Module X not found" resolution failure with no
+        // hint that the target JDK itself was the problem, so it's called out here explicitly.
+        if (!Files.isDirectory(jmodsDir)) {
+            this.recorder.warn("target JDK has no jmods/ directory at [%s] -- resolving against "
+                + "this host's own running module set instead, which may be missing modules the "
+                + "target JDK actually has", jmodsDir);
+        }
         final var targetJdkFinder = Files.isDirectory(jmodsDir)
             ? JmodModuleFinder.of(jmodsDir)
             : ModuleFinder.ofSystem();
@@ -468,14 +489,14 @@ public abstract class AbstractJavaLinker
                 rootModule,
                 Configuration.empty(),
                 targetJdkFinder,
-                msg -> this.recorder.info("[classify] %s", msg));
+                this.recorder::info);
         } catch (final IllegalStateException e) {
-            this.recorder.warn("[classify] classifyAndResolve failed (%s) — falling back to classify-only; "
+            this.recorder.warn("classifyAndResolve failed (%s) — falling back to classify-only; "
                 + "unreachable jars will NOT be pruned from the module-path", e.getMessage());
             classification = ModuleGraphClassifier.classify(
                 candidatePaths,
                 Set.of(rootModule),
-                msg -> this.recorder.info("[classify] %s", msg));
+                this.recorder::info);
         }
         final List<Path> modulePathJars = classification.modulePath();
 
@@ -514,7 +535,7 @@ public abstract class AbstractJavaLinker
 
         final List<Path> linkableJars = modulePathJars.stream().filter(jar -> !tainted.contains(jar)).toList();
         if (!tainted.isEmpty()) {
-            this.recorder.info("[jlink] %d module-path jar(s) depend on automatic modules and will stay "
+            this.recorder.info("%d module-path jar(s) depend on automatic modules and will stay "
                 + "external to the image: %s", tainted.size(),
                 tainted.stream().map(p -> p.getFileName().toString()).toList());
         }
@@ -583,6 +604,8 @@ public abstract class AbstractJavaLinker
                 this.recorder::warn, this.recorder::error)
         ));
 
+        final var dumping = this.recorder.commence("dumping CDS base archive for [%s]", packagePath);
+
         try (var dump = this.machine.launch(Application.class, options.toArray(Option[]::new))) {
 
             try {
@@ -596,12 +619,14 @@ public abstract class AbstractJavaLinker
                     "CDS Base Archive Dump Failed (exit code: " + dump.exitValue().orElse(-1) + ")",
                     ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
             }
+            dumping.complete();
         } catch (final Exception e) {
+            dumping.completeExceptionally(e);
             final Throwable unwrapped = ProcessFailedException.unwrap(e);
             final var detail = unwrapped instanceof ProcessFailedException p && !p.output().isEmpty()
                 ? "%n%s".formatted(p.output())
                 : "";
-            this.recorder.warn("[jlink] failed to dump CDS base archive for %s — startup will not benefit "
+            this.recorder.warn("failed to dump CDS base archive for %s — startup will not benefit "
                 + "from class data sharing: %s%s", packagePath, e.getMessage(), detail);
         }
     }
@@ -629,7 +654,7 @@ public abstract class AbstractJavaLinker
                 .filter(p -> !p.getFileName().toString().equals("module-info.java"))
                 .filter(AbstractJavaLinker::hasMainMethod)
                 .map(p -> toClassName(p, srcDir))
-                .peek(name -> recorder.diagnostic("[jlink] auto-detected main class: %s", name))
+                .peek(name -> recorder.diagnostic("auto-detected main class: %s", name))
                 .findFirst();
         } catch (final IOException e) {
             return Optional.empty();
