@@ -73,6 +73,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -487,16 +488,91 @@ public final class DefaultEngine implements Engine {
             .map(Workspace.class::cast);
     }
 
+    @Override
+    public Optional<Workspace> createWorkspace(final List<Path> roots) {
+
+        if (roots.isEmpty()) {
+            return Optional.empty();
+        }
+
+        if (roots.size() == 1) {
+            return createWorkspace(roots.getFirst());
+        }
+
+        final List<Path> normalizedRoots = roots.stream()
+            .map(root -> root.toAbsolutePath().normalize())
+            .toList();
+
+        requireDisjoint(normalizedRoots);
+
+        final FederatedWorkspace federatedWorkspace =
+            new FederatedWorkspace(this, commonAncestor(normalizedRoots), this.optionsByType);
+
+        final long discovered = normalizedRoots.stream()
+            .map(root -> {
+                final Optional<Project> project = getWorkspacePath(root).flatMap(
+                    workspacePath -> createProject(Optional.of(federatedWorkspace), workspacePath));
+
+                if (project.isEmpty()) {
+                    this.recorder.diagnostic("No Project discovered under federated Workspace root %s", root);
+                }
+
+                return project;
+            })
+            .filter(Optional::isPresent)
+            .count();
+
+        return discovered == 0 ? Optional.empty() : Optional.of(federatedWorkspace);
+    }
+
     /**
-     * Attempts to discover and create a suitable {@link Project} by performing a depth first search of the file system
-     * from the specified path.
+     * Ensures that none of the specified (already absolute and normalized) {@link Path}s overlaps with another,
+     * ie: that no {@link Path} is equal to, or nested within, another.
      * <p>
-     * Should the {@link Project} be a {@link Workspace} (ie: root-{@link Project}), a {@link Workspace} is returned.
+     * Overlapping roots would otherwise cause the same physical directory to be discovered twice as distinct
+     * {@link Project}s in the federated {@link Workspace} tree: once under its true parent (via the ordinary
+     * recursive discovery of that parent root), and again as a duplicate top-level child of the federated
+     * {@link Workspace}.
      *
-     * @param parent the optional parent of the {@link Project}
-     * @param path   the Project {@link Path}
-     * @return an {@link Optional} {@link Project}
+     * @param normalizedRoots the absolute, normalized root {@link Path}s
+     * @throws IllegalArgumentException if two or more of the specified {@link Path}s overlap
      */
+    private static void requireDisjoint(final List<Path> normalizedRoots) {
+
+        for (int i = 0; i < normalizedRoots.size(); i++) {
+            for (int j = 0; j < normalizedRoots.size(); j++) {
+                if (i != j && normalizedRoots.get(j).startsWith(normalizedRoots.get(i))) {
+                    throw new IllegalArgumentException(
+                        "Federated Workspace roots must not overlap: [" + normalizedRoots.get(j)
+                            + "] overlaps with [" + normalizedRoots.get(i) + "]");
+                }
+            }
+        }
+    }
+
+    /**
+     * Determines the deepest common ancestor {@link Path} shared by every specified {@link Path}, used as the
+     * synthetic path of a {@link FederatedWorkspace}.
+     *
+     * @param roots the {@link Path}s (assumed to share a common ancestor other than the file system root)
+     * @return the common ancestor {@link Path}
+     */
+    // Visible for testing.
+    static Path commonAncestor(final List<Path> roots) {
+
+        Path common = roots.getFirst().toAbsolutePath().normalize();
+
+        for (int i = 1; i < roots.size(); i++) {
+            final Path other = roots.get(i).toAbsolutePath().normalize();
+
+            while (common != null && !other.startsWith(common)) {
+                common = common.getParent();
+            }
+        }
+
+        return common == null ? roots.getFirst().toAbsolutePath().getRoot() : common;
+    }
+
     /**
      * Core value bindings for the engine {@link Context}. Extracted as a {@link Module} so tests
      * can override individual bindings via {@link build.codemodel.dependency.injection.Modules#override}.
@@ -517,6 +593,16 @@ public final class DefaultEngine implements Engine {
         }
     }
 
+    /**
+     * Attempts to discover and create a suitable {@link Project} by performing a depth first search of the file system
+     * from the specified path.
+     * <p>
+     * Should the {@link Project} be a {@link Workspace} (ie: root-{@link Project}), a {@link Workspace} is returned.
+     *
+     * @param parent the optional parent of the {@link Project}
+     * @param path   the Project {@link Path}
+     * @return an {@link Optional} {@link Project}
+     */
     Optional<Project> createProject(final Optional<Project> parent, final Path path) {
 
         // ensure the Path is a Folder

@@ -29,6 +29,7 @@ import build.codemodel.dependency.injection.InjectionFramework;
 
 import java.nio.file.FileSystem;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -144,6 +145,27 @@ public interface Engine
      * @see #getWorkspacePath(Path)
      */
     Optional<Workspace> createWorkspace(Path path);
+
+    /**
+     * Discovers and creates a single federated {@link Workspace} spanning multiple physical roots, performing a
+     * depth first search of the file system from each of the specified {@link Path}s to create necessary
+     * sub-{@link Project}s.
+     * <p>
+     * Every {@link Project} discovered under any of the given roots shares one {@link Workspace}: their
+     * {@link Project#workspace()} resolves to the same federating root, and {@link Project#stream()} called on
+     * that root yields the union of every root's {@link Project} tree. This allows cross-repo sibling resolution
+     * (e.g. {@link Project#workspace()}{@code .stream()} scans) to work unmodified across physical root
+     * boundaries.
+     *
+     * @param roots the {@link Path}s of each physical root to include in the federated {@link Workspace}
+     * @return an {@link Optional} {@link Workspace}; empty when no root {@link Path} yields a discoverable
+     *         {@link Project}
+     * @throws IllegalArgumentException if two or more of the specified {@link Path}s overlap (ie: one is nested
+     *         within, or equal to, another), as this would create ambiguous, duplicate {@link Project}s
+     *
+     * @see #createWorkspace(Path)
+     */
+    Optional<Workspace> createWorkspace(List<Path> roots);
 
     /**
      * Creates a {@link Program} for the specified {@link Project} with the provided {@link Configuration}.

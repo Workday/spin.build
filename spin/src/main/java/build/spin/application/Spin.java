@@ -52,6 +52,7 @@ import build.spin.option.JlinkTargets;
 import build.spin.option.NetworkAccess;
 import build.spin.option.OperatingSystem;
 import build.spin.option.ReuseExternalBuildOutput;
+import build.spin.option.Root;
 import build.spin.option.ServerMode;
 import build.spin.option.ServerPort;
 import build.spin.option.Verbose;
@@ -159,7 +160,9 @@ public class Spin {
             .categoriesSectionName("Aliases:")
             .positionalArgument(tasks::add)
             .option(List.of("--working-dir", "-w"), WorkingDirectory.class, "of", "Working directory (default: current directory)", String.class)
-            .envVar("SPIN_WORKING_DIR", "--working-dir");
+            .envVar("SPIN_WORKING_DIR", "--working-dir")
+            .option(List.of("--root", "-r"), Root.class, "of",
+                "Additional physical root directory to federate into the Workspace (may be repeated)", String.class);
 
         commandClasses.forEach(cls -> commandBuilder.command(taskName(cls), taskDescription(cls)));
 
@@ -238,14 +241,31 @@ public class Spin {
 
     private static Discovery discover(final Engine engine) {
 
-        final Path path = FileSystems.getDefault().getPath("")
-            .toAbsolutePath()
-            .resolve(engine.options().get(WorkingDirectory.class).get());
+        final FileSystem fileSystem = FileSystems.getDefault();
+        final Path userPath = fileSystem.getPath("").toAbsolutePath();
 
-        log("Discovering Workspace for Project in [%s]\n", path);
+        final Path path = userPath.resolve(engine.options().get(WorkingDirectory.class).get());
 
-        final Workspace workspace = engine.createWorkspace(path)
-            .orElseThrow(() -> new RuntimeException("Failed to discover workspace containing " + path));
+        final List<Path> additionalRoots = engine.options().stream(Root.class)
+            .map(root -> root.path(fileSystem))
+            .map(userPath::resolve)
+            .toList();
+
+        final Workspace workspace;
+
+        if (additionalRoots.isEmpty()) {
+            log("Discovering Workspace for Project in [%s]\n", path);
+
+            workspace = engine.createWorkspace(path)
+                .orElseThrow(() -> new RuntimeException("Failed to discover workspace containing " + path));
+        } else {
+            final List<Path> roots = Stream.concat(Stream.of(path), additionalRoots.stream()).toList();
+
+            log("Discovering federated Workspace for Roots %s\n", roots);
+
+            workspace = engine.createWorkspace(roots)
+                .orElseThrow(() -> new RuntimeException("Failed to discover federated workspace for roots " + roots));
+        }
 
         final Project project = workspace.getProject(path)
             .orElseThrow(() -> new IllegalStateException(
