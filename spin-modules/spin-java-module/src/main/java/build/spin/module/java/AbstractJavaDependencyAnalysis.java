@@ -69,7 +69,6 @@ import java.util.Optional;
 import java.util.Stack;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -172,15 +171,8 @@ public abstract class AbstractJavaDependencyAnalysis
         final var requiredModules = new LinkedHashSet<String>();
         final var unnamedArtifactDescriptors = new LinkedHashMap<Artifact, ArtifactDescriptor>();
 
-        // establish a Predicate to filter Artifacts to include for analysis
-        // TODO: this must be replaced with the versioning "include/exclude" module resource support
-        final Predicate<Artifact> predicate = artifact ->
-            artifact.type().equals("jar")
-                && !artifact.artifactId().equals("log4j-api-java9");
-
         // initialize with ArtifactDescriptors using the dependency ArtifactDescriptors
         descriptors
-            .filter(descriptor -> predicate.test(descriptor.artifact()))
             .forEach(descriptor -> artifactDescriptors.put(descriptor.artifact(), descriptor));
 
         // start with the ModuleDescriptor for this project
@@ -207,93 +199,83 @@ public abstract class AbstractJavaDependencyAnalysis
                         .getArtifact(reference, Optional.of(this.recorder))
                         .orElseThrow(() -> new RuntimeException("Failed to determine Artifact for " + module)));
 
-                // include the Artifact iff it satisfies the inclusion predicate
-                if (predicate.test(artifact)) {
+                // resolve the ArtifactDescriptor for the Artifact
+                // (this will only happen for "external" Artifacts)
+                if (!artifactDescriptors.containsKey(artifact)) {
+                    final var artifactDescriptor = ArtifactDescriptor.create(reference, artifact,
+                        this.artifactResolver.resolve(artifact)
+                            .orElseThrow(() -> new IllegalStateException("Failed to resolve artifact [" + artifact + "] for module [" + reference + "]")));
 
-                    // resolve the ArtifactDescriptor for the Artifact
-                    // (this will only happen for "external" Artifacts)
-                    if (!artifactDescriptors.containsKey(artifact)) {
-                        final var artifactDescriptor = ArtifactDescriptor.create(reference, artifact,
-                            this.artifactResolver.resolve(artifact)
-                                .orElseThrow(() -> new IllegalStateException("Failed to resolve artifact [" + artifact + "] for module [" + reference + "]")));
-
-                        artifactDescriptors.put(artifact, artifactDescriptor);
-                    }
-
-                    // obtain the ArtifactDescriptor
-                    final var artifactDescriptor = artifactDescriptors.get(artifact);
-                    if (artifactDescriptor == null) {
-                        throw new RuntimeException("Failed to determine ArtifactDescriptor for " + artifact);
-                    }
-
-                    this.workspace.stream()
-                        .filter(project -> project
-                            .getPlugin(JavaCompilerPlugin.class)
-                            .filter(plugin -> plugin.getModuleDescriptor().moduleName().toString().equals(reference.name()))
-                            .isPresent())
-                        .map(project -> project.getPlugin(JavaCompilerPlugin.class)
-                            .map(JavaPlugin::getModuleDescriptor)
-                            .orElseThrow(() -> new IllegalStateException("Expected JavaCompilerPlugin to have a ModuleDescriptor for module [" + reference + "] in project [" + project.name() + "]")))
-                        .findFirst()
-                        .or(() -> this.artifactResolver.getModuleDescriptor(artifact, this.catalog, this.versioning).optional())
-                        .map(moduleDescriptor -> {
-                            moduleDescriptors.put(reference, moduleDescriptor);
-                            processed.put(reference.name(), reference.version());
-
-                            // TODO: correct the module reference if it's name is different!
-                            // (eg: asm-7.2 has a different jar name but the same module name as asm-9.4!)
-
-                            // push the non-Java Platform required modules onto the stack for processing
-                            moduleDescriptor.requiresClauses()
-                                .filter(r -> r.traits(RequiresModifier.class).noneMatch(m -> m == RequiresModifier.STATIC))
-                                .peek(r -> {
-                                    if (JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString())) {
-                                        platformModules.add(ModuleReference.of(r.requiresModuleName().toString(), jdkVersion));
-                                    }
-                                })
-                                .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
-                                .map(r -> {
-                                    final String name = r.requiresModuleName().toString();
-                                    final Optional<Version> version = resolveRequiredVersion(
-                                        r, name, moduleDescriptor.moduleName().toString(),
-                                        this.versioning, artifactDescriptors.values(), this.recorder);
-                                    return ModuleReference.of(name, version);
-                                })
-                                // GraalVM modules are not available in standard JDKs; exclude the entire namespace
-                                .filter(r -> !r.name().startsWith("org.graalvm."))
-                                .peek(r -> {
-                                    // track all required module names for module-path placement
-                                    // unconditionally — even if already processed. A module that was
-                                    // processed before its dependant ran would otherwise never get
-                                    // added to requiredModules, causing it to land on classpath
-                                    // instead of module-path (the graphql-java-kickstart bug).
-                                    requiredModules.add(r.name());
-                                })
-                                .filter(r -> shouldProcess(r.name(), r.version(), processed))
-                                .peek(r -> this.recorder.info("Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.moduleName().toString(), r))
-                                .forEach(pending::push);
-
-                            return reference;
-                        })
-                        .orElseGet(() -> {
-                            final var resolvedDescriptor = this.artifactResolver.getModuleDescriptor(artifact, this.catalog, this.versioning);
-                            if (resolvedDescriptor.isException()) {
-                                final String reason = resolvedDescriptor.exception()
-                                    .map(e -> ": " + e.getClass().getSimpleName() + ": " + e.getMessage())
-                                    .orElse("");
-                                this.recorder.info("Ignoring module [%s] — no ModuleDescriptor available%s", reference, reason);
-                            } else {
-                                // no module-info.class and no Automatic-Module-Name: genuinely unnamed jar
-                                unnamedArtifactDescriptors.put(artifact, artifactDescriptor);
-                            }
-                            ignored.add(reference.name());
-                            return reference;
-                        });
+                    artifactDescriptors.put(artifact, artifactDescriptor);
                 }
-                else {
-                    // we're ignoring the module, so mark that it is processed!
-                    ignored.add(reference.name());
+
+                // obtain the ArtifactDescriptor
+                final var artifactDescriptor = artifactDescriptors.get(artifact);
+                if (artifactDescriptor == null) {
+                    throw new RuntimeException("Failed to determine ArtifactDescriptor for " + artifact);
                 }
+
+                this.workspace.stream()
+                    .filter(project -> project
+                        .getPlugin(JavaCompilerPlugin.class)
+                        .filter(plugin -> plugin.getModuleDescriptor().moduleName().toString().equals(reference.name()))
+                        .isPresent())
+                    .map(project -> project.getPlugin(JavaCompilerPlugin.class)
+                        .map(JavaPlugin::getModuleDescriptor)
+                        .orElseThrow(() -> new IllegalStateException("Expected JavaCompilerPlugin to have a ModuleDescriptor for module [" + reference + "] in project [" + project.name() + "]")))
+                    .findFirst()
+                    .or(() -> this.artifactResolver.getModuleDescriptor(artifact, this.catalog, this.versioning).optional())
+                    .map(moduleDescriptor -> {
+                        moduleDescriptors.put(reference, moduleDescriptor);
+                        processed.put(reference.name(), reference.version());
+
+                        // TODO: correct the module reference if it's name is different!
+                        // (eg: asm-7.2 has a different jar name but the same module name as asm-9.4!)
+
+                        // push the non-Java Platform required modules onto the stack for processing
+                        moduleDescriptor.requiresClauses()
+                            .filter(r -> r.traits(RequiresModifier.class).noneMatch(m -> m == RequiresModifier.STATIC))
+                            .peek(r -> {
+                                if (JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString())) {
+                                    platformModules.add(ModuleReference.of(r.requiresModuleName().toString(), jdkVersion));
+                                }
+                            })
+                            .filter(r -> !JavaPlatform.isJavaPlatformModule(r.requiresModuleName().toString()))
+                            .map(r -> {
+                                final String name = r.requiresModuleName().toString();
+                                final Optional<Version> version = resolveRequiredVersion(
+                                    r, name, moduleDescriptor.moduleName().toString(),
+                                    this.versioning, artifactDescriptors.values(), this.recorder);
+                                return ModuleReference.of(name, version);
+                            })
+                            .peek(r -> {
+                                // track all required module names for module-path placement
+                                // unconditionally — even if already processed. A module that was
+                                // processed before its dependant ran would otherwise never get
+                                // added to requiredModules, causing it to land on classpath
+                                // instead of module-path (the graphql-java-kickstart bug).
+                                requiredModules.add(r.name());
+                            })
+                            .filter(r -> shouldProcess(r.name(), r.version(), processed))
+                            .peek(r -> this.recorder.info("Module [%s] requires [%s] — queuing for catalog lookup", moduleDescriptor.moduleName().toString(), r))
+                            .forEach(pending::push);
+
+                        return reference;
+                    })
+                    .orElseGet(() -> {
+                        final var resolvedDescriptor = this.artifactResolver.getModuleDescriptor(artifact, this.catalog, this.versioning);
+                        if (resolvedDescriptor.isException()) {
+                            final String reason = resolvedDescriptor.exception()
+                                .map(e -> ": " + e.getClass().getSimpleName() + ": " + e.getMessage())
+                                .orElse("");
+                            this.recorder.info("Ignoring module [%s] — no ModuleDescriptor available%s", reference, reason);
+                        } else {
+                            // no module-info.class and no Automatic-Module-Name: genuinely unnamed jar
+                            unnamedArtifactDescriptors.put(artifact, artifactDescriptor);
+                        }
+                        ignored.add(reference.name());
+                        return reference;
+                    });
             }
         }
 
@@ -521,7 +503,6 @@ public abstract class AbstractJavaDependencyAnalysis
                     }
                     else {
                         artifactDescriptors.entrySet().stream()
-                            .filter(entry -> predicate.test(entry.getKey()))
                             .filter(entry -> entry.getValue().reference().name().equals(moduleName))
                             .findFirst()
                             .ifPresentOrElse(consumeArtifact, () -> unknownModules.add(moduleName));
