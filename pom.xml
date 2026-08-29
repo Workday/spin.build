@@ -337,11 +337,6 @@
             </dependency>
             <dependency>
                 <groupId>build.percolate</groupId>
-                <artifactId>percolate-maven-classify-plugin</artifactId>
-                <version>${percolate.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>build.percolate</groupId>
                 <artifactId>percolate-maven-exec-plugin</artifactId>
                 <version>${percolate.version}</version>
             </dependency>
