@@ -186,6 +186,20 @@ public final class PomReader {
         effectiveProps.put("project.artifactId", artifactId);
         effectiveProps.put("project.version", version);
         effectiveProps.put("project.basedir", pomPath.getParent().toString());
+        // <build><directory> / <build><finalName>: this pom's own explicit value if it declares
+        // one (Maven's defaults of <basedir>/target and ${artifactId}-${version} otherwise) --
+        // seeded unconditionally (like project.basedir above), so a value inherited from the
+        // parent's own effectiveProps merge above never wins over this pom's own directory. Plugin
+        // config referencing ${project.build.directory} / ${project.build.finalName} (e.g.
+        // maven-surefire-plugin's <argLine>) then interpolates correctly instead of being
+        // forwarded to consumers as a literal, unresolved "${...}" token.
+        final Path buildDir = raw.buildDirectory != null
+            ? pomPath.getParent().resolve(interpolate(raw.buildDirectory, effectiveProps)).normalize()
+            : pomPath.getParent().resolve("target");
+        effectiveProps.put("project.build.directory", buildDir.toString());
+        effectiveProps.put("project.build.finalName", raw.buildFinalName != null
+            ? interpolate(raw.buildFinalName, effectiveProps)
+            : artifactId + "-" + version);
         effectiveProps.put("settings.localRepository", this.localRepository.toString());
 
         // active profiles: their <properties> apply at lower precedence than the pom's own
@@ -344,6 +358,8 @@ public final class PomReader {
         List<RawPlugin> plugins = List.of();
         List<RawPlugin> pluginManagement = List.of();
         List<RawProfile> profiles = List.of();
+        String buildDirectory;
+        String buildFinalName;
     }
 
     private record RawDependency(Gav gav,
@@ -409,6 +425,8 @@ public final class PomReader {
                 directChild(buildEl, "plugins").ifPresent(pluginsEl -> raw.plugins = readPlugins(pluginsEl));
                 directChild(buildEl, "pluginManagement").flatMap(pmEl -> directChild(pmEl, "plugins"))
                     .ifPresent(pluginsEl -> raw.pluginManagement = readPlugins(pluginsEl));
+                raw.buildDirectory = directChildText(buildEl, "directory");
+                raw.buildFinalName = directChildText(buildEl, "finalName");
             });
 
             raw.profiles = readProfiles(root);
