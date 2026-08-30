@@ -946,6 +946,30 @@ public class JavaProjectTests {
     }
 
     @Test
+    @WorkspacePath("jlink-tainted")
+    void shouldRelinkOverAnExistingRuntimeImage(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        // jlink refuses to run when --output already exists, so a second link of the same project
+        // must clear the prior image first rather than failing with "directory already exists"
+        engine.createProgram(workspace, Task.Pattern.of("jlink"), JlinkTargets.HOST_ONLY)
+            .execute(DefaultAssetCache.create());
+
+        final Path packagePath = workspace.path().resolve(".build")
+            .resolve(workspace.name() + "-" + JavaPlatform.hostTarget());
+        assertThat(packagePath).as("expected a host-target runtime image after the first link").isDirectory();
+
+        // a fresh Program and AssetCache force the linker to actually rerun rather than being
+        // cache-short-circuited
+        engine.createProgram(workspace, Task.Pattern.of("jlink"), JlinkTargets.HOST_ONLY)
+            .execute(DefaultAssetCache.create());
+
+        assertThat(packagePath).as("expected the runtime image to be relinked in place").isDirectory();
+        assertThat(packagePath.resolve("lib/server/classes.jsa")).exists();
+        assertThat(packagePath.resolve("bin/jlink-tainted.sh")).exists();
+    }
+
+    @Test
     @WorkspacePath("jdeps")
     void getEarliestShouldReturnPresentOptional(final JavaPlatform platform) {
         assertThat(platform.getEarliest().isPresent()).as("getEarliest() should return a JDK but no JDKs were discovered").isTrue();
