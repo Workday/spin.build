@@ -226,4 +226,161 @@ class PomReaderTests {
 
         assertThat(customChecks.version()).contains("2.0.0");
     }
+
+    /**
+     * {@code PomReader} must seed Maven's own {@code <build>} defaults —
+     * {@code ${project.build.directory}} ({@code <basedir>/target}) and
+     * {@code ${project.build.finalName}} ({@code ${artifactId}-${version}}) — into the effective
+     * properties, exactly as it already seeds {@code project.basedir}, whenever the pom does not
+     * declare its own {@code <build><directory>} / {@code <build><finalName>}.
+     */
+    @Test
+    void read_seedsMavenBuildDirectoryAndFinalNameDefaults(@TempDir final Path dir) throws Exception {
+        final Path pomXml = dir.resolve("pom.xml");
+        Files.writeString(pomXml, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>widget</artifactId>
+              <version>1.2.3</version>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(pomXml);
+
+        assertThat(pom).isPresent();
+        assertThat(pom.get().properties())
+            .containsEntry("project.build.directory", dir.resolve("target").toString())
+            .containsEntry("project.build.finalName", "widget-1.2.3");
+    }
+
+    /**
+     * When the pom declares its own {@code <build><directory>} / {@code <build><finalName>}, that
+     * explicit value wins over Maven's default — the seeding must not clobber it. A relative
+     * {@code <directory>} resolves against {@code <basedir>} and both interpolate against the
+     * effective properties.
+     */
+    @Test
+    void read_explicitBuildDirectoryAndFinalNameWinOverDefaults(@TempDir final Path dir) throws Exception {
+        final Path pomXml = dir.resolve("pom.xml");
+        Files.writeString(pomXml, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>widget</artifactId>
+              <version>1.2.3</version>
+              <build>
+                <directory>${project.basedir}/build/out</directory>
+                <finalName>${project.artifactId}-final</finalName>
+              </build>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(pomXml);
+
+        assertThat(pom).isPresent();
+        assertThat(pom.get().properties())
+            .containsEntry("project.build.directory", dir.resolve("build/out").toString())
+            .containsEntry("project.build.finalName", "widget-final");
+    }
+
+    /**
+     * Regression: a plugin {@code <configuration>} that references {@code ${project.build.directory}}
+     * (the way {@code spin-java-module-tests}' surefire {@code <argLine>} did, via
+     * {@code @${project.build.directory}/...args}) must come back fully interpolated, not carrying
+     * the literal {@code ${project.build.directory}} token through to consumers — where it would
+     * later blow up as {@code PropertyNotFoundException: Base object is null for property: build}
+     * when re-evaluated by an EL processor that has no {@code project} binding.
+     */
+    @Test
+    void read_interpolatesProjectBuildDirectoryInPluginConfiguration(@TempDir final Path dir) throws Exception {
+        final Path pomXml = dir.resolve("pom.xml");
+        Files.writeString(pomXml, """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>consumer</artifactId>
+              <version>1.0.0</version>
+              <build>
+                <plugins>
+                  <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                      <argLine>@${project.build.directory}/test.args</argLine>
+                    </configuration>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(pomXml);
+
+        assertThat(pom).isPresent();
+        final Plugin surefire = pom.get()
+            .plugin(new GA("org.apache.maven.plugins", "maven-surefire-plugin"))
+            .orElseThrow();
+
+        assertThat(surefire.configuration().textChild("argLine"))
+            .contains("@" + dir.resolve("target") + "/test.args");
+    }
+
+    /**
+     * The seeded {@code project.build.directory} / {@code project.build.finalName} must be this
+     * pom's own — a child module resolves {@code ${project.build.directory}} to <em>its</em>
+     * {@code target}, not the parent's. The parent's already-computed values flow in via the
+     * effective-properties merge, so these must be re-seeded with an unconditional {@code put}
+     * (like {@code project.basedir}), never {@code putIfAbsent}.
+     */
+    @Test
+    void read_childPomBuildDirectoryIsNotShadowedByParent(@TempDir final Path dir) throws Exception {
+        Files.writeString(dir.resolve("pom.xml"), """
+            <project>
+              <groupId>com.example</groupId>
+              <artifactId>parent</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+            </project>
+            """);
+
+        final Path childDir = Files.createDirectory(dir.resolve("child"));
+        final Path childPom = childDir.resolve("pom.xml");
+        Files.writeString(childPom, """
+            <project>
+              <parent>
+                <groupId>com.example</groupId>
+                <artifactId>parent</artifactId>
+                <version>1.0.0</version>
+                <relativePath>../pom.xml</relativePath>
+              </parent>
+              <artifactId>child</artifactId>
+              <build>
+                <plugins>
+                  <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                      <argLine>@${project.build.directory}/test.args</argLine>
+                    </configuration>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """);
+
+        final PomReader reader = new PomReader(dir, RECORDER);
+        final Optional<Pom> pom = reader.read(childPom);
+
+        assertThat(pom).isPresent();
+        assertThat(pom.get().properties())
+            .containsEntry("project.build.directory", childDir.resolve("target").toString())
+            .containsEntry("project.build.finalName", "child-1.0.0");
+
+        final Plugin surefire = pom.get()
+            .plugin(new GA("org.apache.maven.plugins", "maven-surefire-plugin"))
+            .orElseThrow();
+        assertThat(surefire.configuration().textChild("argLine"))
+            .contains("@" + childDir.resolve("target") + "/test.args");
+    }
 }
