@@ -12,6 +12,7 @@ import build.spawn.application.option.Argument;
 import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
 import build.spawn.application.option.StandardErrorSubscriber;
+import build.spawn.application.option.StandardOutputSubscriber;
 import build.spawn.jdk.JDK;
 import build.spawn.jdk.JDKApplication;
 import build.spawn.jdk.option.AddModules;
@@ -242,7 +243,7 @@ public abstract class AbstractTest
         args.add(Argument.of("--reports-dir=" + reportPath));
         args.add(Console.ofSystem());
 
-        final ErrorCapture captured = new ErrorCapture();
+        final ErrorCapture capturedErr = new ErrorCapture();
         args.add(StandardErrorSubscriber.of(line -> {
             if (ErrorCapture.isSpawnAgentOutput(line)) {
                 // already visible via JUnit Platform console output
@@ -250,9 +251,17 @@ public abstract class AbstractTest
                 this.recorder.warn(line);
             } else {
                 this.recorder.error(line);
-                captured.append(line);
+                capturedErr.append(line);
             }
         }));
+
+        // JUnit's ConsoleLauncher writes its actual failure summary (which test failed and why) to
+        // stdout, not stderr -- a non-zero exit with nothing on stderr would otherwise surface as
+        // a bare "JUnit Failed (exit code 1)" with no indication of what actually failed, visible
+        // only by scrolling back through the live console log. ErrorCapture.junitFailureReport trims
+        // the stdout capture down to just that summary and appends any captured stderr.
+        final ErrorCapture capturedOut = new ErrorCapture();
+        args.add(StandardOutputSubscriber.of(capturedOut::append));
 
         try (JDKApplication junit = this.machine.launch(
             JDKApplication.class,
@@ -265,7 +274,7 @@ public abstract class AbstractTest
                     if (value != 0) {
                         throw new ProcessFailedException(
                             "JUnit Failed (exit code " + value + ")",
-                            captured.output());
+                            ErrorCapture.junitFailureReport(capturedErr.output(), capturedOut.output()));
                     }
                 });
         } catch (final Exception e) {

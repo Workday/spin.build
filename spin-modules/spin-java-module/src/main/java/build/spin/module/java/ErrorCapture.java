@@ -24,6 +24,7 @@ import build.base.flow.Consumer;
 import build.spawn.application.option.StandardErrorSubscriber;
 
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -33,6 +34,9 @@ import java.util.stream.Stream;
  * use {@link #append(String)} directly when the caller needs custom routing (e.g. error vs. warning triage).
  */
 public final class ErrorCapture {
+
+    private static final Predicate<String> FAILURES_HEADER =
+        Pattern.compile("^Failures \\(\\d+\\):$").asMatchPredicate();
 
     private final StringBuilder buffer = new StringBuilder();
 
@@ -106,6 +110,65 @@ public final class ErrorCapture {
      */
     public static String selectOutput(final String stderr, final Stream<String> stdout) {
         return stderr.isEmpty() ? stdout.collect(Collectors.joining("\n")) : stderr;
+    }
+
+    /**
+     * Extracts the {@code Failures (N):} section from JUnit {@code ConsoleLauncher} stdout — the
+     * block naming each failed test and its exception — discarding the full pass/fail tree and any
+     * telemetry the tests themselves printed to stdout. Blank lines separating individual failures
+     * are preserved (runs of them collapsed to one); leading and trailing blank lines are trimmed.
+     * Returns {@code stdout} unchanged when no such section is present.
+     */
+    public static String junitFailures(final String stdout) {
+        final String[] lines = stdout.split("\n", -1);
+
+        final int start = failuresHeaderLine(lines);
+        if (start < 0) {
+            return stdout;
+        }
+
+        int end = lines.length;
+        for (int i = start + 1; i < lines.length; i++) {
+            if (lines[i].startsWith("Test run finished")) {
+                end = i;
+                break;
+            }
+        }
+
+        return Stream.of(lines).skip(start).limit(end - start)
+            .map(String::stripTrailing)
+            .collect(Collectors.joining("\n"))
+            .strip()
+            .replaceAll("\n{3,}", "\n\n");
+    }
+
+    private static int failuresHeaderLine(final String[] lines) {
+        for (int i = 0; i < lines.length; i++) {
+            if (FAILURES_HEADER.test(lines[i].stripTrailing())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Builds the failure message for a non-zero JUnit {@code ConsoleLauncher} exit: the trimmed
+     * {@link #junitFailures(String) failure summary} from {@code stdout} followed by whatever was
+     * captured on {@code stderr}, so the named failures survive even when the run also wrote to
+     * stderr. Either part is omitted when empty; both empty yields an empty string.
+     *
+     * <p>When {@code stdout} has no {@code Failures (N):} section — a launch error, a bad argument,
+     * a crash before any test ran — the real diagnostic is on {@code stderr}, so that is returned
+     * alone rather than prefixed with the entire console tree. Only when {@code stderr} is also
+     * empty does the unparsed {@code stdout} become the message, as a last resort.
+     */
+    public static String junitFailureReport(final String stderr, final String stdout) {
+        if (failuresHeaderLine(stdout.split("\n", -1)) < 0 && !stderr.isEmpty()) {
+            return stderr;
+        }
+        return Stream.of(junitFailures(stdout), stderr)
+            .filter(part -> !part.isEmpty())
+            .collect(Collectors.joining("\n\n"));
     }
 
     /**
