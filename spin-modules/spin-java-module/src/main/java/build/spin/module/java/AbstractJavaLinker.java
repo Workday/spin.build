@@ -265,6 +265,10 @@ public abstract class AbstractJavaLinker
         // module-path for every other target's jlink run.
         final var stagedModulePath = buildPath.resolve(packageName + "-" + target + "-modulepath-staging");
         try {
+            // jlink refuses to run at all when --output already exists (even from a prior
+            // successful link of this same project) — clear it first so a rerun doesn't fail with
+            // "directory already exists".
+            deleteDirectory(packagePath);
             // a prior run that was interrupted before reaching the finally block below (Ctrl-C,
             // OOM-kill, crash) can leave stale jars here — clear them first so a stale copy of a
             // since-renamed-or-removed dependency never ends up on jlink's module-path scan
