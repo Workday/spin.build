@@ -2,6 +2,8 @@ package build.spin.module.java;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
@@ -182,6 +184,117 @@ class ErrorCaptureTests {
     @Test
     void selectOutput_returnsEmptyWhenBothEmpty() {
         assertThat(ErrorCapture.selectOutput("", Stream.empty())).isEmpty();
+    }
+
+    // -------------------------------------------------------------------------
+    // junitFailures
+    // -------------------------------------------------------------------------
+
+    // a verbatim stdout transcript from a real `spin clean build` run whose spin-engine-tests
+    // JUnit task failed: the ConsoleLauncher tree and pass/fail summary interleaved with the
+    // telemetry the tests under it printed to stdout.
+    private static String consoleLauncherStdout() throws IOException {
+        try (var in = ErrorCaptureTests.class.getResourceAsStream("console-launcher-stdout.txt")) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    @Test
+    void junitFailures_extractsOnlyTheFailuresSection() throws IOException {
+        assertThat(ErrorCapture.junitFailures(consoleLauncherStdout())).isEqualTo(String.join("\n",
+            "Failures (1):",
+            "  JUnit Jupiter:DefaultEngineResourceScopingTests:shouldHonorASpinIgnoreDefinedInANonRootProjectNotJustTheWorkspaceRoot(Path)",
+            "    MethodSource [className = 'build.spin.engine.tests.DefaultEngineResourceScopingTests', methodName = 'shouldHonorASpinIgnoreDefinedInANonRootProjectNotJustTheWorkspaceRoot', methodParameterTypes = 'java.nio.file.Path']",
+            "    => java.util.NoSuchElementException: No value present",
+            "       java.base/java.util.Optional.orElseThrow(Optional.java:377)",
+            "       build.spin.engine.tests.test@0.4.1-SNAPSHOT/build.spin.engine.tests.DefaultEngineResourceScopingTests.shouldHonorASpinIgnoreDefinedInANonRootProjectNotJustTheWorkspaceRoot(DefaultEngineResourceScopingTests.java:91)"));
+    }
+
+    @Test
+    void junitFailures_dropsPrecedingTreeAndTestTelemetry() throws IOException {
+        assertThat(ErrorCapture.junitFailures(consoleLauncherStdout()))
+            .doesNotContain("JUnit Jupiter ✔")
+            .doesNotContain("WorkspaceDiscovery")
+            .doesNotContain("Test run finished")
+            .doesNotContain("containers found");
+    }
+
+    @Test
+    void junitFailures_returnsInputUnchangedWhenNoFailuresSection() {
+        final String stdout = "some tool output\nwith no junit failure summary";
+        assertThat(ErrorCapture.junitFailures(stdout)).isEqualTo(stdout);
+    }
+
+    @Test
+    void junitFailures_keepsWholeSectionWhenNoTrailingSummary() {
+        final String stdout = String.join("\n",
+            "Failures (1):",
+            "  JUnit Jupiter:SomeTest:fails()",
+            "    => java.lang.AssertionError: expected true");
+        assertThat(ErrorCapture.junitFailures(stdout)).isEqualTo(stdout);
+    }
+
+    @Test
+    void junitFailures_keepsSeparatorBlankLinesButCollapsesRuns() {
+        final String stdout = String.join("\n",
+            "Failures (2):",
+            "  first",
+            "",
+            "",
+            "  second",
+            "",
+            "Test run finished after 1 ms");
+        assertThat(ErrorCapture.junitFailures(stdout))
+            .isEqualTo("Failures (2):\n  first\n\n  second");
+    }
+
+    @Test
+    void junitFailures_ignoresLinesThatMerelyStartWithFailures() {
+        final String stdout = String.join("\n",
+            "Failures (the flaky ones) are being retried",
+            "  some telemetry",
+            "Failures (1):",
+            "  JUnit Jupiter:SomeTest:fails()");
+        assertThat(ErrorCapture.junitFailures(stdout))
+            .isEqualTo("Failures (1):\n  JUnit Jupiter:SomeTest:fails()");
+    }
+
+    // -------------------------------------------------------------------------
+    // junitFailureReport
+    // -------------------------------------------------------------------------
+
+    @Test
+    void junitFailureReport_appendsCapturedStderrAfterTheFailureSummary() throws IOException {
+        assertThat(ErrorCapture.junitFailureReport("boom on stderr", consoleLauncherStdout()))
+            .startsWith("Failures (1):")
+            .endsWith("\n\nboom on stderr");
+    }
+
+    @Test
+    void junitFailureReport_omitsStderrWhenEmpty() throws IOException {
+        assertThat(ErrorCapture.junitFailureReport("", consoleLauncherStdout()))
+            .isEqualTo(ErrorCapture.junitFailures(consoleLauncherStdout()));
+    }
+
+    @Test
+    void junitFailureReport_returnsStderrAloneWhenStdoutHasNoFailuresSection() {
+        final String stdout = String.join("\n",
+            "Thanks for using JUnit!",
+            "some telemetry line",
+            "and a big console tree");
+        assertThat(ErrorCapture.junitFailureReport("Error: unknown option '--nope'", stdout))
+            .isEqualTo("Error: unknown option '--nope'");
+    }
+
+    @Test
+    void junitFailureReport_fallsBackToStdoutWhenStderrEmptyAndNoFailuresSection() {
+        assertThat(ErrorCapture.junitFailureReport("", "raw console output, no summary"))
+            .isEqualTo("raw console output, no summary");
+    }
+
+    @Test
+    void junitFailureReport_isEmptyWhenBothPartsEmpty() {
+        assertThat(ErrorCapture.junitFailureReport("", "")).isEmpty();
     }
 
     @Test
