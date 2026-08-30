@@ -21,6 +21,8 @@ module build.spin.engine.tests.test {
     requires build.spin;
     requires build.spin.common;
     requires build.spin.testing;
+    requires build.spin.module.configuration;
+    requires build.spin.module.clean;
     requires org.junit.jupiter.api;
     requires org.assertj.core;
 

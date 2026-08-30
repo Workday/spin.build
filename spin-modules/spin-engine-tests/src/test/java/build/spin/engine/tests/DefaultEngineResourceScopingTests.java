@@ -47,12 +47,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * instead - meaning every non-root {@link Project} in a {@link Workspace} actually shared the root's
  * {@code ConfigurationResource} (and, therefore, its {@code .spinignore} rules, or the lack of any).
  * <p>
- * This test does not reference {@code ConfigurationResource} directly (nor does the module declare a
- * {@code requires} on {@code build.spin.module.configuration}) - like {@code spin-configuration-module}
- * itself, it is only present on the module path so {@code ServiceLoader} discovers it, exactly as
- * production spin does. The bug is instead observed the way it actually manifested: a directory that
- * would otherwise become its own child {@link Project} is excluded by a {@code .spinignore} rule that
- * lives only in its parent {@link Project} - not the {@link Workspace} root.
+ * This test does not reference {@code ConfigurationResource} directly; {@code spin-configuration-module}
+ * is only present on the module path (via an explicit {@code requires build.spin.module.configuration},
+ * matching the real {@code build.spin.application} module's own {@code requires transitive} of every
+ * plugin module) so {@code ServiceLoader} discovers it, exactly as production spin does.
+ * {@code spin-clean-module} is required alongside it for the same reason - it too contributes a
+ * {@link build.spin.Resource} detected in every {@link Project}, and both build paths (Maven and
+ * spin's own self-hosted graph) must agree on the discovered plugin set. The bug is instead observed
+ * the way it actually manifested: a directory that would otherwise become its own child
+ * {@link Project} is excluded by a {@code .spinignore} rule that lives only in its parent
+ * {@link Project} - not the {@link Workspace} root.
  */
 class DefaultEngineResourceScopingTests {
 
