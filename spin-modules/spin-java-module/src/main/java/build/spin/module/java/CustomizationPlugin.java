@@ -45,6 +45,7 @@ import build.spin.Invocable;
 import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
+import build.spin.annotation.System;
 import build.spin.common.ProcessFailedException;
 import build.spin.common.task.SourcePathKind;
 import build.spin.common.util.Invocables;
@@ -60,6 +61,8 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.module.Configuration;
+import java.lang.module.ResolvedModule;
 import java.lang.reflect.Modifier;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -67,8 +70,10 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Stack;
 import java.util.concurrent.ExecutionException;
@@ -111,6 +116,10 @@ public class CustomizationPlugin
     private JDKVersion javaVersion;
 
     @Inject
+    @System
+    private JDKVersion systemJavaVersion;
+
+    @Inject
     private TargetDirectoryName target;
 
     @Inject
@@ -121,6 +130,9 @@ public class CustomizationPlugin
 
     @Inject
     private CodeModel codeModel;
+
+    @Inject
+    private JavaPlatform platform;
 
     /**
      * The custom created {@link Invocable}s.
@@ -235,7 +247,7 @@ public class CustomizationPlugin
                 final build.spin.module.modulesystem.ModuleReference requiresRef =
                     build.spin.module.modulesystem.ModuleReference.of(
                         requires.requiresModuleName().toString(),
-                        JDKModuleDescriptor.requiresVersion(requires));
+                        Optional.of(moduleVersion));
                 final Optional<Artifact> optional = this.catalog.getArtifact(requiresRef, Optional.of(this.recorder));
 
                 if (optional.isPresent()) {
@@ -243,33 +255,35 @@ public class CustomizationPlugin
 
                     this.recorder.info("Discovered External Dependency [%s] to be resolved", artifact);
 
-                    // and then the Resolver to resolve the path to it
-                    this.resolver.resolve(artifact)
-                        .ifPresent(p -> {
+                    // and then the Resolver to resolve the path to it. Exceptional#ifPresent() does
+                    // not behave like Optional#ifPresent() -- it returns an empty() Exceptional once
+                    // the action has run successfully, so chaining .orElseThrow() after it would
+                    // unconditionally throw even on success. Resolve the Path directly instead.
+                    final Path resolvedPath = this.resolver.resolve(artifact)
+                        .orElseThrow(() -> new IllegalStateException("Failed to resolve artifact [" + artifact + "]"));
 
-                            this.recorder.info("External Dependency [%s] resolved to [%s]", artifact, p);
+                    this.recorder.info("External Dependency [%s] resolved to [%s]", artifact, resolvedPath);
 
-                            // include the path to the artifact
-                            builder.add(p);
+                    // include the path to the artifact
+                    builder.add(resolvedPath);
 
-                            // attempt to resolve the ModuleDescriptor for the external dependency
-                            final Exceptional<JDKModuleDescriptor> optionalDescriptor =
-                                this.resolver.getModuleDescriptor(artifact, this.catalog, this.versioning);
+                    // attempt to resolve the ModuleDescriptor for the external dependency
+                    final Exceptional<JDKModuleDescriptor> optionalDescriptor =
+                        this.resolver.getModuleDescriptor(artifact, this.catalog, this.versioning);
 
-                            // include the transitive dependencies of the external dependency
-                            optionalDescriptor.ifPresent(descriptor -> {
-                                ModuleCycles.checkNotCyclic(descriptor, thisModuleName);
+                    // include the transitive dependencies of the external dependency
+                    optionalDescriptor.ifPresent(descriptor -> {
+                        ModuleCycles.checkNotCyclic(descriptor, thisModuleName);
 
-                                Streams.reverse(descriptor.requiresClauses())
-                                    .filter(r -> r.traits(RequiresModifier.class)
-                                        .anyMatch(m -> m == RequiresModifier.TRANSITIVE))
-                                    .filter(r -> !includedModules.contains(r.requiresModuleName().toString()))
-                                    .peek(r -> this.recorder.info("Including transitive dependency [%s] for [%s]",
-                                        r.requiresModuleName().toString(), artifact))
-                                    .forEach(r -> stack.push(
-                                        RequiresModuleDescriptor.of(this.codeModel, r.requiresModuleName())));
-                            });
-                        }).orElseThrow(() -> new IllegalStateException("Failed to resolve artifact [" + artifact + "]"));
+                        Streams.reverse(descriptor.requiresClauses())
+                            .filter(r -> r.traits(RequiresModifier.class)
+                                .anyMatch(m -> m == RequiresModifier.TRANSITIVE))
+                            .filter(r -> !includedModules.contains(r.requiresModuleName().toString()))
+                            .peek(r -> this.recorder.info("Including transitive dependency [%s] for [%s]",
+                                r.requiresModuleName().toString(), artifact))
+                            .forEach(r -> stack.push(
+                                RequiresModuleDescriptor.of(this.codeModel, r.requiresModuleName())));
+                    });
                 }
                 else {
                     this.recorder.warn(
@@ -280,6 +294,76 @@ public class CustomizationPlugin
         }
 
         return builder;
+    }
+
+    /**
+     * Locates the artifacts backing Spin's own runtime, for inclusion on the customization compile
+     * classpath so that {@code Build.java} can be compiled against the Spin API regardless of how
+     * Spin itself was launched.
+     * <ul>
+     *   <li>Spin on a module path (a {@code java --module-path} launch, or a modular test runner):
+     *       this plugin's {@link ModuleLayer} resolves every module to a {@code file:} location --
+     *       those jars/directories are returned directly.</li>
+     *   <li>Spin on a flat classpath (the Maven self-hosting bridge, an IDE run): this plugin is in
+     *       the unnamed module with no layer -- fall back to {@code java.class.path}.</li>
+     *   <li>Spin as a jlink runtime image ({@code -m build.spin/...}): every module resolves to a
+     *       {@code jrt:} location, which cannot go on a {@code -classpath}. Spin's API is a system
+     *       module there; compiling a customization against it needs {@code javac --system <image>}
+     *       and modular compilation of {@code module-info.java}. Not yet handled -- the fallback
+     *       yields an empty {@code java.class.path} and customization compilation will fail with a
+     *       clear "package build.spin does not exist".</li>
+     * </ul>
+     *
+     * @return the {@link Stream} of {@link Path}s backing Spin's runtime
+     */
+    private Stream<Path> spinRuntimePath() {
+        final ModuleLayer layer = getClass().getModule().getLayer();
+
+        if (layer != null) {
+            final List<Path> located = resolvedModules(layer.configuration())
+                .map(resolved -> resolved.reference().location())
+                .flatMap(Optional::stream)
+                .filter(uri -> "file".equals(uri.getScheme()))
+                .map(Path::of)
+                .distinct()
+                .toList();
+
+            if (!located.isEmpty()) {
+                return located.stream();
+            }
+        }
+
+        return classPathEntries();
+    }
+
+    /**
+     * Streams every {@link ResolvedModule} of a {@link Configuration} and, transitively, of its
+     * parents -- so a customization compiled from within a child {@link ModuleLayer} still sees the
+     * modules resolved into the boot layer.
+     *
+     * @param configuration the {@link Configuration}
+     * @return the {@link Stream} of {@link ResolvedModule}
+     */
+    private static Stream<ResolvedModule> resolvedModules(final Configuration configuration) {
+        return Stream.concat(
+            configuration.modules().stream(),
+            configuration.parents().stream().flatMap(CustomizationPlugin::resolvedModules));
+    }
+
+    /**
+     * Parses {@code java.class.path} into {@link Path}s, dropping the entries an IDE launch injects
+     * (its own jars, a bundled JRE) that must never leak onto a build's classpath.
+     *
+     * @return the {@link Stream} of classpath {@link Path}s
+     */
+    private static Stream<Path> classPathEntries() {
+        return Arrays.stream(java.lang.System.getProperty("java.class.path", "").split(File.pathSeparator))
+            .filter(entry -> !entry.isBlank())
+            .map(Path::of)
+            .filter(path -> {
+                final String string = path.toString();
+                return !string.contains("jre") && !string.contains("idea");
+            });
     }
 
     @Override
@@ -377,16 +461,13 @@ public class CustomizationPlugin
                     .filter(requires -> !requires.requiresModuleName().toString().equals("build.spin.engine")),
                     moduleDescriptor.moduleName());
 
-                // include the current ClassPath (so we can inherit Spin)
-                // (in the future, when this is a pre-packaged application, we'll only be able to use real dependencies)
-                final String javaClassPath = System.getProperty("java.class.path");
-                pathSetBuilder.add(javaClassPath);
-
-                // remove the JRE and IDE dependencies!
-                pathSetBuilder.removeIf(p -> {
-                    final String string = p.toString();
-                    return string.contains("jre") || string.contains("idea");
-                });
+                // include the artifacts backing Spin's own runtime, so a customization can be compiled
+                // against the Spin API (build.spin.Task, Project, ...) and jakarta.inject no matter how
+                // Spin itself was launched. This replaces scraping System.getProperty("java.class.path"),
+                // which is only populated on a flat-classpath launch and drags the launcher's incidental
+                // jars (an IDE's, the Maven self-hosting bridge's, a bundled JRE) along with it.
+                final List<Path> spinRuntimePath = spinRuntimePath().toList();
+                pathSetBuilder.addAll(spinRuntimePath.stream());
 
                 final ClassPath classPath = ClassPath.of(pathSetBuilder.build().stream());
 
@@ -411,8 +492,16 @@ public class CustomizationPlugin
                     throw new RuntimeException("Failed to create 'options' configuration to compile customizations", e);
                 }
 
-                // detect the JDK to use for compilation
-                final JDK javaDevelopmentKit = JDK.current();
+                // detect the JDK to use for compilation. The compiled Build class is loaded straight
+                // back into *this* JVM and cast to its build.spin.Task, so it has to be compiled for
+                // the running JVM's version (systemJavaVersion), not the project's configured target.
+                // JDK.current() would give exactly that, but it is not safe here: when this process
+                // is a self-hosted, --jlink-host-only spin runtime image, its own "JDK" is
+                // application-only and has no javac. Prefer a JavaPlatform-discovered JDK of the
+                // running version, and fall back to JDK.current() only when discovery finds nothing.
+                final JDK javaDevelopmentKit = this.platform
+                    .getVersion(this.systemJavaVersion.major())
+                    .orElseGet(JDK::current);
 
                 // establish the "javac" executable based on the Java Development Kit
                 final JDKHome javaHome = javaDevelopmentKit.home();
@@ -453,9 +542,11 @@ public class CustomizationPlugin
 
                 final PathSetBuilder urlsBuilder = PathSetBuilder.create();
 
-                // include the Paths on the ClassPath that aren't on the System Class Path
-                urlsBuilder.addAll(classPath.stream()
-                    .filter(p -> !javaClassPath.contains(p.getFileName().toString())));
+                // include only the customization's own resolved dependencies -- Spin's runtime is
+                // reached through this plugin's own ClassLoader (the parent of the loader built
+                // below), so re-adding it here would define a second, incompatible copy of
+                // build.spin.Task et al. and the cast in invocables() would fail with a ClassCastException
+                urlsBuilder.addAll(classPath.stream().filter(p -> !spinRuntimePath.contains(p)));
 
                 // include the compiled classes
                 urlsBuilder.add(target);
@@ -471,7 +562,7 @@ public class CustomizationPlugin
                     })
                     .toArray(URL[]::new);
 
-                classLoader = new URLClassLoader(urls);
+                classLoader = new URLClassLoader(urls, getClass().getClassLoader());
 
                 // obtain the Build class using the custom ClassLoader
                 final Class<?> buildClass;

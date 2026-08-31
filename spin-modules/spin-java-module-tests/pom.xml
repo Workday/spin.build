@@ -145,6 +145,18 @@
         </dependency>
 
         <dependency>
+            <groupId>build.codemodel</groupId>
+            <artifactId>codemodel-dependency-injection</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
             <groupId>build.percolate</groupId>
             <artifactId>percolate-core</artifactId>
             <scope>test</scope>
