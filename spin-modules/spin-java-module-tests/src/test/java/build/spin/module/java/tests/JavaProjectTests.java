@@ -11,6 +11,8 @@ import build.base.option.JDKVersion;
 import build.base.telemetry.Error;
 import build.base.telemetry.Telemetry;
 import build.base.version.Version;
+import build.codemodel.foundation.CodeModel;
+import build.codemodel.foundation.descriptor.RequiresModuleDescriptor;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.percolate.core.ModuleGraphClassifier;
 import build.spawn.application.Application;
@@ -33,6 +35,7 @@ import build.spin.common.ProcessFailedException;
 import build.spin.module.checkstyle.CheckstylePlugin;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.java.AbstractDetectResolution;
+import build.spin.module.java.CustomizationPlugin;
 import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.java.Java8CompilerPlugin;
 import build.spin.module.java.JavaCompilerPlugin;
@@ -1235,5 +1238,69 @@ public class JavaProjectTests {
                     .forEach(name -> System.out.printf("  %s\n", name));
             }
         }
+    }
+
+    @Test
+    @WorkspacePath("custom-task")
+    @RequireJavaVersion("25")
+    void shouldDetectCustomizationPluginFromSrcBuildJava(final Workspace workspace) {
+        // the "custom-task" fixture has src/build/java/Build.java, so CustomizationPlugin.MetaClass
+        // should activate it -- the plugin the rest of these tests exercise
+        assertThat(workspace.name()).isEqualTo("custom-task");
+        assertThat(workspace.getPlugin(CustomizationPlugin.class)).isPresent();
+    }
+
+    @Test
+    @WorkspacePath("custom-task")
+    @RequireJavaVersion("25")
+    void shouldResolveExternalModuleOntoCustomizationCompileClasspath(
+            final Engine engine, final Workspace workspace) {
+
+        // CustomizationPlugin.getDependencies() runs the ModuleCatalog + Artifact.Resolver path for
+        // every requires clause of the customization module-info that isn't a workspace sibling or
+        // build.spin.engine. This is where two bugs lived:
+        //   - the catalog ModuleReference was built with the raw (empty) requires version instead of
+        //     the version pinned via version.properties, and
+        //   - the resolved Path was pulled out of an Exceptional via ifPresent().orElseThrow(...),
+        //     which threw even on a successful resolve (Exceptional#ifPresent returns empty() on
+        //     success), so this method blew up before it could return anything at all.
+        final CustomizationPlugin plugin = workspace.getPlugin(CustomizationPlugin.class)
+            .orElseThrow(() -> new AssertionError("Expected a CustomizationPlugin for [" + workspace + "]"));
+
+        final var codeModel = engine.framework().codeModel();
+        final RequiresModuleDescriptor requiresAssertj = RequiresModuleDescriptor.of(codeModel,
+            codeModel.getNameProvider().getModuleName("org.assertj.core").orElseThrow());
+
+        final var resolved = plugin.getDependencies(Stream.of(requiresAssertj),
+                codeModel.getNameProvider().getModuleName("build").orElseThrow())
+            .build().stream()
+            .toList();
+
+        assertThat(resolved)
+            .as("expected getDependencies to resolve org.assertj.core (pinned to 3.27.7 by "
+                + "version.properties) to a real jar without throwing")
+            .anyMatch(p -> p.getFileName().toString().equals("assertj-core-3.27.7.jar"));
+    }
+
+    @Test
+    @WorkspacePath("custom-task")
+    @RequireJavaVersion("25")
+    void shouldCompileAndExecuteACustomBuildTask(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        // "greet" is the @Named task defined by src/build/java/Build.java. Reaching a successful
+        // execution proves CustomizationPlugin compiled Build.java (against a classpath it resolved,
+        // including the external org.assertj.core module, via a JavaPlatform-discovered javac rather
+        // than JDK.current()), loaded the Build class, and dispatched the task.
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("greet"));
+        program.execute(DefaultAssetCache.create());
+
+        final Path marker = workspace.path().resolve(".build/greeting.txt");
+        assertThat(marker)
+            .as("expected the custom 'greet' task to have written its marker file")
+            .exists();
+        assertThat(Files.readString(marker)).isEqualTo("hello custom task");
     }
 }
