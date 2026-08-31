@@ -600,6 +600,19 @@ public abstract class AbstractJavaLinker
                 .collect(Collectors.joining((File.pathSeparator)))
             ));
         }
+
+        // A GraalVM-linked image roots jdk.internal.vm.ci at every startup -- it is how the Graal JIT
+        // plugs into HotSpot via JVMCI -- but -Xshare:dump never executes application code and so never
+        // adds it. Left unmatched, the archived jdk.module.addmods differs from every real launch and
+        // CDS silently disables its optimized-module-graph handling; worse, ScriptTemplate.jt's
+        // -XX:+AutoCreateSharedArchive then rewrites this base archive on the first run that does load
+        // it. Stock HotSpot JDKs neither link nor root the module, so only add it when the freshly
+        // linked image actually contains it (GraalVM's jlink includes it automatically).
+        if (imageContainsModule(packagePath, "jdk.internal.vm.ci")) {
+            options.add(Argument.of("--add-modules"));
+            options.add(Argument.of("jdk.internal.vm.ci"));
+        }
+
         options.addAll(List.of(
             Argument.of("-m"), Argument.of(rootModule + "/" + mainClass),
             StandardOutputSubscriber.of(recordingObserver),
@@ -633,6 +646,35 @@ public abstract class AbstractJavaLinker
             this.recorder.warn("failed to dump CDS base archive for %s — startup will not benefit "
                 + "from class data sharing: %s%s", packagePath, e.getMessage(), detail);
         }
+    }
+
+    // Determines whether a just-linked image contains the named module, by reading the "MODULES=" line
+    // of its release file. The release file is the only reliable source here: GraalVM's jlink injects
+    // jdk.internal.vm.ci into the image on its own, so it never appears in the module set spin resolved
+    // and asked jlink to link -- only in what jlink actually emitted. Best-effort: a missing or
+    // unreadable release file reports false.
+    // package-private for testing
+    static boolean imageContainsModule(final Path packagePath, final String moduleName) {
+        final Path release = packagePath.resolve("release");
+        if (!Files.isRegularFile(release)) {
+            return false;
+        }
+        try {
+            for (final String line : Files.readAllLines(release)) {
+                if (line.startsWith("MODULES=")) {
+                    final String modules = line.substring("MODULES=".length()).replace("\"", "");
+                    for (final String module : modules.split("\\s+")) {
+                        if (module.equals(moduleName)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            }
+        } catch (final IOException e) {
+            return false;
+        }
+        return false;
     }
 
     private static void deleteDirectory(final Path dir) throws IOException {

@@ -223,6 +223,47 @@ class AbstractJavaLinkerTest {
         assertThat(AbstractJavaLinker.normalizeEntryArch("s390x")).isEqualTo("s390x");
     }
 
+    // --- imageContainsModule ---
+
+    private Path imageWithReleaseModules(final String modulesValue) throws IOException {
+        final Path image = Files.createDirectory(this.tempDir.resolve("image-" + System.nanoTime()));
+        Files.writeString(image.resolve("release"), String.join("\n",
+            "IMPLEMENTOR=\"Test\"",
+            "JAVA_VERSION=\"25\"",
+            "MODULES=\"" + modulesValue + "\"") + "\n");
+        return image;
+    }
+
+    @Test
+    void imageContainsModule_findsModuleListedInReleaseFile() throws IOException {
+        final Path image = imageWithReleaseModules("java.base java.compiler jdk.internal.vm.ci jdk.jfr");
+        assertThat(AbstractJavaLinker.imageContainsModule(image, "jdk.internal.vm.ci")).isTrue();
+    }
+
+    @Test
+    void imageContainsModule_returnsFalseWhenModuleAbsentFromReleaseFile() throws IOException {
+        final Path image = imageWithReleaseModules("java.base java.compiler jdk.jfr");
+        assertThat(AbstractJavaLinker.imageContainsModule(image, "jdk.internal.vm.ci")).isFalse();
+    }
+
+    @Test
+    void imageContainsModule_requiresExactTokenMatchNotPrefix() throws IOException {
+        final Path image = imageWithReleaseModules("java.base jdk.internal.vm.ci");
+        assertThat(AbstractJavaLinker.imageContainsModule(image, "jdk.internal.vm")).isFalse();
+    }
+
+    @Test
+    void imageContainsModule_returnsFalseWhenReleaseFileMissing() {
+        assertThat(AbstractJavaLinker.imageContainsModule(this.tempDir, "jdk.internal.vm.ci")).isFalse();
+    }
+
+    @Test
+    void imageContainsModule_returnsFalseWhenReleaseFileHasNoModulesLine() throws IOException {
+        final Path image = Files.createDirectory(this.tempDir.resolve("no-modules-line"));
+        Files.writeString(image.resolve("release"), "JAVA_VERSION=\"25\"\n");
+        assertThat(AbstractJavaLinker.imageContainsModule(image, "java.base")).isFalse();
+    }
+
     // --- stripForeignNatives ---
 
     private Path buildJar(final String... entryNames) throws Exception {

@@ -128,6 +128,33 @@ class ErrorCaptureTests {
     }
 
     // -------------------------------------------------------------------------
+    // isCdsDumpNoise
+    // -------------------------------------------------------------------------
+
+    @Test
+    void isCdsDumpNoise_matchesCdsWarningTag() {
+        assertThat(ErrorCapture.isCdsDumpNoise(
+            "[0.123s][warning][cds] Skipping foo/Bar: JFR event class"))
+            .isTrue();
+    }
+
+    @Test
+    void isCdsDumpNoise_matchesGraalJvmciDisabledWarning() {
+        assertThat(ErrorCapture.isCdsDumpNoise(
+            "OpenJDK 64-Bit Server VM warning: JVMCI Compiler disabled due to -Xint"))
+            .isTrue();
+    }
+
+    @Test
+    void isCdsDumpNoise_doesNotMatchRealDumpFailure() {
+        assertThat(ErrorCapture.isCdsDumpNoise(
+            "Error occurred during initialization of VM")).isFalse();
+        assertThat(ErrorCapture.isCdsDumpNoise(
+            "Exception in thread \"main\" java.lang.module.FindException: Module foo not found"))
+            .isFalse();
+    }
+
+    // -------------------------------------------------------------------------
     // triageSubscriber
     // -------------------------------------------------------------------------
 
