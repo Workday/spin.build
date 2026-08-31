@@ -82,9 +82,14 @@ public final class ErrorCapture {
      * These use a lowercase, timestamp-bracketed format that {@link #isJvmNoise} doesn't recognize;
      * dynamic-proxy and JFR-event classes are routinely and harmlessly ineligible for CDS archiving,
      * so every static dump logs a batch of them regardless of application correctness.
+     * <p>
+     * Also matches {@code "... VM warning: JVMCI Compiler disabled due to -Xint"} — a GraalVM-only
+     * line: {@code -Xshare:dump} implies {@code -Xint}, and GraalVM notes that its JVMCI-based JIT is
+     * therefore inactive. The dump never compiles anything by design, so this is expected.
      */
     public static boolean isCdsDumpNoise(final String line) {
-        return line.contains("[warning][cds]");
+        return line.contains("[warning][cds]")
+            || line.contains("VM warning: JVMCI Compiler disabled due to -Xint");
     }
 
     /**
