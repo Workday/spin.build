@@ -44,7 +44,7 @@ done
 # generation, later reactor phases, an IDE) sees normal build output again.
 find "$REPO_ROOT" -mindepth 2 -maxdepth 3 -type d -name .build -print0 | while IFS= read -r -d '' BUILD_DIR; do
   PROJECT_DIR="$(dirname "$BUILD_DIR")"
-  if [ "$PROJECT_DIR" != "$(pwd)" ]; then
+  if [ "$PROJECT_DIR" != "$(pwd)" ] && [ -d "$PROJECT_DIR/.build/main/target" ]; then
     echo "copying $PROJECT_DIR/.build/main/target to $PROJECT_DIR/target/classes (project: $PROJECT_DIR)"
     cp -r "$PROJECT_DIR/.build/main/target" "$PROJECT_DIR/target/classes"
   fi
