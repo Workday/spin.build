@@ -100,6 +100,14 @@ public class DefaultInstruction<T>
     private final LinkedHashMap<Reference, Invocable<?>> codependencies;
 
     /**
+     * The {@link Task} instance for each codependency in {@link #codependencies}, created once here
+     * (rather than freshly per execution) so that {@link Task#dependencies()} is read from the same
+     * instance {@link DefaultProgram#runTask} later executes inline - mirroring how {@link #task} is
+     * created once and reused. Keyed by the same {@link Reference} as {@link #codependencies}.
+     */
+    private final LinkedHashMap<Reference, Task<?>> codependencyTasks;
+
+    /**
      * Constructs an {@link DefaultInstruction} for a {@link Task}.
      *
      * @param identity  the identity of the {@link DefaultInstruction} in the {@link DefaultProgram}
@@ -120,6 +128,7 @@ public class DefaultInstruction<T>
         this.requiredDependencies = new LinkedHashSet<>();
         this.dependents = new LinkedHashSet<>();
         this.codependencies = new LinkedHashMap<>();
+        this.codependencyTasks = new LinkedHashMap<>();
 
         // create the Task
         this.task = invocable.createTask(context);
@@ -158,6 +167,18 @@ public class DefaultInstruction<T>
         visitedCodependencies.add(this.invocable.getReference());
         addCodependenciesRecursively(this.invocable.getReference(), visitedCodependencies);
 
+        // a @PreProcess/@PostProcess codependency runs inline as part of this Instruction and never
+        // gets an Instruction of its own, so its forcing dependencies are this Instruction's forcing
+        // dependencies too. Its @From-parameter dependencies are folded in elsewhere (see
+        // DefaultProgram, via Invocable#dependencies()); its programmatically declared
+        // Task#dependencies() - the only way to declare a cross-project forcing dependency - are
+        // folded in here, read from the same Task instance DefaultProgram#runTask executes inline
+        // (see #codependencyTasks). A codependency that doesn't override dependencies() just
+        // contributes an empty Stream.
+        this.codependencyTasks.values().stream()
+            .flatMap(Task::dependencies)
+            .forEach(this::addRequiredDependency);
+
         // fold @Before/@After declared on any codependency anywhere in the Project (at any nesting
         // depth) into this Instruction's own ordering-only dependencies. A codependency never gets
         // its own Instruction - it's executed inline as part of its ultimate top-level owner - so any
@@ -188,7 +209,7 @@ public class DefaultInstruction<T>
      * they execute before it, as they in turn pre-process it); a {@link PostProcess} codependency's
      * own codependencies are discovered after it is added (so they execute after it, as they in turn
      * post-process it). This keeps {@link #codependencies}' iteration order consistent with the order
-     * {@link DefaultProgram#runTask} must execute them in for same-kind nesting - a {@link PreProcess}
+     * {@code DefaultProgram#runTask} must execute them in for same-kind nesting - a {@link PreProcess}
      * nested under a {@link PostProcess}, or vice versa, is a known limitation not handled here.
      *
      * @param reference the {@link Reference} whose codependencies are to be discovered
@@ -378,5 +399,19 @@ public class DefaultInstruction<T>
      */
     public void addCodependency(final Invocable<?> invocable) {
         this.codependencies.put(invocable.getReference(), invocable);
+        this.codependencyTasks.put(invocable.getReference(), invocable.createTask(this.context));
+    }
+
+    /**
+     * Obtains the {@link Task} instance for a codependency of this {@link DefaultInstruction} - the
+     * instance created when this {@link DefaultInstruction} was built and reused for every execution,
+     * as {@link #getTask()} is for the primary {@link Task}.
+     *
+     * @param codependency a codependency {@link Invocable}, as returned by {@link #codependencies()}
+     * @return the {@link Task} instance for the codependency
+     */
+    @Override
+    public Task<?> codependencyTask(final Invocable<?> codependency) {
+        return this.codependencyTasks.get(codependency.getReference());
     }
 }

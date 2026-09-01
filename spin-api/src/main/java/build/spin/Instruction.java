@@ -106,4 +106,17 @@ public interface Instruction<T> {
      * @return {@code true} if there's one or more codependencies, {@code false} otherwise
      */
     boolean hasCodependencies();
+
+    /**
+     * Obtains the {@link Task} instance for a codependency of this {@link Instruction}.
+     * <p>
+     * A codependency ({@link build.spin.annotation.PreProcess}/{@link build.spin.annotation.PostProcess})
+     * is executed inline as part of this {@link Instruction} rather than getting an {@link Instruction}
+     * of its own. Its {@link Task} instance is created once, when this {@link Instruction} is built,
+     * and reused for every execution - exactly as {@link #getTask()} is for the primary {@link Task}.
+     *
+     * @param codependency a codependency {@link Invocable}, as returned by {@link #codependencies()}
+     * @return the {@link Task} instance for the codependency
+     */
+    Task<?> codependencyTask(Invocable<?> codependency);
 }

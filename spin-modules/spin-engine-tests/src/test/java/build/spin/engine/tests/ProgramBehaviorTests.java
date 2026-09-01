@@ -42,6 +42,21 @@ class ProgramBehaviorTests {
         CodependencyRaceTestPlugin.PREPROCESSOR_RAN.set(false);
         CodependencyRaceTestPlugin.PREPROCESSOR_OBSERVED_VALUE = null;
         CodependencyRaceTestPlugin.MAIN_TASK_RAN.set(false);
+        PreProcessCodependencyForcingDependencyTestPlugin.MAIN_TASK_RAN.set(false);
+        PreProcessCodependencyForcingDependencyTestPlugin.PREPROCESSOR_RAN.set(false);
+        PreProcessCodependencyForcingDependencyTestPlugin.FORCED_TASK_RAN.set(false);
+        PostProcessCodependencyForcingDependencyTestPlugin.MAIN_TASK_RAN.set(false);
+        PostProcessCodependencyForcingDependencyTestPlugin.POSTPROCESSOR_RAN.set(false);
+        PostProcessCodependencyForcingDependencyTestPlugin.FORCED_TASK_RAN.set(false);
+        NestedCodependencyForcingDependencyTestPlugin.MAIN_TASK_RAN.set(false);
+        NestedCodependencyForcingDependencyTestPlugin.PREPROCESSOR_RAN.set(false);
+        NestedCodependencyForcingDependencyTestPlugin.NESTED_PREPROCESSOR_RAN.set(false);
+        NestedCodependencyForcingDependencyTestPlugin.FORCED_TASK_RAN.set(false);
+        CodependencyInstantiationCountTestPlugin.PREPROCESSOR_CONSTRUCTIONS.set(0);
+        CodependencyInstantiationCountTestPlugin.POSTPROCESSOR_CONSTRUCTIONS.set(0);
+        CodependencyInstantiationCountTestPlugin.MAIN_TASK_RAN.set(false);
+        CodependencyInstantiationCountTestPlugin.PREPROCESSOR_RAN.set(false);
+        CodependencyInstantiationCountTestPlugin.POSTPROCESSOR_RAN.set(false);
         CodependencyOrderTestPlugin.MAIN_TASK_RAN.set(false);
         CodependencyOrderTestPlugin.PREPROCESSOR_RAN.set(false);
         CodependencyOrderTestPlugin.PREPROCESSOR_COMPLETED_AT.set(-1L);
@@ -185,6 +200,116 @@ class ProgramBehaviorTests {
                 + "preprocessor (and its owning task) are dispatched, not merely be included "
                 + "somewhere in the Program with no graph edge tying the two together")
             .isEqualTo("slow-value");
+    }
+
+    // ── Codependency scheduling gap: a @PreProcess codependency's programmatic Task#dependencies()
+    //    (the only way to declare a cross-project forcing edge) must force the referenced Task into
+    //    the Program, not be silently ignored because only Invocable#dependencies() (@From) is folded
+    //    in.
+
+    @Test
+    @WorkspacePath("codepforce-test")
+    void shouldForceATaskNamedOnlyByAPreProcessCodependencysOverriddenDependencies(
+        final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("codepforce-main"));
+        program.execute(cache);
+
+        assertThat(PreProcessCodependencyForcingDependencyTestPlugin.MAIN_TASK_RAN.get())
+            .withFailMessage("main task must have run").isTrue();
+        assertThat(PreProcessCodependencyForcingDependencyTestPlugin.PREPROCESSOR_RAN.get())
+            .withFailMessage("the @PreProcess codependency must have run").isTrue();
+        assertThat(PreProcessCodependencyForcingDependencyTestPlugin.FORCED_TASK_RAN.get())
+            .withFailMessage("a task named only by the codependency's overridden dependencies() "
+                + "must be pulled into the Program and executed - a codependency runs inline as "
+                + "part of its owner, so its forcing dependencies are the owner's forcing "
+                + "dependencies too")
+            .isTrue();
+    }
+
+    // ── Same as above, for a @PostProcess codependency: forcing-dependency folding must not be
+    //    limited to @PreProcess codependencies - a @PostProcess codependency also runs inline as
+    //    part of its owner and never gets an Instruction of its own. ──────────────────────────────
+
+    @Test
+    @WorkspacePath("postpforce-test")
+    void shouldForceATaskNamedOnlyByAPostProcessCodependencysOverriddenDependencies(
+        final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("postpforce-main"));
+        program.execute(cache);
+
+        assertThat(PostProcessCodependencyForcingDependencyTestPlugin.MAIN_TASK_RAN.get())
+            .withFailMessage("main task must have run").isTrue();
+        assertThat(PostProcessCodependencyForcingDependencyTestPlugin.POSTPROCESSOR_RAN.get())
+            .withFailMessage("the @PostProcess codependency must have run").isTrue();
+        assertThat(PostProcessCodependencyForcingDependencyTestPlugin.FORCED_TASK_RAN.get())
+            .withFailMessage("a task named only by a @PostProcess codependency's overridden "
+                + "dependencies() must be pulled into the Program and executed, exactly as for a "
+                + "@PreProcess codependency")
+            .isTrue();
+    }
+
+    // ── Same as above, for a codependency discovered transitively: a codependency's own nested
+    //    codependency (@PreProcess on a @PreProcess) that declares a forcing dependency via
+    //    Task#dependencies() must have it folded in too, not only the owning task's immediate
+    //    codependencies. ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @WorkspacePath("nestforce-test")
+    void shouldForceATaskNamedOnlyByANestedCodependencysOverriddenDependencies(
+        final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("nestforce-main"));
+        program.execute(cache);
+
+        assertThat(NestedCodependencyForcingDependencyTestPlugin.MAIN_TASK_RAN.get())
+            .withFailMessage("main task must have run").isTrue();
+        assertThat(NestedCodependencyForcingDependencyTestPlugin.PREPROCESSOR_RAN.get())
+            .withFailMessage("the preprocessor must have run").isTrue();
+        assertThat(NestedCodependencyForcingDependencyTestPlugin.NESTED_PREPROCESSOR_RAN.get())
+            .withFailMessage("the nested preprocessor must have run").isTrue();
+        assertThat(NestedCodependencyForcingDependencyTestPlugin.FORCED_TASK_RAN.get())
+            .withFailMessage("a task named only by a transitively-discovered nested codependency's "
+                + "overridden dependencies() must be pulled into the Program and executed")
+            .isTrue();
+    }
+
+    // ── Codependency Task lifecycle: each codependency's Task instance is created once, when the
+    //    Instruction is built, and reused for the inline execution - as the primary Task is - not
+    //    created once to read Task#dependencies() and again to execute. ───────────────────────────
+
+    @Test
+    @WorkspacePath("codepcount-test")
+    void shouldInstantiateEachCodependencyExactlyOnce(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("codepcount-main"));
+        program.execute(cache);
+
+        assertThat(CodependencyInstantiationCountTestPlugin.MAIN_TASK_RAN.get())
+            .withFailMessage("main task must have run").isTrue();
+        assertThat(CodependencyInstantiationCountTestPlugin.PREPROCESSOR_RAN.get())
+            .withFailMessage("the @PreProcess codependency must have run").isTrue();
+        assertThat(CodependencyInstantiationCountTestPlugin.POSTPROCESSOR_RAN.get())
+            .withFailMessage("the @PostProcess codependency must have run").isTrue();
+        assertThat(CodependencyInstantiationCountTestPlugin.PREPROCESSOR_CONSTRUCTIONS.get())
+            .withFailMessage("the @PreProcess codependency must be instantiated once, when the "
+                + "Instruction is built, and reused for its inline execution - not created a second "
+                + "time in DefaultProgram#runTask")
+            .isEqualTo(1);
+        assertThat(CodependencyInstantiationCountTestPlugin.POSTPROCESSOR_CONSTRUCTIONS.get())
+            .withFailMessage("the @PostProcess codependency must be instantiated once, when the "
+                + "Instruction is built, and reused for its inline execution - not created a second "
+                + "time in DefaultProgram#runTask")
+            .isEqualTo(1);
     }
 
     // ── Codependency scheduling gap, Issue 2: @Before/@After declared on a codependency's own
