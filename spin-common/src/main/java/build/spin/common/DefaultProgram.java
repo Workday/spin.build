@@ -490,10 +490,9 @@ public final class DefaultProgram
             try {
                 instruction.codependencies()
                     .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PreProcess.class))
-                    .forEach(codependency -> {
-                        final Task<?> preprocessor = codependency.createTask(executionContext);
-                        preprocessor.execute(codependency, executionContext, this.framework);
-                    });
+                    .forEach(codependency ->
+                        instruction.codependencyTask(codependency)
+                            .execute(codependency, executionContext, this.framework));
 
                 final Object initialResult = task.execute(invocable, executionContext, this.framework);
 
@@ -521,10 +520,9 @@ public final class DefaultProgram
 
                 instruction.codependencies()
                     .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PostProcess.class))
-                    .forEach(codependency -> {
-                        final Task<?> postprocessor = codependency.createTask(executionContext);
-                        postprocessor.execute(codependency, executionContext, this.framework);
-                    });
+                    .forEach(codependency ->
+                        instruction.codependencyTask(codependency)
+                            .execute(codependency, executionContext, this.framework));
 
                 final Object taskResult = capture.isPresent() ? capture.get() : null;
                 activity.complete(taskResult);

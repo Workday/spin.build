@@ -26,7 +26,7 @@ module build.spin.engine.tests.test {
     requires org.junit.jupiter.api;
     requires org.assertj.core;
 
-    opens build.spin.engine.tests to org.junit.platform.commons;
+    opens build.spin.engine.tests to org.junit.platform.commons, build.codemodel.dependency.injection;
 
     exports build.spin.engine.tests to build.codemodel.dependency.injection, build.spin;
 
@@ -38,6 +38,10 @@ module build.spin.engine.tests.test {
         build.spin.engine.tests.AfterDependencyTestPlugin.MetaClass,
         build.spin.engine.tests.BeforeDependencyTestPlugin.MetaClass,
         build.spin.engine.tests.CodependencyRaceTestPlugin.MetaClass,
+        build.spin.engine.tests.PreProcessCodependencyForcingDependencyTestPlugin.MetaClass,
+        build.spin.engine.tests.PostProcessCodependencyForcingDependencyTestPlugin.MetaClass,
+        build.spin.engine.tests.NestedCodependencyForcingDependencyTestPlugin.MetaClass,
+        build.spin.engine.tests.CodependencyInstantiationCountTestPlugin.MetaClass,
         build.spin.engine.tests.CodependencyOrderTestPlugin.MetaClass,
         build.spin.engine.tests.NestedCodependencyTestPlugin.MetaClass,
         build.spin.engine.tests.WorkspaceDetectionTestPlugin.MetaClass,
