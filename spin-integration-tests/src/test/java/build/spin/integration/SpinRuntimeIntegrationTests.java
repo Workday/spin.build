@@ -37,14 +37,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * End-to-end tests that launch the real, already-built spin runtime image
  * ({@code spin/.build/spin-<os>-<arch>/bin/spin.sh}, produced by spin's own self-hosting build in
- * {@code spin/pom.xml}) as a subprocess against sample fixture projects — not spin's {@code Engine}
+ * {@code spin/pom.xml}) as a subprocess against sample fixture projects -- not spin's {@code Engine}
  * in-process on whatever full JDK is running the test suite.
  *
  * <p>This class exists because some bugs only manifest when spin is actually <em>running from</em>
  * its own self-hosted, trimmed jlink image. An in-process {@code Engine} test always runs on a
  * full, untrimmed JDK, so a supplemental {@link java.lang.module.ModuleFinder} that reads {@code
  * ModuleFinder.ofSystem()} (the currently-running JVM's own modules) rather than a target JDK's
- * real {@code jmods/} directory will resolve fine there — and only fail once spin links its own
+ * real {@code jmods/} directory will resolve fine there -- and only fail once spin links its own
  * image without a dev-tool module like {@code jdk.jdwp.agent}. Only launching the real {@code
  * spin.sh} reproduces that.
  */
@@ -60,18 +60,18 @@ class SpinRuntimeIntegrationTests {
         // found, required by app) - falling back to classify-only". AbstractJavaLinker's
         // classification of the root module's graph must succeed via a supplemental
         // ModuleFinder over the *target* JDK's real jmods/ directory, not ModuleFinder.ofSystem()
-        // — this spin process's own module set, which genuinely lacks jdk.jdwp.agent once spin
+        // -- this spin process's own module set, which genuinely lacks jdk.jdwp.agent once spin
         // links its own dev-tool-free runtime image (asserted below).
 
         final Path spinSh = spinHome().resolve("bin/spin.sh");
         assertThat(spinSh)
-            .as("expected a self-hosted spin runtime at [%s] — run `./mvnw install` from the "
+            .as("expected a self-hosted spin runtime at [%s] -- run `./mvnw install` from the "
                 + "repo root first so spin's own jlink image exists", spinSh)
             .isRegularFile();
 
         assertThat(runListModules(spinHome()))
             .as("this test only proves anything if spin's own runtime genuinely lacks "
-                + "jdk.jdwp.agent — otherwise ModuleFinder.ofSystem() would trivially succeed "
+                + "jdk.jdwp.agent -- otherwise ModuleFinder.ofSystem() would trivially succeed "
                 + "regardless of the fix under test")
             .doesNotContain("jdk.jdwp.agent");
 
@@ -92,13 +92,50 @@ class SpinRuntimeIntegrationTests {
         final Path packagePath = fixture.resolve(".build/jlink-jdk-module-" + hostOs() + "-" + hostArch());
         assertThat(packagePath).as("expected a host-target runtime image at [%s]", packagePath).isDirectory();
 
-        // jdk.jdwp.agent must be baked directly into the produced image's own lib/modules — not
-        // merely reachable via some external module-path — which only happens if the
+        // jdk.jdwp.agent must be linked directly into the produced image's own lib/modules -- not
+        // merely reachable via some external module-path -- which only happens if the
         // classifier's Configuration#resolve call actually succeeded against the root module's
         // requires.
         final String modules = runListModules(packagePath);
         assertThat(modules).as("expected jdk.jdwp.agent linked into the produced image:%n%s", modules)
             .contains("jdk.jdwp.agent");
+    }
+
+    @Test
+    void jlinkRunningSpinShouldCompileAModuleInfoLessCustomizationAgainstItsOwnImage() throws Exception {
+        // Regression coverage for CustomizationPlugin.spinRuntimeImage(): when spin is running from
+        // its own trimmed jlink image, every spin module resolves to a jrt: location and cannot go
+        // on a -classpath, so spinRuntimePath() yields nothing. The customization compile must then
+        // resolve the Spin API (build.spin.Task, Project) and jakarta.inject via `javac --system`
+        // pointed at spin's own image. An in-process Engine test can never exercise this -- it
+        // always runs on a full, module-path/classpath JDK -- so it lives here.
+        //
+        // The fixture has src/build/java/Build.java but no module-info.java, so the plugin gets no
+        // hand-written requires clauses to fall back on: reaching a successful `greet` execution
+        // proves the --system branch compiled and loaded it.
+
+        final Path spinSh = spinHome().resolve("bin/spin.sh");
+        assertThat(spinSh)
+            .as("expected a self-hosted spin runtime at [%s] -- run `./mvnw install` from the "
+                + "repo root first so spin's own jlink image exists", spinSh)
+            .isRegularFile();
+
+        final Path fixture = copyFixture("custom-task-without-module-info");
+
+        final Process spin = new ProcessBuilder(spinSh.toString(), "greet")
+            .directory(fixture.toFile())
+            .redirectErrorStream(true)
+            .start();
+        final String output = new String(spin.getInputStream().readAllBytes());
+        final int exitCode = spin.waitFor();
+
+        assertThat(exitCode).as("spin.sh greet failed:%n%s", output).isZero();
+
+        final Path marker = fixture.resolve(".build/greeting.txt");
+        assertThat(marker)
+            .as("expected the module-info-less custom 'greet' task to have written its marker:%n%s", output)
+            .isRegularFile();
+        assertThat(Files.readString(marker)).isEqualTo("hello custom task without a module-info");
     }
 
     private static String runListModules(final Path imagePath) throws IOException, InterruptedException {
@@ -131,7 +168,7 @@ class SpinRuntimeIntegrationTests {
     }
 
     /**
-     * This module's own basedir is a direct child of the repo root, exactly like {@code spin/} —
+     * This module's own basedir is a direct child of the repo root, exactly like {@code spin/} --
      * so the self-hosted image spin's own build produced sits at {@code <repoRoot>/spin/.build/
      * spin-<os>-<arch>}.
      */
