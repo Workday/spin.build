@@ -1241,17 +1241,17 @@ public class JavaProjectTests {
     }
 
     @Test
-    @WorkspacePath("custom-task")
+    @WorkspacePath("custom-task-with-module-info")
     @RequireJavaVersion("25")
     void shouldDetectCustomizationPluginFromSrcBuildJava(final Workspace workspace) {
-        // the "custom-task" fixture has src/build/java/Build.java, so CustomizationPlugin.MetaClass
-        // should activate it -- the plugin the rest of these tests exercise
-        assertThat(workspace.name()).isEqualTo("custom-task");
+        // the "custom-task-with-module-info" fixture has src/build/java/Build.java, so
+        // CustomizationPlugin.MetaClass should activate it -- the plugin the rest of these tests exercise
+        assertThat(workspace.name()).isEqualTo("custom-task-with-module-info");
         assertThat(workspace.getPlugin(CustomizationPlugin.class)).isPresent();
     }
 
     @Test
-    @WorkspacePath("custom-task")
+    @WorkspacePath("custom-task-with-module-info")
     @RequireJavaVersion("25")
     void shouldResolveExternalModuleOntoCustomizationCompileClasspath(
             final Engine engine, final Workspace workspace) {
@@ -1283,9 +1283,9 @@ public class JavaProjectTests {
     }
 
     @Test
-    @WorkspacePath("custom-task")
+    @WorkspacePath("custom-task-with-module-info")
     @RequireJavaVersion("25")
-    void shouldCompileAndExecuteACustomBuildTask(final Engine engine, final Workspace workspace)
+    void shouldCompileAndExecuteACustomBuildTaskWithAModuleInfo(final Engine engine, final Workspace workspace)
         throws Exception {
 
         deleteRecursively(workspace.path().resolve(".build"));
@@ -1302,5 +1302,30 @@ public class JavaProjectTests {
             .as("expected the custom 'greet' task to have written its marker file")
             .exists();
         assertThat(Files.readString(marker)).isEqualTo("hello custom task");
+    }
+
+    @Test
+    @WorkspacePath("custom-task-without-module-info")
+    @RequireJavaVersion("25")
+    void shouldCompileAndExecuteACustomBuildTaskWithoutAModuleInfo(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        deleteRecursively(workspace.path().resolve(".build"));
+
+        // the "custom-task-without-module-info" fixture has src/build/java/Build.java but no
+        // module-info.java, so CustomizationPlugin gets no hand-written requires clauses to resolve
+        // -- it must compile Build.java against the Spin API (build.spin.Task, Project) and
+        // jakarta.inject sourced from
+        // Spin's own runtime. Under this modular test launch that comes via spinRuntimePath()'s
+        // module-path branch; a jlink-image launch of Spin instead resolves them via javac --system
+        // pointed at the image (spinRuntimeImage()).
+        final Program program = engine.createProgram(workspace, Task.Pattern.of("greet"));
+        program.execute(DefaultAssetCache.create());
+
+        final Path marker = workspace.path().resolve(".build/greeting.txt");
+        assertThat(marker)
+            .as("expected the module-info-less custom 'greet' task to have written its marker file")
+            .exists();
+        assertThat(Files.readString(marker)).isEqualTo("hello custom task without a module-info");
     }
 }

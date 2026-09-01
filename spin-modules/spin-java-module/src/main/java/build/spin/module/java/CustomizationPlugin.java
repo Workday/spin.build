@@ -307,11 +307,10 @@ public class CustomizationPlugin
      *   <li>Spin on a flat classpath (the Maven self-hosting bridge, an IDE run): this plugin is in
      *       the unnamed module with no layer -- fall back to {@code java.class.path}.</li>
      *   <li>Spin as a jlink runtime image ({@code -m build.spin/...}): every module resolves to a
-     *       {@code jrt:} location, which cannot go on a {@code -classpath}. Spin's API is a system
-     *       module there; compiling a customization against it needs {@code javac --system <image>}
-     *       and modular compilation of {@code module-info.java}. Not yet handled -- the fallback
-     *       yields an empty {@code java.class.path} and customization compilation will fail with a
-     *       clear "package build.spin does not exist".</li>
+     *       {@code jrt:} location, which cannot go on a {@code -classpath}, so this falls through to
+     *       {@code java.class.path} -- empty on such a launch. {@link #spinRuntimeImage()} instead
+     *       points {@code javac --system} at Spin's own image so the customization resolves the Spin
+     *       API from it as system modules.</li>
      * </ul>
      *
      * @return the {@link Stream} of {@link Path}s backing Spin's runtime
@@ -334,6 +333,38 @@ public class CustomizationPlugin
         }
 
         return classPathEntries();
+    }
+
+    /**
+     * When Spin itself is running from a jlink runtime image -- its own modules linked in and
+     * resolved from {@code jrt:} rather than a {@code file:} module path -- the {@link Path} of that
+     * image, for {@code javac --system}. This lets a customization compile resolve the Spin API
+     * ({@code build.spin.Task}, {@code Project}, ...) and {@code jakarta.inject} straight from Spin's
+     * own image, so a {@code Build.java} needs no hand-written {@code module-info.java} declaring
+     * them. Empty for a module-path or flat-classpath launch, where {@link #spinRuntimePath()}
+     * already yields real jars.
+     *
+     * <p>The trade-off: {@code --system} pins the customization's system modules to exactly what
+     * Spin linked into its own image, so a {@code Build.java} compiled this way sees only the JDK
+     * modules Spin itself needs (plus the Spin API and {@code jakarta.inject}). A customization that
+     * needs an external library must declare a {@code module-info.java} with the matching
+     * {@code requires}; those clauses drive {@link #getDependencies} and land on the
+     * {@code -classpath} alongside {@code --system}.
+     *
+     * @return the running Spin runtime image, or empty when Spin is not running from one
+     */
+    private Optional<Path> spinRuntimeImage() {
+        final ModuleLayer layer = getClass().getModule().getLayer();
+
+        if (layer == null) {
+            return Optional.empty();
+        }
+
+        return layer.configuration()
+            .findModule(getClass().getModule().getName())
+            .flatMap(resolved -> resolved.reference().location())
+            .filter(uri -> "jrt".equals(uri.getScheme()))
+            .map(uri -> Path.of(java.lang.System.getProperty("java.home")));
     }
 
     /**
@@ -465,9 +496,13 @@ public class CustomizationPlugin
                 // against the Spin API (build.spin.Task, Project, ...) and jakarta.inject no matter how
                 // Spin itself was launched. This replaces scraping System.getProperty("java.class.path"),
                 // which is only populated on a flat-classpath launch and drags the launcher's incidental
-                // jars (an IDE's, the Maven self-hosting bridge's, a bundled JRE) along with it.
+                // jars (an IDE's, the Maven self-hosting bridge's, a bundled JRE) along with it. Empty
+                // when Spin runs from its own jlink image -- spinRuntimeImage() covers that launch by
+                // pointing javac --system at the image instead.
                 final List<Path> spinRuntimePath = spinRuntimePath().toList();
                 pathSetBuilder.addAll(spinRuntimePath.stream());
+
+                final Optional<Path> spinRuntimeImage = spinRuntimeImage();
 
                 final ClassPath classPath = ClassPath.of(pathSetBuilder.build().stream());
 
@@ -478,6 +513,13 @@ public class CustomizationPlugin
                 // create the "options" file for "javac"
                 final Path options = buildPath.resolve("options");
                 try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(options))) {
+
+                    // when Spin runs from its own jlink image, point javac at that image as its system
+                    // modules -- the customization then resolves the Spin API and jakarta.inject from
+                    // it directly, with no hand-written module-info.java (spinRuntimePath() is empty on
+                    // such a launch: every module is jrt:, unusable on a -classpath)
+                    spinRuntimeImage.ifPresent(image -> writer.println(
+                        "--system " + Strings.doubleQuoteIfContainsWhiteSpace(image.toString())));
 
                     // include the ClassPath
                     if (!classPath.isEmpty()) {
