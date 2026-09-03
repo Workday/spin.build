@@ -20,11 +20,20 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.foundation.Capture;
+import build.base.foundation.UniformResource;
+import build.base.telemetry.Error;
+import build.base.telemetry.Telemetry;
+import build.base.telemetry.TelemetryRecorder;
+import build.base.telemetry.Warning;
+import build.spin.common.telemetry.TelemetryPublisher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -57,5 +66,66 @@ class AbstractCompileTest {
         Files.createDirectories(target);
 
         assertThat(AbstractCompile.emptySourceResult(target)).containsExactly(target);
+    }
+
+    // --- flushError ---
+    //
+    // javac reports source paths absolutely; flushError strips the project root and routes the
+    // trailing line to warn vs error (appending only errors to the captured failure output). It
+    // clears the Capture unconditionally, so a second call for the same flush is a no-op.
+
+    @Test
+    void flushError_pendingErrorLine_logsErrorAndAppendsToCaptured() {
+        final List<Telemetry> emitted = new ArrayList<>();
+        final Capture<String> error = Capture.of(tempDir.resolve("Foo.java") + ": error: cannot find symbol");
+        final ErrorCapture captured = new ErrorCapture();
+
+        AbstractCompile.flushError(error, captured, tempDir, capturingRecorder(emitted));
+
+        assertThat(emitted).hasSize(1);
+        assertThat(emitted.get(0)).isInstanceOf(Error.class);
+        assertThat(captured.output()).isEqualTo("Foo.java: error: cannot find symbol");
+        assertThat(error.isPresent()).isFalse();
+    }
+
+    @Test
+    void flushError_pendingWarningLine_logsWarnAndDoesNotAppendToCaptured() {
+        final List<Telemetry> emitted = new ArrayList<>();
+        final Capture<String> error = Capture.of("Foo.java: warning: [deprecation] Bar in Baz has been deprecated");
+        final ErrorCapture captured = new ErrorCapture();
+
+        AbstractCompile.flushError(error, captured, tempDir, capturingRecorder(emitted));
+
+        assertThat(emitted).hasSize(1);
+        assertThat(emitted.get(0)).isInstanceOf(Warning.class);
+        assertThat(captured.output()).isEmpty();
+    }
+
+    @Test
+    void flushError_noPendingLine_doesNothing() {
+        final List<Telemetry> emitted = new ArrayList<>();
+
+        AbstractCompile.flushError(Capture.empty(), new ErrorCapture(), tempDir, capturingRecorder(emitted));
+
+        assertThat(emitted).isEmpty();
+    }
+
+    @Test
+    void flushError_calledTwiceForSameFlush_onlyLogsOnce() {
+        final List<Telemetry> emitted = new ArrayList<>();
+        final Capture<String> error = Capture.of("Foo.java: error: boom");
+        final ErrorCapture captured = new ErrorCapture();
+
+        AbstractCompile.flushError(error, captured, tempDir, capturingRecorder(emitted));
+        AbstractCompile.flushError(error, captured, tempDir, capturingRecorder(emitted));
+
+        assertThat(emitted).hasSize(1);
+        assertThat(captured.output()).isEqualTo("Foo.java: error: boom");
+    }
+
+    private static TelemetryRecorder capturingRecorder(final List<Telemetry> emitted) {
+        return new TelemetryPublisher(
+            UniformResource.createURI("test", "AbstractCompileTest"),
+            emitted::add);
     }
 }

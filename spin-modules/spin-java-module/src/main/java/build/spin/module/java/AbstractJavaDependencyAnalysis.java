@@ -20,7 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
-import build.base.configuration.Option;
+import build.base.configuration.ConfigurationBuilder;
 import build.base.flow.RecordingSubscriber;
 import build.base.foundation.Strings;
 import build.base.foundation.stream.Streams;
@@ -35,7 +35,6 @@ import build.codemodel.jdk.descriptor.RequiresModifier;
 import build.percolate.core.ModuleGraphClassifier;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
-import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
 import build.spawn.application.option.StandardOutputSubscriber;
 import build.spawn.platform.local.LocalMachine;
@@ -45,7 +44,8 @@ import build.spin.Reference;
 import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.annotation.System;
-import build.spin.common.ProcessFailedException;
+import build.spin.common.JDKTools;
+import build.spin.common.ProcessRunner;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ArtifactDescriptor;
@@ -424,8 +424,6 @@ public abstract class AbstractJavaDependencyAnalysis
             .map(Strings::doubleQuoteIfContainsWhiteSpace)
             .collect(Collectors.joining(File.pathSeparator));
 
-        final var jdepsPath = javaHome.resolve("bin/jdeps");
-
         final var recordingObserver = new RecordingSubscriber<String>();
         final var stdoutObserver = StandardOutputSubscriber.of(recordingObserver);
 
@@ -435,39 +433,29 @@ public abstract class AbstractJavaDependencyAnalysis
             .orElseThrow(() -> new IllegalStateException("No artifact path for module [" + this.moduleDescriptor.moduleName().toString() + "]"));
 
         // build jdeps arguments — omit --class-path when empty (jdeps rejects empty values)
-        final var jdepsArgs = new java.util.ArrayList<Option>();
-        jdepsArgs.add(Executable.of(jdepsPath.toString()));
-        jdepsArgs.add(Name.of("jdeps"));
-        jdepsArgs.add(Argument.of("--module-path"));
-        jdepsArgs.add(Argument.of(modulePath));
-        if (!classPath.isEmpty()) {
-            jdepsArgs.add(Argument.of("--class-path"));
-            jdepsArgs.add(Argument.of(classPath));
-        }
-        jdepsArgs.add(Argument.of("--list-deps"));
-        jdepsArgs.add(Argument.of("--ignore-missing-deps"));
-        jdepsArgs.add(Argument.of("--multi-release"));
-        jdepsArgs.add(Argument.of(jdk.version().major()));
-        jdepsArgs.add(Argument.of(artifactPath));
         final ErrorCapture captured = new ErrorCapture();
-        jdepsArgs.add(stdoutObserver);
-        jdepsArgs.add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
+        final ConfigurationBuilder jdepsConfiguration = ConfigurationBuilder.create()
+            .add(JDKTools.executable(javaHome, "jdeps"))
+            .add(Name.of("jdeps"))
+            .add(Argument.of("--module-path"))
+            .add(Argument.of(modulePath));
+        if (!classPath.isEmpty()) {
+            jdepsConfiguration.add(Argument.of("--class-path"));
+            jdepsConfiguration.add(Argument.of(classPath));
+        }
+        jdepsConfiguration
+            .add(Argument.of("--list-deps"))
+            .add(Argument.of("--ignore-missing-deps"))
+            .add(Argument.of("--multi-release"))
+            .add(Argument.of(jdk.version().major()))
+            .add(Argument.of(artifactPath))
+            .add(stdoutObserver)
+            .add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
 
-        try (var jdeps = this.machine.launch(Application.class,
-            jdepsArgs.toArray(Option[]::new))) {
+        try (var jdeps = this.machine.launch(Application.class, jdepsConfiguration)) {
 
-            try {
-                jdeps.onExit().get();
-            } catch (final Exception e) {
-                throw new ProcessFailedException("jdeps Execution Failed",
-                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
-            }
-
-            if (jdeps.exitValue().orElse(0) > 0) {
-                throw new ProcessFailedException(
-                    "jdeps Execution Failed (exit code: " + jdeps.exitValue().orElse(-1) + ")",
-                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
-            }
+            ProcessRunner.await(jdeps, "jdeps",
+                () -> ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
 
             // build maps of java platform, module and non-module dependencies
             final LinkedHashSet<JDKModuleDescriptor> modules = new LinkedHashSet<>();

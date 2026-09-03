@@ -26,6 +26,7 @@ module build.spin.module.gpg {
     requires build.spawn.application;
     requires build.spawn.platform.local;
     requires build.spin;
+    requires build.spin.common;
     requires build.spin.module.configuration;
     requires jakarta.inject;
 

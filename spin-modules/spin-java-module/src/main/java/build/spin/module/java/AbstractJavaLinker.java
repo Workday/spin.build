@@ -20,7 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
-import build.base.configuration.Option;
+import build.base.configuration.ConfigurationBuilder;
 import build.base.flow.RecordingSubscriber;
 import build.base.option.JDKVersion;
 import build.base.telemetry.TelemetryRecorder;
@@ -29,7 +29,6 @@ import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.percolate.core.ModuleGraphClassifier;
 import build.spawn.application.Application;
 import build.spawn.application.option.Argument;
-import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
 import build.spawn.application.option.StandardOutputSubscriber;
 import build.spawn.jdk.JDK;
@@ -37,7 +36,9 @@ import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.System;
+import build.spin.common.JDKTools;
 import build.spin.common.ProcessFailedException;
+import build.spin.common.ProcessRunner;
 import build.spin.common.task.SourcePathKind;
 import build.spin.module.modulesystem.Artifact;
 import build.spin.module.modulesystem.ModuleReference;
@@ -194,7 +195,6 @@ public abstract class AbstractJavaLinker
             .orElseThrow(() -> new RuntimeException(
                 "No host-executable JDK found for Java " + this.systemJavaVersion.major()
                     + " to run jlink with, and no latest host JDK available"));
-        final var jlinkPath = hostJdk.home().path().resolve("bin/jlink");
 
         // Derive the set of module names available in the target JDK by reading the
         // jmods/ directory.  We only need the names for --add-modules filtering; we do
@@ -317,45 +317,35 @@ public abstract class AbstractJavaLinker
             // recorded module-main property actually matches the launch script, which measured ~20% faster
             // than the jlink-plugin version. Same foreign-target restriction as --strip-debug applies: it
             // executes the freshly-linked image's own java, which can't run a foreign target's binary.
-            final List<Option> jlinkOptions = new ArrayList<>(List.of(
-                Executable.of(jlinkPath.toString()),
-                Name.of("jlink"),
-                Argument.of("--module-path"), Argument.of(jlinkModulePath),
-                Argument.of("--output"), Argument.of(packagePath),
-                Argument.of("--add-modules"), Argument.of(String.join(",", addModules))));
+            final ConfigurationBuilder jlinkConfiguration = ConfigurationBuilder.create()
+                .add(JDKTools.executable(hostJdk.home().path(), "jlink"))
+                .add(Name.of("jlink"))
+                .add(Argument.of("--module-path")).add(Argument.of(jlinkModulePath))
+                .add(Argument.of("--output")).add(Argument.of(packagePath))
+                .add(Argument.of("--add-modules")).add(Argument.of(String.join(",", addModules)));
             if (isHostTarget) {
-                jlinkOptions.add(Argument.of("--strip-debug"));
+                jlinkConfiguration.add(Argument.of("--strip-debug"));
             }
-            jlinkOptions.addAll(List.of(
-                Argument.of("--no-header-files"),
-                Argument.of("--no-man-pages"),
-                Argument.of("--compress"), Argument.of("zip-6"),
-                Argument.of("--vm"), Argument.of("server"),
-                StandardOutputSubscriber.of(recordingObserver),
-                captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)));
+            jlinkConfiguration
+                .add(Argument.of("--no-header-files"))
+                .add(Argument.of("--no-man-pages"))
+                .add(Argument.of("--compress")).add(Argument.of("zip-6"))
+                .add(Argument.of("--vm")).add(Argument.of("server"))
+                .add(StandardOutputSubscriber.of(recordingObserver))
+                .add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
 
             final var linking = this.recorder.commence(
                 "linking runtime image for [%s] (target %s, %d module(s))",
                 packageName, target, addModules.size());
 
-            try (var jlink = this.machine.launch(Application.class,
-                jlinkOptions.toArray(Option[]::new))) {
+            try (var jlink = this.machine.launch(Application.class, jlinkConfiguration)) {
 
                 try {
-                    jlink.onExit().get();
-                } catch (final Exception e) {
-                    final var exception = new ProcessFailedException("jlink Execution Failed",
-                        ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
-                    linking.completeExceptionally(exception);
-                    throw exception;
-                }
-
-                if (jlink.exitValue().orElse(0) != 0) {
-                    final var exception = new ProcessFailedException(
-                        "Runtime Image Generation Failed (exit code: " + jlink.exitValue().orElse(-1) + ")",
-                        ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
-                    linking.completeExceptionally(exception);
-                    throw exception;
+                    ProcessRunner.await(jlink, "jlink",
+                        () -> ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+                } catch (final ProcessFailedException e) {
+                    linking.completeExceptionally(e);
+                    throw e;
                 }
 
                 linking.complete();
@@ -579,23 +569,21 @@ public abstract class AbstractJavaLinker
                                     final String mainClass,
                                     final Path modulePath,
                                     final List<Path> classPathTargets) {
-        final var javaPath = packagePath.resolve("bin/java");
         final var recordingObserver = new RecordingSubscriber<String>();
         final ErrorCapture captured = new ErrorCapture();
 
-        final List<Option> options = new ArrayList<>(List.of(
-            Executable.of(javaPath.toString()),
-            Name.of("java"),
-            Argument.of("--enable-preview"),
-            Argument.of("-Xshare:dump")
-        ));
+        final ConfigurationBuilder configuration = ConfigurationBuilder.create()
+            .add(JDKTools.executable(packagePath, "java"))
+            .add(Name.of("java"))
+            .add(Argument.of("--enable-preview"))
+            .add(Argument.of("-Xshare:dump"));
         if (Files.isDirectory(modulePath)) {
-            options.add(Argument.of("--module-path"));
-            options.add(Argument.of(modulePath.toString()));
+            configuration.add(Argument.of("--module-path"));
+            configuration.add(Argument.of(modulePath.toString()));
         }
         if (!classPathTargets.isEmpty()) {
-            options.add(Argument.of("-cp"));
-            options.add(Argument.of(classPathTargets.stream()
+            configuration.add(Argument.of("-cp"));
+            configuration.add(Argument.of(classPathTargets.stream()
                 .map(Path::toString)
                 .collect(Collectors.joining((File.pathSeparator)))
             ));
@@ -609,33 +597,24 @@ public abstract class AbstractJavaLinker
         // it. Stock HotSpot JDKs neither link nor root the module, so only add it when the freshly
         // linked image actually contains it (GraalVM's jlink includes it automatically).
         if (imageContainsModule(packagePath, "jdk.internal.vm.ci")) {
-            options.add(Argument.of("--add-modules"));
-            options.add(Argument.of("jdk.internal.vm.ci"));
+            configuration.add(Argument.of("--add-modules"));
+            configuration.add(Argument.of("jdk.internal.vm.ci"));
         }
 
-        options.addAll(List.of(
-            Argument.of("-m"), Argument.of(rootModule + "/" + mainClass),
-            StandardOutputSubscriber.of(recordingObserver),
-            captured.triageSubscriber(
+        configuration
+            .add(Argument.of("-m")).add(Argument.of(rootModule + "/" + mainClass))
+            .add(StandardOutputSubscriber.of(recordingObserver))
+            .add(captured.triageSubscriber(
                 ((Predicate<String>) ErrorCapture::isJvmNoise).or(ErrorCapture::isCdsDumpNoise),
-                this.recorder::warn, this.recorder::error)
-        ));
+                this.recorder::warn, this.recorder::error));
 
         final var dumping = this.recorder.commence("dumping CDS base archive for [%s]", packagePath);
 
-        try (var dump = this.machine.launch(Application.class, options.toArray(Option[]::new))) {
+        try (var dump = this.machine.launch(Application.class, configuration)) {
 
-            try {
-                dump.onExit().get();
-            } catch (final Exception e) {
-                throw new ProcessFailedException("CDS Base Archive Dump Failed",
-                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
-            }
-            if (dump.exitValue().orElse(0) != 0) {
-                throw new ProcessFailedException(
-                    "CDS Base Archive Dump Failed (exit code: " + dump.exitValue().orElse(-1) + ")",
-                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
-            }
+            ProcessRunner.await(dump, "CDS Base Archive Dump",
+                () -> ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+
             dumping.complete();
         } catch (final Exception e) {
             dumping.completeExceptionally(e);

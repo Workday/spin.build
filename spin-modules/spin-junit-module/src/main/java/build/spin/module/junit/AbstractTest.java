@@ -1,6 +1,6 @@
 package build.spin.module.junit;
 
-import build.base.configuration.Option;
+import build.base.configuration.ConfigurationBuilder;
 import build.base.io.PathSet;
 import build.base.io.PathSetBuilder;
 import build.base.option.JDKVersion;
@@ -9,7 +9,6 @@ import build.base.telemetry.TelemetryRecorder;
 import build.codemodel.jdk.descriptor.JDKModuleDescriptor;
 import build.spawn.application.Console;
 import build.spawn.application.option.Argument;
-import build.spawn.application.option.Executable;
 import build.spawn.application.option.Name;
 import build.spawn.application.option.StandardErrorSubscriber;
 import build.spawn.application.option.StandardOutputSubscriber;
@@ -29,7 +28,8 @@ import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.Category;
 import build.spin.annotation.System;
-import build.spin.common.ProcessFailedException;
+import build.spin.common.JDKTools;
+import build.spin.common.ProcessRunner;
 import build.spin.common.task.SourcePathKind;
 import build.spin.module.java.ErrorCapture;
 import build.spin.module.java.JavaCompilerPlugin;
@@ -154,10 +154,9 @@ public abstract class AbstractTest
         }
 
         final JDKHome javaHome = this.javaDevelopmentKit.home();
-        final String executable = javaHome.path().resolve("bin/java").toString();
 
-        final ArrayList<Option> args = new ArrayList<>();
-        args.add(Executable.of(executable));
+        final ConfigurationBuilder args = ConfigurationBuilder.create();
+        args.add(JDKTools.executable(javaHome.path(), "java"));
         args.add(WorkingDirectory.of(this.project.path().toString()));
         args.add(javaHome);
         args.add(Name.of("JUnit Platform/" + this.project.name()));
@@ -263,24 +262,14 @@ public abstract class AbstractTest
         final ErrorCapture capturedOut = new ErrorCapture();
         args.add(StandardOutputSubscriber.of(capturedOut::append));
 
-        try (JDKApplication junit = this.machine.launch(
-            JDKApplication.class,
-            args.toArray(Option[]::new))) {
+        try (JDKApplication junit = this.machine.launch(JDKApplication.class, args)) {
 
-            junit.onExit().get();
-
-            junit.exitValue()
-                .ifPresent(value -> {
-                    if (value != 0) {
-                        throw new ProcessFailedException(
-                            "JUnit Failed (exit code " + value + ")",
-                            ErrorCapture.junitFailureReport(capturedErr.output(), capturedOut.output()));
-                    }
-                });
+            ProcessRunner.await(junit, "JUnit",
+                () -> ErrorCapture.junitFailureReport(capturedErr.output(), capturedOut.output()));
         } catch (final Exception e) {
             this.recorder.error(e, "Failed to execute JUnit");
 
-            throw new RuntimeException("JUnit Failure", e);
+            throw e;
         }
 
         return PathSetBuilder.create().build();

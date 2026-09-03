@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.configuration.ConfigurationBuilder;
 import build.base.foundation.Exceptional;
 import build.base.foundation.Introspection;
 import build.base.foundation.Strings;
@@ -46,7 +47,8 @@ import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.System;
-import build.spin.common.ProcessFailedException;
+import build.spin.common.JDKTools;
+import build.spin.common.ProcessRunner;
 import build.spin.common.task.SourcePathKind;
 import build.spin.common.util.Invocables;
 import build.spin.module.modulesystem.Artifact;
@@ -76,7 +78,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Stack;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -547,36 +548,22 @@ public class CustomizationPlugin
 
                 // establish the "javac" executable based on the Java Development Kit
                 final JDKHome javaHome = javaDevelopmentKit.home();
-                final String executable = javaHome.path().resolve("bin/javac").toString();
 
                 // launch "javac"
                 final ErrorCapture captured = new ErrorCapture();
-                try (Application javac = this.machine.launch(executable,
-                    javaHome,
-                    Name.of("javac " + javaDevelopmentKit.version().toString()),
-                    Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(options.toString())),
-                    Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(sources.toString())),
-                    Argument.of("-g"), // always compile with debugging information
-                    Argument.of("-d"),
-                    Argument.of(Strings.doubleQuoteIfContainsWhiteSpace(target.toString())),
-                    captured.triageSubscriber(ErrorCapture::isJavacWarning, this.recorder::warn, this.recorder::error))) {
+                final ConfigurationBuilder javacConfiguration = ConfigurationBuilder.create()
+                    .add(JDKTools.executable(javaHome.path(), "javac"))
+                    .add(javaHome)
+                    .add(Name.of("javac " + javaDevelopmentKit.version().toString()))
+                    .add(Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(options.toString())))
+                    .add(Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(sources.toString())))
+                    .add(Argument.of("-g")) // always compile with debugging information
+                    .add(Argument.of("-d"))
+                    .add(Argument.of(Strings.doubleQuoteIfContainsWhiteSpace(target.toString())))
+                    .add(captured.triageSubscriber(ErrorCapture::isJavacWarning, this.recorder::warn, this.recorder::error));
 
-                    // wait for "javac" to exit
-                    try {
-                        javac.onExit().get();
-
-                        javac.exitValue()
-                            .ifPresent(value -> {
-                                if (value != 0) {
-                                    throw new ProcessFailedException(
-                                        "Customization Compilation Failed (exit code: " + value + ")",
-                                        captured.output());
-                                }
-                            });
-                    }
-                    catch (final InterruptedException | ExecutionException e) {
-                        throw new RuntimeException("Failed to execute customization compilation", e);
-                    }
+                try (Application javac = this.machine.launch(Application.class, javacConfiguration)) {
+                    ProcessRunner.await(javac, "Customization Compilation", captured::output);
                 }
 
                 // establish a custom ClassLoader to load the compiled customizations
