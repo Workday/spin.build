@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.configuration.ConfigurationBuilder;
 import build.base.foundation.Strings;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
@@ -38,7 +39,9 @@ import build.spawn.jdk.option.ModulePath;
 import build.spawn.platform.local.LocalMachine;
 import build.spin.Project;
 import build.spin.Task;
+import build.spin.common.JDKTools;
 import build.spin.common.ProcessFailedException;
+import build.spin.common.ProcessRunner;
 import build.spin.common.task.SourcePathKind;
 import build.spin.module.configuration.Configuration;
 import build.spin.module.configuration.Source;
@@ -273,16 +276,16 @@ public abstract class AbstractJavaDoc
 
         // establish the "javadoc" executable based on the Java Development Kit
         final JDKHome javaHome = this.javaDevelopmentKit.home();
-        final String executable = javaHome.path().resolve("bin/javadoc").toString();
 
         // launch "javadoc"
         final ErrorCapture captured = new ErrorCapture();
         final AtomicBoolean inWarning = new AtomicBoolean();
-        try (Application javadoc = this.machine.launch(executable,
-            javaHome,
-            Name.of("javadoc " + this.javaDevelopmentKit.version().toString()),
-            Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())),
-            StandardErrorSubscriber.of(line -> {
+        final ConfigurationBuilder javadocConfiguration = ConfigurationBuilder.create()
+            .add(JDKTools.executable(javaHome.path(), "javadoc"))
+            .add(javaHome)
+            .add(Name.of("javadoc " + this.javaDevelopmentKit.version().toString()))
+            .add(Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())))
+            .add(StandardErrorSubscriber.of(line -> {
                 if (line.contains(": error:")) {
                     inWarning.set(false);
                     this.recorder.error(line);
@@ -296,31 +299,16 @@ public abstract class AbstractJavaDoc
                     this.recorder.error(line);
                     captured.append(line);
                 }
-            }))) {
+            }));
 
-            // wait for "javadoc" to exit
-            javadoc.onExit().get();
+        try (Application javadoc = this.machine.launch(Application.class, javadocConfiguration)) {
 
-            // output the exit value for the completion
-            javadoc.exitValue()
-                .ifPresent(value -> {
-                    if (value == 0) {
-                        documentation.complete();
-                    }
-                    else {
-                        final ProcessFailedException exception =
-                            new ProcessFailedException("Documentation Generation Failed (exit code:" + value + ")",
-                                captured.output());
+            ProcessRunner.await(javadoc, "Documentation Generation", captured::output);
 
-                        documentation.completeExceptionally(exception);
-
-                        throw exception;
-                    }
-                });
-
-            if (!javadoc.exitValue().isPresent()) {
-                documentation.complete();
-            }
+            documentation.complete();
+        } catch (final ProcessFailedException e) {
+            documentation.completeExceptionally(e);
+            throw e;
         }
 
         return targetPath;

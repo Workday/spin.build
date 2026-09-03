@@ -33,12 +33,14 @@ import build.spin.Plugin;
 import build.spin.Project;
 import build.spin.Task;
 import build.spin.annotation.Description;
+import build.spin.common.ProcessRunner;
 import build.spin.module.configuration.Configuration;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * A {@link Plugin}, detected for a {@link Project} whenever a {@link SignableResource} is present, providing the
@@ -143,25 +145,21 @@ public class GpgPlugin
                 .map(Argument::of)
                 .forEach(configuration::add);
 
-            configuration.add(StandardErrorSubscriber.of(this.recorder::warn));
+            // gpg writes progress to stderr on a reader thread, so accumulate it in a thread-safe
+            // structure; it is joined into the failure output only if the process fails
+            final var capturedErrors = new ConcurrentLinkedQueue<String>();
+            configuration.add(StandardErrorSubscriber.of(line -> {
+                this.recorder.warn(line);
+                capturedErrors.add(line);
+            }));
 
-            try (var activity = this.recorder.commence("Signing %d artifact(s)", artifacts.count());
-                 var gpg = this.machine.launch(Application.class, configuration)) {
-
-                gpg.onExit().get();
-
-                final var exitValue = gpg.exitValue().orElse(0);
-                if (exitValue == 0) {
-                    activity.complete();
-                }
-                else {
-                    final var exception =
-                        new RuntimeException("GPG signing failed (exit code: " + exitValue + ")");
-                    activity.completeExceptionally(exception);
-                    throw exception;
-                }
+            final var activity = this.recorder.commence("Signing %d artifact(s)", artifacts.count());
+            try (var gpg = this.machine.launch(Application.class, configuration)) {
+                ProcessRunner.await(gpg, "GPG Signing", () -> String.join("\n", capturedErrors));
+                activity.complete();
             }
             catch (final Exception e) {
+                activity.completeExceptionally(e);
                 this.recorder.error(e, "Failed to GPG-sign artifacts");
                 throw e;
             }

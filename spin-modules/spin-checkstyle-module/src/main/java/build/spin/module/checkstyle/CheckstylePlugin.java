@@ -20,7 +20,7 @@ package build.spin.module.checkstyle;
  * #L%
  */
 
-import build.base.configuration.Option;
+import build.base.configuration.ConfigurationBuilder;
 import build.base.flow.RecordingSubscriber;
 import build.base.io.PathSet;
 import build.base.option.JDKVersion;
@@ -39,7 +39,7 @@ import build.spin.annotation.Category;
 import build.spin.annotation.Description;
 import build.spin.annotation.From;
 import build.spin.annotation.System;
-import build.spin.common.ProcessFailedException;
+import build.spin.common.ProcessRunner;
 import build.spin.common.task.DetectSourcePaths;
 import build.spin.common.task.SourcePathKind;
 import build.spin.module.java.ErrorCapture;
@@ -51,7 +51,6 @@ import jakarta.inject.Named;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -142,7 +141,7 @@ public class CheckstylePlugin
                 .orElseGet(() -> workspacePath.resolve("checkstyle/checkstyle.xml"));
 
             // create the Options to launch Checkstyle
-            final List<Option> optionList = new ArrayList<>();
+            final ConfigurationBuilder optionList = ConfigurationBuilder.create();
             optionList.add(Name.of("Checkstyle"));
             optionList.add(ClassPath.of(checkstyleArtifacts));
             optionList.add(MainClass.of("com.puppycrawl.tools.checkstyle.Main"));
@@ -172,27 +171,19 @@ public class CheckstylePlugin
                 optionList.add(StandardOutputSubscriber.of(recordingObserver));
                 optionList.add(captured.subscriber(this.recorder::error));
 
-                try (JDKApplication checkstyle = this.machine.launch(JDKApplication.class,
-                        optionList.toArray(new Option[0]))) {
+                try (JDKApplication checkstyle = this.machine.launch(JDKApplication.class, optionList)) {
 
-                    try {
-                        checkstyle.onExit().get();
-                    }
-                    catch (final Exception e) {
-                        throw new ProcessFailedException("Checkstyle Execution Failed",
-                            ErrorCapture.selectOutput(captured.output(), recordingObserver.items()), e);
-                    }
+                    ProcessRunner.await(checkstyle, "Checkstyle", () ->
+                        // a present exitValue means the process ran to completion and reported
+                        // violations — that content is on stdout, not stderr (see note above).
+                        // an absent exitValue means the wait itself failed (e.g. interrupted)
+                        // before Checkstyle ever finished, so there's no completed-run violation
+                        // report to prefer — fall back to selecting stderr/stdout as usual
+                        checkstyle.exitValue().isPresent()
+                            ? recordingObserver.items().collect(Collectors.joining("\n"))
+                            : ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
 
-                    final int exitValue = checkstyle.exitValue().orElse(0);
-                    if (exitValue != 0) {
-                        // the process ran to completion and reported violations — that content is
-                        // on stdout, not stderr (see note above)
-                        throw new ProcessFailedException(
-                            "Checkstyle Failed (exit code: " + exitValue + ")",
-                            recordingObserver.items().collect(Collectors.joining("\n")));
-                    }
-
-                    this.recorder.info("Checkstyle finished with exit code %d", exitValue);
+                    this.recorder.info("Checkstyle finished successfully");
                 }
             }
         }

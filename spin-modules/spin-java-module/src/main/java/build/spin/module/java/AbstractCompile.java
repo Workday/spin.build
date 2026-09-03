@@ -20,6 +20,7 @@ package build.spin.module.java;
  * #L%
  */
 
+import build.base.configuration.ConfigurationBuilder;
 import build.base.foundation.Capture;
 import build.base.foundation.Strings;
 import build.base.io.PathSet;
@@ -43,7 +44,9 @@ import build.spin.Project;
 import build.spin.Reference;
 import build.spin.Task;
 import build.spin.annotation.System;
+import build.spin.common.JDKTools;
 import build.spin.common.ProcessFailedException;
+import build.spin.common.ProcessRunner;
 import build.spin.common.reactive.ConditionalConsumingObserver;
 import build.spin.common.task.SourcePathKind;
 import build.spin.module.modulesystem.Artifact;
@@ -409,7 +412,6 @@ public abstract class AbstractCompile
 
         // establish the "javac" executable based on the Java Development Kit
         final JDKHome javaHome = this.javaDevelopmentKit.home();
-        final String executable = javaHome.path().resolve("bin/javac").toString();
 
         // establish the StandardOutputObserver to observe and translate "javac" verbose output into Telemetry
         final AtomicInteger parseCount = new AtomicInteger(0);
@@ -459,38 +461,28 @@ public abstract class AbstractCompile
             .build();
 
         // launch "javac"
-        try (
-            Application javac = this.machine.launch(executable,
-                javaHome,
-                Name.of("javac " + this.javaDevelopmentKit.version().toString()),
-                Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())),
-                StandardErrorSubscriber.of(observer))) {
+        final ConfigurationBuilder javacConfiguration = ConfigurationBuilder.create()
+            .add(JDKTools.executable(javaHome.path(), "javac"))
+            .add(javaHome)
+            .add(Name.of("javac " + this.javaDevelopmentKit.version().toString()))
+            .add(Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())))
+            .add(StandardErrorSubscriber.of(observer));
 
-            // wait for "javac" to exit
-            javac.onExit().get();
+        try (Application javac = this.machine.launch(Application.class, javacConfiguration)) {
 
-            // flush any error lines that were not followed by a subsequent "[" line
+            ProcessRunner.await(javac, "Compilation", () -> {
+                // failure path: flush any trailing error line before it is attached to the exception
+                flushError(error, captured);
+                return captured.output();
+            });
+
+            // success path: the supplier above is never invoked, so flush the trailing error line here
             flushError(error, captured);
 
-            // output the exit value for the completion
-            javac.exitValue()
-                .ifPresent(value -> {
-                    if (value == 0) {
-                        compilation.complete();
-                    } else {
-                        final ProcessFailedException exception =
-                            new ProcessFailedException("Compilation Failed (exit code: " + value + ")",
-                                captured.output());
-
-                        compilation.completeExceptionally(exception);
-
-                        throw exception;
-                    }
-                });
-
-            if (javac.exitValue().isEmpty()) {
-                compilation.complete();
-            }
+            compilation.complete();
+        } catch (final ProcessFailedException e) {
+            compilation.completeExceptionally(e);
+            throw e;
         }
 
         // move the compiled classes into the appropriate location based on the version of java used to compile them
@@ -526,15 +518,21 @@ public abstract class AbstractCompile
         return PathSetBuilder.create(targetPath).build();
     }
 
-    private void flushError(final Capture<String> error, final ErrorCapture captured) {
+    void flushError(final Capture<String> error, final ErrorCapture captured) {
+        flushError(error, captured, this.project.path(), this.recorder);
+    }
+
+    // package-private and static so it can be unit-tested without standing up an AbstractCompile
+    static void flushError(final Capture<String> error, final ErrorCapture captured,
+                           final Path projectRoot, final TelemetryRecorder recorder) {
         error.ifPresent(e -> {
             // javac reports source paths absolutely; strip the project root so messages read
             // relative to it (eg: "src/main/java/...") instead of the full filesystem path
-            final String relativized = e.replace(this.project.path().toString() + File.separator, "");
+            final String relativized = e.replace(projectRoot.toString() + File.separator, "");
             if (ErrorCapture.isJavacWarning(relativized)) {
-                this.recorder.warn(relativized);
+                recorder.warn(relativized);
             } else {
-                this.recorder.error(relativized);
+                recorder.error(relativized);
                 captured.append(relativized);
             }
         });

@@ -23,6 +23,12 @@
         </dependency>
 
         <dependency>
+            <groupId>build.spin</groupId>
+            <artifactId>spin-common</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
             <groupId>build.spin.module</groupId>
             <artifactId>spin-configuration-module</artifactId>
             <version>${revision}</version>
