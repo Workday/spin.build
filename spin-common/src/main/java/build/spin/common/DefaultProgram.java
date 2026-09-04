@@ -54,6 +54,7 @@ import build.spin.annotation.PreProcess;
 import build.spin.common.injection.FromResolver;
 import build.spin.common.injection.ProjectResourceResolver;
 import build.spin.common.telemetry.TelemetryPublisher;
+import build.spin.option.ExecutionSlots;
 
 import java.net.URI;
 import java.nio.file.Path;
@@ -69,7 +70,9 @@ import java.util.Set;
 import java.util.Stack;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -124,6 +127,29 @@ public final class DefaultProgram
     private final InjectionFramework framework;
 
     /**
+     * Bounds how many {@link Task}s actually execute their body concurrently, independent of how many are
+     * simultaneously DAG-ready.
+     * <p>
+     * Tasks are still forked onto a virtual thread as soon as they're ready — that dispatch is cheap — but
+     * without this gate, every readiness front in a wide dependency graph would run its full width
+     * concurrently. Most tasks here launch a real CPU-bound JDK tool (compile, link, dependency
+     * analysis); running more of those at once than there are cores oversubscribes the host, showing
+     * up as run-queue depth and context-switch storms well beyond what the machine can actually
+     * execute in parallel.
+     * <p>
+     * Fair, so slots are granted in the order tasks began waiting: under sustained saturation this keeps
+     * execution order close to dispatch order rather than letting a task be repeatedly passed over, which
+     * keeps the per-task timing telemetry interpretable.
+     * <p>
+     * The slot count comes from the {@link ExecutionSlots} {@link build.base.configuration.Option}, which
+     * defaults to {@link Runtime#availableProcessors()} — a rough proxy, since many tasks spend their held
+     * slot largely waiting on a JDK-tool subprocess that is itself multi-core — and can be overridden
+     * (via {@code .spin/} configuration or the {@code spin.execution.slots} system property) when a build
+     * wants to cap spin's host footprint more tightly than one-slot-per-core.
+     */
+    private final Semaphore executionSlots;
+
+    /**
      * Constructs a {@link DefaultProgram} for the specified {@link Project} with the provided {@link Configuration}.
      *
      * @param project       the {@link Project}
@@ -139,6 +165,9 @@ public final class DefaultProgram
         this.framework = this.engine.framework();
         this.optionsByType = optionsByType == null ? Configuration.empty() : optionsByType;
         this.instructions = new LinkedHashMap<>();
+
+        this.executionSlots = new Semaphore(this.optionsByType.getOptional(ExecutionSlots.class)
+            .orElseGet(ExecutionSlots::autodetect).get(), true);
 
         // determine the Task.Pattern
         final Task.Pattern pattern = this.optionsByType
@@ -466,7 +495,6 @@ public final class DefaultProgram
         return "";
     }
 
-    @SuppressWarnings("unchecked")
     private Void runTask(final Reference reference,
                          final ConcurrentHashMap<Reference, AtomicInteger> pending,
                          final Set<Reference> dispatched,
@@ -476,70 +504,60 @@ public final class DefaultProgram
 
         if (!executionCache.contains(reference)) {
             final DefaultInstruction<?> instruction = this.instructions.get(reference);
-            final Invocable<?> invocable = instruction.getInvocable();
-            final Task<?> task = instruction.getTask();
-            // the Instruction's own recorder URI (spin-task://workspace/project/task-name) already
-            // identifies the Project and Task; no need to repeat that (or the redundant Invocable
-            // Class) in the message itself
-            final Activity activity = instruction.getRecorder().commence("Executing");
 
-            final Context executionContext = this.framework.newContext();
-            executionContext.addResolver(new FromResolver(this.recorder, instruction, executionCache));
-            executionContext.addResolver(instruction.getContext().resolver());
-
+            // acquire an execution slot before running the task body. slot-wait time is queueing, not
+            // execution; folding it into the "Executing" Activity would hide it from the telemetry used
+            // to tell a graph-blocked task from a genuinely slow one. the fast path — a slot is free, the
+            // common case at low graph width — records nothing; only a task that actually has to wait
+            // gets an "Awaiting execution slot" Activity, so a slot-starved build stays visible without
+            // a zero-duration Activity on every task.
+            //
+            // the zero-timeout tryAcquire (rather than the no-arg one) honors the semaphore's fair
+            // ordering: it takes a permit only when one is free AND no task is already queued ahead of
+            // this one, so the fast path can't barge past a task parked in "Awaiting execution slot".
+            final boolean tookSlotImmediately;
             try {
-                instruction.codependencies()
-                    .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PreProcess.class))
-                    .forEach(codependency ->
-                        instruction.codependencyTask(codependency)
-                            .execute(codependency, executionContext, this.framework));
+                tookSlotImmediately = this.executionSlots.tryAcquire(0L, TimeUnit.NANOSECONDS);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null; // the scope is being torn down; leave failure reporting to the interrupter
+            }
+            final Optional<Activity> awaitingSlot;
+            if (tookSlotImmediately) {
+                awaitingSlot = Optional.empty();
+            } else {
+                final Activity activity = instruction.getRecorder().commence("Awaiting execution slot");
+                try {
+                    this.executionSlots.acquire();
+                } catch (final InterruptedException e) {
+                    activity.completeExceptionally(e);
+                    Thread.currentThread().interrupt();
+                    return null; // the scope is being torn down; leave failure reporting to the interrupter
+                }
+                awaitingSlot = Optional.of(activity);
+            }
 
-                final Object initialResult = task.execute(invocable, executionContext, this.framework);
-
-                // create a Capture for the Result to allow injection and re-definition by PostProcessors
-                final Capture<Object> capture = Capture.ofNullable(initialResult);
-
-                // allow PostProcessors to inject the current task's result before it's committed to the cache:
-                //   @From(CurrentTask.class) Capture<T> — mutable; PostProcessor can change the result
-                //   @From(CurrentTask.class) T          — read-only view of the initial result
-                executionContext.addResolver(dependency ->
-                    FromResolver.taskClass(dependency)
-                        .filter(c -> c.isAssignableFrom(task.getClass()))
-                        .flatMap(__ -> TypeUsages.getThreadContextClass(dependency.typeUsage()))
-                        .flatMap(requiredClass -> {
-                            if (Capture.class.equals(requiredClass)) {
-                                return TypeUsages.getFirstTypeParameterClass(dependency.typeUsage())
-                                    .flatMap(t -> invocable.getTaskResultClass().filter(t::isAssignableFrom))
-                                    .map(__ -> ValueBinding.of(dependency, (Object) capture));
-                            }
-                            if (initialResult != null && requiredClass.isInstance(initialResult)) {
-                                return Optional.of(ValueBinding.of(dependency, initialResult));
-                            }
-                            return Optional.empty();
-                        }));
-
-                instruction.codependencies()
-                    .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PostProcess.class))
-                    .forEach(codependency ->
-                        instruction.codependencyTask(codependency)
-                            .execute(codependency, executionContext, this.framework));
-
-                final Object taskResult = capture.isPresent() ? capture.get() : null;
-                activity.complete(taskResult);
-                execution.progress();
-
-                executionCache.putIfAbsent(taskResult == null
-                    ? VoidAsset.create(invocable)
-                    : DefaultAsset.create((Invocable<Object>) invocable, taskResult));
-            } catch (final Exception e) {
-                activity.completeExceptionally(e);
-                final String output = extractOutput(e);
+            // a slot is held from here on; the finally releases it on every exit.
+            //
+            // the release is scoped to the task body only — deliberately not a method-wide finally. once
+            // executeInstruction returns, this thread goes on to fork ready dependents into a nested scope
+            // and block in join() until they finish. holding the slot across that wait would let a full
+            // readiness front of parents sit on every slot while their children can't get one: deadlock.
+            try {
+                awaitingSlot.ifPresent(Activity::complete);
+                if (!executeInstruction(reference, instruction, executionCache, execution, failures)) {
+                    return null; // dependents are not fired when a task fails
+                }
+            } catch (final RuntimeException e) {
+                // executeInstruction records its own task failures without throwing; anything reaching
+                // here is from completing the "Awaiting execution slot" Activity. record it as a failure
+                // rather than letting it unwind into the nested scope, whose catch discards
+                // FailedException — which would silently strand this task's dependents.
                 failures.add(new ProgramExecutionException(
-                    this, reference,
-                    output.isEmpty() ? "Failed to execute " + invocable
-                                     : "Failed to execute " + invocable + "\n" + output,
-                    ProcessFailedException.unwrap(e)));
-                return null; // dependents are not fired when a task fails
+                    this, reference, "Failed to execute " + instruction.getInvocable(), e));
+                return null;
+            } finally {
+                this.executionSlots.release();
             }
         }
 
@@ -566,5 +584,89 @@ public final class DefaultProgram
         }
 
         return null;
+    }
+
+    /**
+     * Runs a single {@link Instruction}'s body: its {@link PreProcess} codependencies, the task itself,
+     * result capture and {@link PostProcess} codependencies, then commits the result to
+     * {@code executionCache}. The caller holds an execution slot for the duration of this call.
+     *
+     * @return {@code true} if the task completed; {@code false} if it failed — in which case the failure
+     *     has been added to {@code failures} and the caller must not fire the task's dependents
+     */
+    @SuppressWarnings("unchecked")
+    private boolean executeInstruction(final Reference reference,
+                                       final DefaultInstruction<?> instruction,
+                                       final AssetCache executionCache,
+                                       final Meter execution,
+                                       final Queue<ProgramExecutionException> failures) {
+
+        final Invocable<?> invocable = instruction.getInvocable();
+        final Task<?> task = instruction.getTask();
+
+        final Context executionContext = this.framework.newContext();
+        executionContext.addResolver(new FromResolver(this.recorder, instruction, executionCache));
+        executionContext.addResolver(instruction.getContext().resolver());
+
+        // the Instruction's own recorder URI (spin-task://workspace/project/task-name) already
+        // identifies the Project and Task; no need to repeat that (or the redundant Invocable
+        // Class) in the message itself
+        final Activity activity = instruction.getRecorder().commence("Executing");
+
+        try {
+            instruction.codependencies()
+                .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PreProcess.class))
+                .forEach(codependency ->
+                    instruction.codependencyTask(codependency)
+                        .execute(codependency, executionContext, this.framework));
+
+            final Object initialResult = task.execute(invocable, executionContext, this.framework);
+
+            // create a Capture for the Result to allow injection and re-definition by PostProcessors
+            final Capture<Object> capture = Capture.ofNullable(initialResult);
+
+            // allow PostProcessors to inject the current task's result before it's committed to the cache:
+            //   @From(CurrentTask.class) Capture<T> — mutable; PostProcessor can change the result
+            //   @From(CurrentTask.class) T          — read-only view of the initial result
+            executionContext.addResolver(dependency ->
+                FromResolver.taskClass(dependency)
+                    .filter(c -> c.isAssignableFrom(task.getClass()))
+                    .flatMap(__ -> TypeUsages.getThreadContextClass(dependency.typeUsage()))
+                    .flatMap(requiredClass -> {
+                        if (Capture.class.equals(requiredClass)) {
+                            return TypeUsages.getFirstTypeParameterClass(dependency.typeUsage())
+                                .flatMap(t -> invocable.getTaskResultClass().filter(t::isAssignableFrom))
+                                .map(__ -> ValueBinding.of(dependency, (Object) capture));
+                        }
+                        if (initialResult != null && requiredClass.isInstance(initialResult)) {
+                            return Optional.of(ValueBinding.of(dependency, initialResult));
+                        }
+                        return Optional.empty();
+                    }));
+
+            instruction.codependencies()
+                .filter(codependency -> codependency.getTaskClass().isAnnotationPresent(PostProcess.class))
+                .forEach(codependency ->
+                    instruction.codependencyTask(codependency)
+                        .execute(codependency, executionContext, this.framework));
+
+            final Object taskResult = capture.isPresent() ? capture.get() : null;
+            activity.complete(taskResult);
+            execution.progress();
+
+            executionCache.putIfAbsent(taskResult == null
+                ? VoidAsset.create(invocable)
+                : DefaultAsset.create((Invocable<Object>) invocable, taskResult));
+            return true;
+        } catch (final Exception e) {
+            activity.completeExceptionally(e);
+            final String output = extractOutput(e);
+            failures.add(new ProgramExecutionException(
+                this, reference,
+                output.isEmpty() ? "Failed to execute " + invocable
+                                 : "Failed to execute " + invocable + "\n" + output,
+                ProcessFailedException.unwrap(e)));
+            return false;
+        }
     }
 }

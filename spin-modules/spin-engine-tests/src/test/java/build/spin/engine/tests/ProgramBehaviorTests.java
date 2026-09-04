@@ -7,6 +7,7 @@ import build.spin.ProgramExecutionException;
 import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.common.DefaultAssetCache;
+import build.spin.option.ExecutionSlots;
 import build.spin.testing.WorkspaceDiscovery;
 import build.spin.testing.WorkspacePath;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +32,9 @@ class ProgramBehaviorTests {
         PreProcessTestPlugin.MAIN_TASK_RAN.set(false);
         FailFastTestPlugin.SLOW_ROOT_RAN.set(false);
         FailFastTestPlugin.NEVER_TASK_RAN.set(false);
+        ExecutionSlotBoundTestPlugin.LIVE.set(0);
+        ExecutionSlotBoundTestPlugin.MAX_LIVE.set(0);
+        ExecutionSlotBoundTestPlugin.COMPLETED.set(0);
         AfterTestPlugin.MAIN_TASK_RAN.set(false);
         AfterTestPlugin.AFTER_TASK_RAN.set(false);
         AfterDependencyTestPlugin.ROOT_TASK_RAN.set(false);
@@ -115,6 +119,31 @@ class ProgramBehaviorTests {
         assertThat(FailFastTestPlugin.NEVER_TASK_RAN.get())
             .withFailMessage("no new task may be dispatched once a failure has been recorded")
             .isFalse();
+    }
+
+    // ── Execution-slot bound: a wide readiness front must not run its full width at once ──────
+
+    @Test
+    @WorkspacePath("slotbound-test")
+    void shouldCapConcurrentTaskExecutionAtTheExecutionSlotCount(final Engine engine, final Workspace workspace)
+        throws Exception {
+
+        final AssetCache cache = DefaultAssetCache.create();
+        final Program program = engine.createProgram(workspace,
+            Task.Pattern.of("slotbound"), ExecutionSlots.of(2));
+        program.execute(cache);
+
+        assertThat(ExecutionSlotBoundTestPlugin.COMPLETED.get())
+            .withFailMessage("all four slotbound tasks must have run")
+            .isEqualTo(4);
+        assertThat(ExecutionSlotBoundTestPlugin.MAX_LIVE.get())
+            .withFailMessage("no more task bodies may execute concurrently than the execution-slot "
+                + "count (2 here) - a wide readiness front must not run its full width at once")
+            .isLessThanOrEqualTo(2);
+        assertThat(ExecutionSlotBoundTestPlugin.MAX_LIVE.get())
+            .withFailMessage("the four tasks are independent and each sleeps, so with two slots the "
+                + "cap should actually be reached - otherwise this test proves nothing")
+            .isEqualTo(2);
     }
 
     // ── Bug 4: @After alone must not pull a task into the Program ─────────────

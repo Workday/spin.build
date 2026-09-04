@@ -48,6 +48,7 @@ import build.spin.module.java.Java25CompilerPlugin;
 import build.spin.module.junit.Java25JUnitPlugin;
 import build.spin.module.maven.MavenPlugin;
 import build.spin.option.EngineVersion;
+import build.spin.option.ExecutionSlots;
 import build.spin.option.JlinkTargets;
 import build.spin.option.NetworkAccess;
 import build.spin.option.OperatingSystem;
@@ -173,6 +174,7 @@ public class Spin {
             .option(ServerMode.class)
             .option(ServerPort.class)
             .option(JlinkTargets.class)
+            .option(ExecutionSlots.class)
             .option(ReuseExternalBuildOutput.class)
             .build();
 
