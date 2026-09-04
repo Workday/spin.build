@@ -29,6 +29,7 @@ module build.spin.common {
     requires build.base.option;
     requires build.base.telemetry;
     requires build.spawn.application;
+    requires build.spawn.jdk;
     requires build.codemodel.foundation;
     requires build.codemodel.dependency.injection;
     requires build.codemodel.jdk;

@@ -460,30 +460,57 @@ public abstract class AbstractCompile
             })
             .build();
 
-        // launch "javac"
+        // the "javac" arguments — shared by both the in-process and forked launch paths below, so
+        // argument-building never diverges between them
         final ConfigurationBuilder javacConfiguration = ConfigurationBuilder.create()
-            .add(JDKTools.executable(javaHome.path(), "javac"))
-            .add(javaHome)
-            .add(Name.of("javac " + this.javaDevelopmentKit.version().toString()))
-            .add(Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())))
-            .add(StandardErrorSubscriber.of(observer));
+            .add(Argument.of("@" + Strings.doubleQuoteIfContainsWhiteSpace(arguments.toString())));
 
-        try (Application javac = this.machine.launch(Application.class, javacConfiguration)) {
+        final int exitCode;
 
-            ProcessRunner.await(javac, "Compilation", () -> {
-                // failure path: flush any trailing error line before it is attached to the exception
-                flushError(error, captured);
-                return captured.output();
-            });
+        if (isDefaultJavaVersion && JDKTools.canRunInProcess(this.javaDevelopmentKit)) {
+            // the resolved JDK is the exact installation running this Spin process, so "javac" can run
+            // in-process via ToolProvider instead of forking a whole child JVM
+            exitCode = JDKTools.runInProcess("javac", observer, javacConfiguration);
 
-            // success path: the supplier above is never invoked, so flush the trailing error line here
+            // flush any error lines that were not followed by a subsequent "[" line
             flushError(error, captured);
+        } else {
+            // launch "javac"
+            javacConfiguration
+                .add(JDKTools.executable(javaHome.path(), "javac"))
+                .add(javaHome)
+                .add(Name.of("javac " + this.javaDevelopmentKit.version().toString()))
+                .add(StandardErrorSubscriber.of(observer));
 
-            compilation.complete();
-        } catch (final ProcessFailedException e) {
-            compilation.completeExceptionally(e);
-            throw e;
+            try (Application javac = this.machine.launch(Application.class, javacConfiguration)) {
+                try {
+                    ProcessRunner.await(javac, "Compilation", () -> {
+                        // failure path: flush any trailing error line before it is attached to the exception
+                        flushError(error, captured);
+                        return captured.output();
+                    });
+                } catch (final ProcessFailedException e) {
+                    compilation.completeExceptionally(e);
+                    throw e;
+                }
+
+                // success path: the supplier above is never invoked, so flush the trailing error line here
+                flushError(error, captured);
+            }
+
+            // await() throws on a failed wait or a non-zero exit, so reaching here means success
+            exitCode = 0;
         }
+
+        if (exitCode != 0) {
+            final ProcessFailedException exception =
+                new ProcessFailedException("Compilation Failed (exit code: " + exitCode + ")",
+                    captured.output());
+            compilation.completeExceptionally(exception);
+            throw exception;
+        }
+
+        compilation.complete();
 
         // move the compiled classes into the appropriate location based on the version of java used to compile them
         final Path path;

@@ -317,9 +317,9 @@ public abstract class AbstractJavaLinker
             // recorded module-main property actually matches the launch script, which measured ~20% faster
             // than the jlink-plugin version. Same foreign-target restriction as --strip-debug applies: it
             // executes the freshly-linked image's own java, which can't run a foreign target's binary.
+            // shared by both the in-process and forked launch paths below, so argument-building never
+            // diverges between them
             final ConfigurationBuilder jlinkConfiguration = ConfigurationBuilder.create()
-                .add(JDKTools.executable(hostJdk.home().path(), "jlink"))
-                .add(Name.of("jlink"))
                 .add(Argument.of("--module-path")).add(Argument.of(jlinkModulePath))
                 .add(Argument.of("--output")).add(Argument.of(packagePath))
                 .add(Argument.of("--add-modules")).add(Argument.of(String.join(",", addModules)));
@@ -330,87 +330,115 @@ public abstract class AbstractJavaLinker
                 .add(Argument.of("--no-header-files"))
                 .add(Argument.of("--no-man-pages"))
                 .add(Argument.of("--compress")).add(Argument.of("zip-6"))
-                .add(Argument.of("--vm")).add(Argument.of("server"))
-                .add(StandardOutputSubscriber.of(recordingObserver))
-                .add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
+                .add(Argument.of("--vm")).add(Argument.of("server"));
+
+            final int exitCode;
 
             final var linking = this.recorder.commence(
                 "linking runtime image for [%s] (target %s, %d module(s))",
                 packageName, target, addModules.size());
 
-            try (var jlink = this.machine.launch(Application.class, jlinkConfiguration)) {
+            if (JDKTools.canRunInProcess(hostJdk)) {
+                // the JDK whose jlink binary executes on this host is the exact installation running
+                // this Spin process, so "jlink" can run in-process via ToolProvider instead of forking
+                // a whole child JVM — this applies even when linking a foreign target, since jlink
+                // treats a foreign target's jmods as portable data regardless of how jlink itself runs
+                final var errorSubscriber = captured
+                    .triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)
+                    .get();
 
-                try {
-                    ProcessRunner.await(jlink, "jlink",
-                        () -> ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
-                } catch (final ProcessFailedException e) {
-                    linking.completeExceptionally(e);
-                    throw e;
-                }
+                exitCode = JDKTools.runInProcess("jlink", recordingObserver, errorSubscriber, jlinkConfiguration);
+            } else {
+                jlinkConfiguration
+                    .add(JDKTools.executable(hostJdk.home().path(), "jlink"))
+                    .add(Name.of("jlink"))
+                    .add(StandardOutputSubscriber.of(recordingObserver))
+                    .add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
 
-                linking.complete();
-
-                // -----
-                // Copy whatever jlink didn't link in: tainted module-path jars go to an external
-                // runtime --module-path (modules/) and classpath losers go to classpath/. Linkable
-                // jars are already inside packagePath/lib/modules courtesy of jlink above and are
-                // not copied again. Directories are created lazily — a fully-linked graph (no
-                // tainted or classpath jars) leaves neither directory behind.
-                //
-                // Note: we use `classpath/` (not `lib/`) because jlink writes its runtime image
-                // into packagePath/lib/modules and owns the lib/ directory.
-                final var modulePath = packagePath.resolve("modules");
-                final var classPathDir = packagePath.resolve("classpath");
-
-                final Set<Path> classPathJars = new LinkedHashSet<>(classificationResult.classPath());
-                final List<Path> classPathTargets = new ArrayList<>();
-                for (final var source : candidatePaths) {
-                    final boolean isClassPath = classPathJars.contains(source);
-                    final boolean isTainted = tainted.contains(source);
-                    if (!isClassPath && !isTainted) {
-                        // linkable — already packed into the image by jlink
-                        continue;
-                    }
-                    final var targetDir = isClassPath ? classPathDir : modulePath;
-                    Files.createDirectories(targetDir);
-                    final var destination = targetDir.resolve(source.getFileName());
-                    Files.copy(source, destination);
-                    if (nativePlatform.isPresent()) {
-                        final var p = nativePlatform.get();
-                        if (stripForeignNatives(destination, p.osDir(), p.archDir())) {
-                            this.recorder.info("stripped foreign native platforms from %s (kept %s/%s)",
-                                destination.getFileName(), p.osDir(), p.archDir());
-                        }
-                    }
-                    if (isClassPath) {
-                        classPathTargets.add(destination);
+                try (var jlink = this.machine.launch(Application.class, jlinkConfiguration)) {
+                    try {
+                        ProcessRunner.await(jlink, "jlink",
+                            () -> ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+                    } catch (final ProcessFailedException e) {
+                        linking.completeExceptionally(e);
+                        throw e;
                     }
                 }
 
-                if (isHostTarget) {
-                    dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets);
-                }
-
-                // ---------
-                // create the script to execute the application
-                final var scriptPath = packagePath.resolve("bin");
-
-                // The script template references $MP (modules/) and $LIB (classpath/). Only the
-                // classpath entries are listed explicitly; the module-path is a single directory.
-                // $MP (and the --module-path argument itself) is only emitted when tainted jars
-                // actually exist — a fully-linked graph has no modules/ directory to point at.
-                final var classPath = classPathTargets.stream()
-                    .map(path -> "$LIB/" + path.getFileName())
-                    .collect(Collectors.joining(":"));
-
-                try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
-                    new ScriptTemplate(classPath, !tainted.isEmpty(), rootModule, mainClass, packageName)
-                        .render(new TextOut(writer));
-                }
-
-                // make the script executable
-                scriptPath.resolve(scriptName).toFile().setExecutable(true);
+                // await() throws on a failed wait or a non-zero exit, so reaching here means success
+                exitCode = 0;
             }
+
+            if (exitCode != 0) {
+                final var exception = new ProcessFailedException(
+                    "Runtime Image Generation Failed (exit code: " + exitCode + ")",
+                    ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+                linking.completeExceptionally(exception);
+                throw exception;
+            }
+
+            linking.complete();
+
+            // -----
+            // Copy whatever jlink didn't link in: tainted module-path jars go to an external
+            // runtime --module-path (modules/) and classpath losers go to classpath/. Linkable
+            // jars are already inside packagePath/lib/modules courtesy of jlink above and are
+            // not copied again. Directories are created lazily — a fully-linked graph (no
+            // tainted or classpath jars) leaves neither directory behind.
+            //
+            // Note: we use `classpath/` (not `lib/`) because jlink writes its runtime image
+            // into packagePath/lib/modules and owns the lib/ directory.
+            final var modulePath = packagePath.resolve("modules");
+            final var classPathDir = packagePath.resolve("classpath");
+
+            final Set<Path> classPathJars = new LinkedHashSet<>(classificationResult.classPath());
+            final List<Path> classPathTargets = new ArrayList<>();
+            for (final var source : candidatePaths) {
+                final boolean isClassPath = classPathJars.contains(source);
+                final boolean isTainted = tainted.contains(source);
+                if (!isClassPath && !isTainted) {
+                    // linkable — already packed into the image by jlink
+                    continue;
+                }
+                final var targetDir = isClassPath ? classPathDir : modulePath;
+                Files.createDirectories(targetDir);
+                final var destination = targetDir.resolve(source.getFileName());
+                Files.copy(source, destination);
+                if (nativePlatform.isPresent()) {
+                    final var p = nativePlatform.get();
+                    if (stripForeignNatives(destination, p.osDir(), p.archDir())) {
+                        this.recorder.info("stripped foreign native platforms from %s (kept %s/%s)",
+                            destination.getFileName(), p.osDir(), p.archDir());
+                    }
+                }
+                if (isClassPath) {
+                    classPathTargets.add(destination);
+                }
+            }
+
+            if (isHostTarget) {
+                dumpBaseCdsArchive(packagePath, rootModule, mainClass, modulePath, classPathTargets);
+            }
+
+            // ---------
+            // create the script to execute the application
+            final var scriptPath = packagePath.resolve("bin");
+
+            // The script template references $MP (modules/) and $LIB (classpath/). Only the
+            // classpath entries are listed explicitly; the module-path is a single directory.
+            // $MP (and the --module-path argument itself) is only emitted when tainted jars
+            // actually exist — a fully-linked graph has no modules/ directory to point at.
+            final var classPath = classPathTargets.stream()
+                .map(path -> "$LIB/" + path.getFileName())
+                .collect(Collectors.joining(":"));
+
+            try (var writer = Files.newBufferedWriter(scriptPath.resolve(scriptName))) {
+                new ScriptTemplate(classPath, !tainted.isEmpty(), rootModule, mainClass, packageName)
+                    .render(new TextOut(writer));
+            }
+
+            // make the script executable
+            scriptPath.resolve(scriptName).toFile().setExecutable(true);
         } finally {
             // the staged, native-stripped copies were only needed for the jlink invocation above —
             // the real bytes now live inside packagePath/lib/modules; clean up even if jlink or the

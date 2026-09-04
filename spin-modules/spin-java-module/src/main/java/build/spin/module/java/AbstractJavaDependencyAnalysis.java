@@ -45,6 +45,7 @@ import build.spin.Task;
 import build.spin.Workspace;
 import build.spin.annotation.System;
 import build.spin.common.JDKTools;
+import build.spin.common.ProcessFailedException;
 import build.spin.common.ProcessRunner;
 import build.spin.module.clean.CleanPlugin;
 import build.spin.module.modulesystem.Artifact;
@@ -432,11 +433,12 @@ public abstract class AbstractJavaDependencyAnalysis
             .path()
             .orElseThrow(() -> new IllegalStateException("No artifact path for module [" + this.moduleDescriptor.moduleName().toString() + "]"));
 
-        // build jdeps arguments — omit --class-path when empty (jdeps rejects empty values)
         final ErrorCapture captured = new ErrorCapture();
+
+        // build jdeps arguments — omit --class-path when empty (jdeps rejects empty values) — shared by
+        // both the in-process and forked launch paths below, so argument-building never diverges
+        // between them
         final ConfigurationBuilder jdepsConfiguration = ConfigurationBuilder.create()
-            .add(JDKTools.executable(javaHome, "jdeps"))
-            .add(Name.of("jdeps"))
             .add(Argument.of("--module-path"))
             .add(Argument.of(modulePath));
         if (!classPath.isEmpty()) {
@@ -448,138 +450,162 @@ public abstract class AbstractJavaDependencyAnalysis
             .add(Argument.of("--ignore-missing-deps"))
             .add(Argument.of("--multi-release"))
             .add(Argument.of(jdk.version().major()))
-            .add(Argument.of(artifactPath))
-            .add(stdoutObserver)
-            .add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
+            .add(Argument.of(artifactPath));
 
-        try (var jdeps = this.machine.launch(Application.class, jdepsConfiguration)) {
+        final int exitCode;
 
-            ProcessRunner.await(jdeps, "jdeps",
-                () -> ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+        if (JDKTools.canRunInProcess(jdk)) {
+            // the resolved JDK is the exact installation running this Spin process, so "jdeps" can run
+            // in-process via ToolProvider instead of forking a whole child JVM
+            final var errorSubscriber = captured
+                .triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error)
+                .get();
 
-            // build maps of java platform, module and non-module dependencies
-            final LinkedHashSet<JDKModuleDescriptor> modules = new LinkedHashSet<>();
-            final LinkedHashMap<JDKModuleDescriptor, ArtifactDescriptor> artifacts = new LinkedHashMap<>();
-            final LinkedHashSet<String> unknownModules = new LinkedHashSet<>();
+            exitCode = JDKTools.runInProcess("jdeps", recordingObserver, errorSubscriber, jdepsConfiguration);
+        } else {
+            jdepsConfiguration
+                .add(JDKTools.executable(javaHome, "jdeps"))
+                .add(Name.of("jdeps"))
+                .add(stdoutObserver)
+                .add(captured.triageSubscriber(ErrorCapture::isJvmNoise, this.recorder::warn, this.recorder::error));
 
-            // a Consumer of Artifacts together with their ModuleDescriptors
-            // (to collect and categorize the ModuleDescriptors)
-            final Consumer<Map.Entry<Artifact, ArtifactDescriptor>> consumeArtifact = entry -> {
-                final ArtifactDescriptor artifactDescriptor = entry.getValue();
-                final JDKModuleDescriptor descriptor = moduleDescriptors.get(artifactDescriptor.reference());
+            try (var jdeps = this.machine.launch(Application.class, jdepsConfiguration)) {
+                ProcessRunner.await(jdeps, "jdeps",
+                    () -> ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+            }
 
-                if (descriptor != null) {
-                    if (descriptor.isAutomatic() && descriptor.isSynthetic()) {
-                        // synthesized from catalog+POM: jar has no module-info.class and no Automatic-Module-Name
-                        unnamedArtifactDescriptors.put(entry.getKey(), artifactDescriptor);
-                    } else {
-                        artifacts.put(descriptor, artifactDescriptor);
-                        modules.add(descriptor);
-                    }
+            // await() throws on a failed wait or a non-zero exit, so reaching here means success
+            exitCode = 0;
+        }
+
+        if (exitCode != 0) {
+            throw new ProcessFailedException(
+                "jdeps Execution Failed (exit code: " + exitCode + ")",
+                ErrorCapture.selectOutput(captured.output(), recordingObserver.items()));
+        }
+
+        // build maps of java platform, module and non-module dependencies
+        final LinkedHashSet<JDKModuleDescriptor> modules = new LinkedHashSet<>();
+        final LinkedHashMap<JDKModuleDescriptor, ArtifactDescriptor> artifacts = new LinkedHashMap<>();
+        final LinkedHashSet<String> unknownModules = new LinkedHashSet<>();
+
+        // a Consumer of Artifacts together with their ModuleDescriptors
+        // (to collect and categorize the ModuleDescriptors)
+        final Consumer<Map.Entry<Artifact, ArtifactDescriptor>> consumeArtifact = entry -> {
+            final ArtifactDescriptor artifactDescriptor = entry.getValue();
+            final JDKModuleDescriptor descriptor = moduleDescriptors.get(artifactDescriptor.reference());
+
+            if (descriptor != null) {
+                if (descriptor.isAutomatic() && descriptor.isSynthetic()) {
+                    // synthesized from catalog+POM: jar has no module-info.class and no Automatic-Module-Name
+                    unnamedArtifactDescriptors.put(entry.getKey(), artifactDescriptor);
+                } else {
+                    artifacts.put(descriptor, artifactDescriptor);
+                    modules.add(descriptor);
                 }
-            };
+            }
+        };
 
-            recordingObserver.items()
-                .map(String::trim)
-                .filter(line -> !line.contains(" "))
-                .forEach(line -> {
-                    final var moduleName = moduleNameFromListDepsLine(line);
+        recordingObserver.items()
+            .map(String::trim)
+            .filter(line -> !line.contains(" "))
+            .forEach(line -> {
+                final var moduleName = moduleNameFromListDepsLine(line);
 
-                    if (JavaPlatform.isJavaPlatformModule(moduleName)) {
-                        final ModuleReference reference = ModuleReference.of(moduleName, jdkVersion);
-                        platformModules.add(reference);
+                if (JavaPlatform.isJavaPlatformModule(moduleName)) {
+                    final ModuleReference reference = ModuleReference.of(moduleName, jdkVersion);
+                    platformModules.add(reference);
+                }
+                else {
+                    artifactDescriptors.entrySet().stream()
+                        .filter(entry ->  entry.getValue().reference().name().equals(moduleName))
+                        .findFirst()
+                        .ifPresentOrElse(consumeArtifact, () -> unknownModules.add(moduleName));
+                }
+            });
+
+        // ensure all artifacts provided are consumed as either modules or non-modules
+        artifactDescriptors.entrySet().stream()
+            .forEach(consumeArtifact);
+
+        final Table platformModulesTable = Table.create();
+        platformModulesTable.addRow("Module Name");
+        platformModules.stream().forEach(reference -> platformModulesTable.addRow(reference.name()));
+        this.recorder.diagnostic("Java Platform Modules (%s)\n%s", jdk.version().get(),
+            platformModulesTable);
+
+        if (!modules.isEmpty()) {
+            final Table modulesTable = Table.create();
+            modulesTable.addRow("Module Name", "Version", "Type");
+            modules.stream().forEach(descriptor ->
+                modulesTable.addRow(descriptor.moduleName().toString(),
+                    descriptor.version().map(Version::toString).orElse("(unknown version)"),
+                    descriptor.isAutomatic() ? "automatic module" : "fully-blown module"));
+            this.recorder.diagnostic("Explicit Modules\n%s", modulesTable);
+        }
+
+        if (!unnamedArtifactDescriptors.isEmpty()) {
+            final Table unnamedTable = Table.create();
+            unnamedTable.addRow("Module Name (generated)", "Version");
+            unnamedArtifactDescriptors.values().forEach(descriptor -> unnamedTable.addRow(
+                descriptor.reference().name(),
+                descriptor.reference().version().map(Version::toString).orElse("(unknown version)")));
+            this.recorder.diagnostic("Unnamed Modules\n%s", unnamedTable);
+        }
+
+        if (!unknownModules.isEmpty()) {
+            final Table unknownModulesTable = Table.create();
+            unknownModules.stream().forEach(unknownModulesTable::addRow);
+            this.recorder.diagnostic("Unknown Modules\n%s", unknownModulesTable);
+        }
+
+        return new DependencyAnalysis() {
+            @Override
+            public Dependency dependency() {
+                return new Dependency() {
+                    @Override
+                    public JDKModuleDescriptor moduleDescriptor() {
+                        return moduleDescriptor;
                     }
-                    else {
-                        artifactDescriptors.entrySet().stream()
-                            .filter(entry -> entry.getValue().reference().name().equals(moduleName))
-                            .findFirst()
-                            .ifPresentOrElse(consumeArtifact, () -> unknownModules.add(moduleName));
+
+                    @Override
+                    public ArtifactDescriptor artifactDescriptor() {
+                        return artifacts.get(moduleDescriptor);
                     }
-                });
-
-            // ensure all artifacts provided are consumed as either modules or non-modules
-            artifactDescriptors.entrySet().stream()
-                .forEach(consumeArtifact);
-
-            final Table platformModulesTable = Table.create();
-            platformModulesTable.addRow("Module Name");
-            platformModules.stream().forEach(reference -> platformModulesTable.addRow(reference.name()));
-            this.recorder.diagnostic("Java Platform Modules (%s)\n%s", jdk.version().get(),
-                platformModulesTable);
-
-            if (!modules.isEmpty()) {
-                final Table modulesTable = Table.create();
-                modulesTable.addRow("Module Name", "Version", "Type");
-                modules.stream().forEach(descriptor ->
-                    modulesTable.addRow(descriptor.moduleName().toString(),
-                        descriptor.version().map(Version::toString).orElse("(unknown version)"),
-                        descriptor.isAutomatic() ? "automatic module" : "fully-blown module"));
-                this.recorder.diagnostic("Explicit Modules\n%s", modulesTable);
+                };
             }
 
-            if (!unnamedArtifactDescriptors.isEmpty()) {
-                final Table unnamedTable = Table.create();
-                unnamedTable.addRow("Module Name (generated)", "Version");
-                unnamedArtifactDescriptors.values().forEach(descriptor -> unnamedTable.addRow(
-                    descriptor.reference().name(),
-                    descriptor.reference().version().map(Version::toString).orElse("(unknown version)")));
-                this.recorder.diagnostic("Unnamed Modules\n%s", unnamedTable);
+            @Override
+            public Stream<ModuleReference> platformModules() {
+                return platformModules.stream();
             }
 
-            if (!unknownModules.isEmpty()) {
-                final Table unknownModulesTable = Table.create();
-                unknownModules.stream().forEach(unknownModulesTable::addRow);
-                this.recorder.diagnostic("Unknown Modules\n%s", unknownModulesTable);
-            }
-
-            return new DependencyAnalysis() {
-                @Override
-                public Dependency dependency() {
-                    return new Dependency() {
+            @Override
+            public Stream<Dependency> dependencies() {
+                return artifactDescriptorsByModuleName.values().stream()
+                    .map(descriptor -> new Dependency() {
                         @Override
                         public JDKModuleDescriptor moduleDescriptor() {
-                            return moduleDescriptor;
+                            return moduleDescriptors.get(descriptor.reference());
                         }
 
                         @Override
                         public ArtifactDescriptor artifactDescriptor() {
-                            return artifacts.get(moduleDescriptor);
+                            return descriptor;
                         }
-                    };
-                }
+                    });
+            }
 
-                @Override
-                public Stream<ModuleReference> platformModules() {
-                    return platformModules.stream();
-                }
+            @Override
+            public Stream<String> unknownModules() {
+                return unknownModules.stream();
+            }
 
-                @Override
-                public Stream<Dependency> dependencies() {
-                    return artifactDescriptorsByModuleName.values().stream()
-                        .map(descriptor -> new Dependency() {
-                            @Override
-                            public JDKModuleDescriptor moduleDescriptor() {
-                                return moduleDescriptors.get(descriptor.reference());
-                            }
-
-                            @Override
-                            public ArtifactDescriptor artifactDescriptor() {
-                                return descriptor;
-                            }
-                        });
-                }
-
-                @Override
-                public Stream<String> unknownModules() {
-                    return unknownModules.stream();
-                }
-
-                @Override
-                public Path modulePath() {
-                    return modulePath;
-                }
-            };
-        }
+            @Override
+            public Path modulePath() {
+                return modulePath;
+            }
+        };
     }
 
     /**

@@ -61,6 +61,10 @@
             <groupId>build.spawn</groupId>
             <artifactId>spawn-application</artifactId>
         </dependency>
+        <dependency>
+            <groupId>build.spawn</groupId>
+            <artifactId>spawn-jdk</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>build.codemodel</groupId>
